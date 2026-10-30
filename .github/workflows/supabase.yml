@@ -18,14 +18,14 @@ jobs:
   deploy:
     needs: test
     runs-on: ubuntu-latest
-    if: ${{ secrets.SUPABASE_PROJECT_REF != '' }}
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
       SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
     steps:
       - uses: actions/checkout@v4
       - uses: supabase/setup-cli@v1
         with: { version: latest }
-      - run: supabase link --project-ref ${{ secrets.SUPABASE_PROJECT_REF }} --password "$SUPABASE_DB_PASSWORD"
+      - run: supabase link --project-ref "$PROJECT_REF" --password "$SUPABASE_DB_PASSWORD"
       - run: supabase db push --password "$SUPABASE_DB_PASSWORD"
-      - run: supabase functions deploy check-in --project-ref ${{ secrets.SUPABASE_PROJECT_REF }}
+      - run: supabase functions deploy check-in --project-ref "$PROJECT_REF"
