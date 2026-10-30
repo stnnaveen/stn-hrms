@@ -8,7 +8,12 @@ export interface Staff {
   id: string; name: string; email: string; hub: string; designation: string | null;
   cat: Cat; inTime: string | null; outTime: string | null; band: 'ok' | 'warn' | 'bad' | null; early: boolean;
   od?: { subject: string; venue: string; starts_at: string; ends_at: string } | null; leaveType?: string | null;
+  /** Today's check-in landed outside the hub/venue radius (Chairman and HR only; never shown to staff). */
+  outside?: Outside | null;
 }
+export interface Outside { flagId: string; status: string; distance: number | null; place: string | null; lat: number | null; lng: number | null }
+/** Red flag = outside radius today and HR has not cleared it yet. */
+export const isRed = (s: Staff) => !!s.outside && s.outside.status !== 'valid';
 export interface Snapshot { staff: Staff[]; hubs: string[]; away: boolean; trend: { day: string; pct: number }[] }
 export interface OdItem {
   id: string; who: string; userId: string; hub: string; subject: string; note: string | null; venue: string;
@@ -28,15 +33,18 @@ const real = {
     const today = istToday();
     const startIso = new Date(`${today}T00:00:00+05:30`).toISOString(), endIso = new Date(`${today}T23:59:59+05:30`).toISOString();
     const since = new Date(Date.now() - 30 * 864e5 + 330 * 60000).toISOString().slice(0, 10);
-    const [ps, days, ods, lvs, hubs, away, hist] = await Promise.all([
+    const [ps, days, ods, lvs, hubs, away, hist, rad] = await Promise.all([
       sb!.from('profiles').select('id, full_name, email, designation, hub:hubs(name)').in('role', ['staff', 'intern']).eq('active', true),
       sb!.from('attendance_days').select('user_id, in_time, out_time, band, early_out, status').eq('day', today),
       sb!.from('od_requests').select('user_id, subject, venue_name, starts_at, ends_at').eq('status', 'approved').lte('starts_at', endIso).gte('ends_at', startIso),
       sb!.from('leave_requests').select('user_id, leave_type').eq('status', 'approved').lte('starts_on', today).gte('ends_on', today),
       sb!.from('hubs').select('name').eq('active', true).order('name'),
       sb!.from('settings').select('value').eq('key', 'chairman_away').maybeSingle(),
-      sb!.from('attendance_days').select('day, band').gte('day', since).not('in_time', 'is', null)
+      sb!.from('attendance_days').select('day, band').gte('day', since).not('in_time', 'is', null),
+      sb!.from('flags').select('id, user_id, status, created_at, punch:punches(distance_m, place_name, lat, lng)').eq('kind', 'radius').gte('created_at', startIso).order('created_at')
     ]);
+    type R = { id: string; user_id: string; status: string; punch: { distance_m: number | null; place_name: string | null; lat: number; lng: number } | null };
+    const rmap = new Map((must(rad) as unknown as R[]).map((f) => [f.user_id, { flagId: f.id, status: f.status, distance: f.punch?.distance_m ?? null, place: f.punch?.place_name ?? null, lat: f.punch?.lat ?? null, lng: f.punch?.lng ?? null } as Outside]));
     const dmap = new Map((must(days) as { user_id: string }[]).map((d) => [d.user_id, d as unknown as { in_time: string | null; out_time: string | null; band: Staff['band']; early_out: boolean; status: string }]));
     const omap = new Map((must(ods) as { user_id: string; subject: string; venue_name: string; starts_at: string; ends_at: string }[]).map((o) => [o.user_id, o]));
     const lmap = new Map((must(lvs) as { user_id: string; leave_type: string }[]).map((l) => [l.user_id, l.leave_type]));
@@ -45,7 +53,7 @@ const real = {
       const cat: Cat = lv ? 'lv' : d?.in_time ? 'in' : o ? 'od' : 'notin';
       return { id: p.id, name: p.full_name, email: p.email, hub: p.hub?.name ?? 'No hub', designation: p.designation, cat,
         inTime: d?.in_time ?? null, outTime: d?.out_time ?? null, band: d?.band ?? null, early: !!d?.early_out,
-        od: o ? { subject: o.subject, venue: o.venue_name, starts_at: o.starts_at, ends_at: o.ends_at } : null, leaveType: lv ?? null };
+        od: o ? { subject: o.subject, venue: o.venue_name, starts_at: o.starts_at, ends_at: o.ends_at } : null, leaveType: lv ?? null, outside: rmap.get(p.id) ?? null };
     });
     const byDay = new Map<string, { n: number; ok: number }>();
     for (const r of must(hist) as { day: string; band: string | null }[]) { const x = byDay.get(r.day) ?? { n: 0, ok: 0 }; x.n++; if (r.band === 'ok') x.ok++; byDay.set(r.day, x); }
@@ -96,6 +104,9 @@ const D = (() => {
       od: cat === 'od' ? { subject: 'Collector review', venue: `Collectorate, ${h}`, starts_at: at(11, 0), ends_at: at(17, 0) } : null, leaveType: cat === 'lv' ? 'Casual' : null });
     void late;
   } });
+  const PLACES: Record<string, [number, string, number, number, string]> = { Trichy: [1400, 'Cantonment, Trichy', 10.8064, 78.6851, 'open'], Coimbatore: [8800, 'Ukkadam, Coimbatore', 10.9872, 76.9617, 'reason_asked'], Madurai: [2300, 'Anna Nagar, Madurai', 9.9312, 78.1404, 'open'] };
+  staff.filter((s) => s.cat === 'in' && ['Trichy', 'Coimbatore', 'Madurai'].includes(s.hub)).filter((_, i) => i % 9 === 4).slice(0, 3)
+    .forEach((s, i) => { const [d, pl, la, ln, st] = PLACES[s.hub]; s.outside = { flagId: `fr${i}`, status: st, distance: d, place: pl, lat: la, lng: ln }; });
   const trend = Array.from({ length: 22 }, (_, i) => ({ day: new Date(Date.now() - (22 - i) * 864e5).toISOString().slice(0, 10), pct: 86 + Math.round(rnd() * 10) }));
   const iso = (minAgo: number) => new Date(Date.now() - minAgo * 60000).toISOString();
   const pending: OdItem[] = [
@@ -127,9 +138,10 @@ const demo: typeof real = {
   },
   async alerts() {
     await wait(); const iso = (m: number) => new Date(Date.now() - m * 60000).toISOString();
-    return [
+    const red = D.staff.filter((s) => s.outside).map((s) => ({ id: s.outside!.flagId, kind: 'radius', rule: 'R-02 outside radius', details: {}, status: s.outside!.status, staff_reason: null, created_at: s.inTime!, user_id: s.id, who: s.name, hub: s.hub,
+      punch: { server_time: s.inTime!, lat: s.outside!.lat!, lng: s.outside!.lng!, accuracy_m: 14, place_name: s.outside!.place, distance_m: s.outside!.distance, quality_score: 86, face_similarity: 93, selfie_key: null, mocked: null } }));
+    return [...red,
       { id: 'f1', kind: 'location_changer', rule: 'R-04 same point 5+ days, spread < 1 m', details: {}, status: 'open', staff_reason: null, created_at: iso(290), user_id: 's40', who: 'Deepa V', hub: 'Villupuram', punch: { server_time: iso(295), lat: 11.93941, lng: 79.48623, accuracy_m: 5, place_name: 'Villupuram', distance_m: 40, quality_score: 18, face_similarity: 95, selfie_key: null, mocked: null } },
-      { id: 'f2', kind: 'radius', rule: 'R-02 distance > 500 m', details: {}, status: 'reason_asked', staff_reason: null, created_at: iso(260), user_id: 's41', who: 'Vignesh P', hub: 'Trichy', punch: { server_time: iso(260), lat: 10.8064, lng: 78.6851, accuracy_m: 14, place_name: 'Cantonment, Trichy', distance_m: 1400, quality_score: 86, face_similarity: 93, selfie_key: null, mocked: null } },
       { id: 'f3', kind: 'late', rule: 'R-01 check-in after 10:15', details: {}, status: 'valid', staff_reason: 'Bus broke down on Hosur road.', created_at: iso(268), user_id: 's42', who: 'Imran A', hub: 'Hosur', punch: { server_time: iso(268), lat: 12.7409, lng: 77.8253, accuracy_m: 9, place_name: 'Bagalur Road, Hosur', distance_m: 40, quality_score: 91, face_similarity: 97, selfie_key: null, mocked: null } },
       { id: 'f4', kind: 'face', rule: 'R-05 face match below 80%', details: {}, status: 'valid', staff_reason: 'New glasses.', created_at: iso(2900), user_id: 's43', who: 'Sowmya S', hub: 'Chennai', punch: { server_time: iso(2900), lat: 13.0108, lng: 80.2206, accuracy_m: 8, place_name: 'Guindy, Chennai', distance_m: 22, quality_score: 88, face_similarity: 71, selfie_key: null, mocked: null } }
     ] as Flag[];

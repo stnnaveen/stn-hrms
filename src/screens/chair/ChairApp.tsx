@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useApp } from '../../App';
 import { ApiError } from '../../lib/api';
-import { chair, istMin, type LeaveItem, type OdItem, type Snapshot, type Staff } from '../../lib/chair';
+import { chair, istMin, isRed, type LeaveItem, type OdItem, type Snapshot, type Staff } from '../../lib/chair';
 import { hr, FLAG_LABEL, type Flag, type PersonDetail } from '../../lib/hr';
 import { placeLabel, googleMapsUrl, appleMapsUrl, fmtDistance } from '../../lib/geo';
 import { fmtDay, fmtShortDay, fmtTime, greeting } from '../../lib/time';
@@ -11,7 +11,7 @@ import { Notifications } from '../Notifications';
 import { firstViewToday } from '../../device';
 
 type Tab = 'home' | 'people' | 'approvals';
-type ListKind = 'in' | 'late' | 'notin' | 'out' | 'od' | 'lv' | 'early' | 'last';
+type ListKind = 'red' | 'in' | 'late' | 'notin' | 'out' | 'od' | 'lv' | 'early' | 'last';
 type Sub = { name: 'list'; kind: ListKind } | { name: 'hub'; hub: string } | { name: 'alerts' } | { name: 'alert'; f: Flag } | { name: 'notifs' };
 type Sheet = null | { t: 'od'; o: OdItem } | { t: 'ret'; o: OdItem } | { t: 'person'; s: Staff } | { t: 'account' };
 
@@ -20,7 +20,9 @@ const tint = (s: string) => TINTS[[...s].reduce((a, c) => a + c.charCodeAt(0), 0
 const ini = (n: string) => n.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
 const Av = ({ n }: { n: string }) => <span className="av sm" style={{ background: tint(n), color: '#fff' }} aria-hidden="true">{ini(n)}</span>;
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
-const LABELS: Record<ListKind, string> = { in: 'Checked in', late: 'Late', notin: 'Not in', out: 'Checked out', od: 'On OD', lv: 'On leave', early: 'Early out', last: 'Last out' };
+const RF = () => <span className="rf" role="img" aria-label="Red flag: outside radius"><Icon n="flag" size={13} /></span>;
+const Nm = ({ s }: { s: Staff }) => <b className={isRed(s) ? 'nmf' : undefined}>{s.name}{isRed(s) && <RF />}</b>;
+const LABELS: Record<ListKind, string> = { red: 'Red flags', in: 'Checked in', late: 'Late', notin: 'Not in', out: 'Checked out', od: 'On OD', lv: 'On leave', early: 'Early out', last: 'Last out' };
 const STC: Record<string, string> = { approved: 'c-ok', pending: 'c-pend', returned: 'c-bad', cancelled: 'c-pend' };
 
 function Top({ small, big, onBack, right }: { small: string; big: string; onBack: () => void; right?: React.ReactNode }) {
@@ -207,14 +209,14 @@ function Home({ snap, view, hub, setHub, ods, open, setSheet, setAway, goApprova
   const evening = istMin(new Date().toISOString()) >= 1080;
   const inn = view.filter((s) => s.cat === 'in'), late = inn.filter((s) => s.band === 'warn' || s.band === 'bad');
   const notin = view.filter((s) => s.cat === 'notin'), outs = view.filter((s) => s.outTime).sort((a, b) => (b.outTime ?? '').localeCompare(a.outTime ?? ''));
-  const still = inn.filter((s) => !s.outTime), early = view.filter((s) => s.early);
+  const still = inn.filter((s) => !s.outTime), early = view.filter((s) => s.early), reds = view.filter(isRed);
   const today = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
   const decidedToday = (ods?.decided ?? []).filter((o) => o.decided_role === 'chairman' && (o.decided_at ?? '').slice(0, 10) === today);
   const hubsPct = snap.hubs.map((h) => { const ss = snap.staff.filter((s) => s.hub === h && s.cat === 'in'); return [h, ss.length ? Math.round((ss.filter((s) => s.band === 'ok').length / ss.length) * 100) : null] as const; });
   return (
     <div className="scr fade">
       <div className="hdr"><button className="av me" onClick={() => setSheet({ t: 'account' })} aria-label="Chairman account and log out">CH</button><div className="r">
-        <button className="rbtn" onClick={() => open({ name: 'alerts' })} aria-label="Dispute alerts"><Icon n="flag" /></button>
+        <button className={`rbtn ${reds.length ? 'red' : ''}`} onClick={() => open({ name: 'alerts' })} aria-label={reds.length ? `Dispute alerts, ${reds.length} red flags today` : 'Dispute alerts'}><Icon n="flag" />{reds.length > 0 && <i className="bdg">{reds.length}</i>}</button>
         <button className="rbtn" onClick={() => open({ name: 'notifs' })} aria-label="Notifications"><Icon n="bell" /></button></div></div>
       <div className="pillrow" style={{ marginTop: 0 }} role="group" aria-label="Hub">{['All', ...snap.hubs].map((h) => <button key={h} className={`pill ${hub === h ? 'on' : ''}`} onClick={() => setHub(h)}>{h === 'All' ? 'All hubs' : h}</button>)}</div>
       <div className="dark">
@@ -242,6 +244,9 @@ function Home({ snap, view, hub, setHub, ods, open, setSheet, setAway, goApprova
         <button className="mt" onClick={() => open({ name: 'list', kind: 'last' })}><span className="lb"><i style={{ background: 'var(--ph-navy)' }} />Last out</span><b className="sm">{outs[0] ? fmtTime(outs[0].outTime) : '—'}</b><span className="s">{outs[0] ? `${outs[0].name} · ${still.length} still in` : 'No checkouts yet'}</span></button>
       </div>
 
+      {reds.length > 0 && <button className="card row redrow" style={{ marginTop: 10, width: '100%' }} onClick={() => open({ name: 'list', kind: 'red' })}>
+        <span className="ri"><Icon n="flag" /></span><span className="t"><b>Red flags · {reds.length}</b><span>Checked in outside the radius today</span></span><Icon n="chevR" /></button>}
+
       <div className="sec">On time · last 30 days</div>
       <div className="card trend">{trendSVG(snap.trend)}</div>
 
@@ -256,10 +261,11 @@ function Home({ snap, view, hub, setHub, ods, open, setSheet, setAway, goApprova
 
 // ---------------- lists ----------------
 function ListView({ kind, staff, hub, onBack, onKind, onPerson }: { kind: ListKind; staff: Staff[]; hub: string; onBack: () => void; onKind: (k: ListKind) => void; onPerson: (s: Staff) => void }) {
-  const row = (s: Staff, sub: string, right: React.ReactNode) => <button key={s.id} className="lrow" onClick={() => onPerson(s)}><Av n={s.name} /><span className="t"><b>{s.name}</b><span>{sub}</span></span><span className="v">{right}</span></button>;
+  const row = (s: Staff, sub: string, right: React.ReactNode) => <button key={s.id} className="lrow" onClick={() => onPerson(s)}><Av n={s.name} /><span className="t"><Nm s={s} /><span>{sub}</span></span><span className="v">{right}</span></button>;
   let rows: React.ReactNode[] = [];
   const inn = staff.filter((s) => s.cat === 'in');
   switch (kind) {
+    case 'red': rows = staff.filter(isRed).map((s) => row(s, `${s.outside!.distance != null ? `${fmtDistance(s.outside!.distance)} from hub` : 'Outside radius'} · ${s.outside!.place ?? s.hub}`, <span className="chip c-bad">{s.outside!.status === 'reason_asked' ? 'Reason asked' : 'Open'}</span>)); break;
     case 'in': rows = [...inn].sort((a, b) => (a.inTime ?? '').localeCompare(b.inTime ?? '')).map((s) => row(s, `${s.hub} hub`, statusChip(s))); break;
     case 'late': rows = inn.filter((s) => s.band !== 'ok').sort((a, b) => (b.inTime ?? '').localeCompare(a.inTime ?? '')).map((s) => row(s, `${s.hub} hub`, statusChip(s))); break;
     case 'notin': rows = staff.filter((s) => s.cat === 'notin').map((s) => row(s, `${s.hub} hub`, <span className="chip c-pend">Not in</span>)); break;
@@ -282,7 +288,7 @@ function ListView({ kind, staff, hub, onBack, onKind, onPerson }: { kind: ListKi
 // ---------------- people ----------------
 function hubStats(staff: Staff[]) {
   const inn = staff.filter((s) => s.cat === 'in'), late = inn.filter((s) => s.band !== 'ok').length;
-  return { n: staff.length, inn: inn.length, late, notin: staff.filter((s) => s.cat === 'notin').length, away: staff.filter((s) => s.cat === 'od' || s.cat === 'lv').length, ot: inn.length ? Math.round(((inn.length - late) / inn.length) * 100) : null };
+  return { red: staff.filter(isRed).length, n: staff.length, inn: inn.length, late, notin: staff.filter((s) => s.cat === 'notin').length, away: staff.filter((s) => s.cat === 'od' || s.cat === 'lv').length, ot: inn.length ? Math.round(((inn.length - late) / inn.length) * 100) : null };
 }
 function People({ snap, hub, setHub, open, onPerson }: { snap: Snapshot | null; hub: string; setHub: (h: string) => void; open: (s: Sub) => void; onPerson: (s: Staff) => void }) {
   const [seg, setSeg] = useState<'hubs' | 'emp'>('hubs');
@@ -290,7 +296,7 @@ function People({ snap, hub, setHub, open, onPerson }: { snap: Snapshot | null; 
   const [f, setF] = useState('All');
   if (!snap) return <div className="scr"><Spin /></div>;
   const list = snap.staff.filter((s) => (hub === 'All' || s.hub === hub) && (!q || s.name.toLowerCase().includes(q.toLowerCase())))
-    .filter((s) => f === 'All' || (f === 'Late' && s.band && s.band !== 'ok') || (f === 'Not in' && s.cat === 'notin') || (f === 'OD' && s.cat === 'od') || (f === 'Leave' && s.cat === 'lv'))
+    .filter((s) => f === 'All' || (f === 'Late' && s.band && s.band !== 'ok') || (f === 'Not in' && s.cat === 'notin') || (f === 'OD' && s.cat === 'od') || (f === 'Leave' && s.cat === 'lv') || (f === 'Red flag' && isRed(s)))
     .sort((a, b) => a.name.localeCompare(b.name));
   return (
     <div className="scr fade">
@@ -299,16 +305,16 @@ function People({ snap, hub, setHub, open, onPerson }: { snap: Snapshot | null; 
       {seg === 'hubs' ? snap.hubs.map((h) => { const x = hubStats(snap.staff.filter((s) => s.hub === h));
         return (
           <button key={h} className="hubc" onClick={() => open({ name: 'hub', hub: h })}>
-            <span className="hh"><b>{h}</b><span>{x.n} staff{x.ot != null ? ` · ${x.ot}% on time` : ''}</span></span>
+            <span className="hh"><b>{h}{x.red > 0 && <span className="chip c-bad" style={{ marginLeft: 8 }}><Icon n="flag" size={12} />{x.red}</span>}</b><span>{x.n} staff{x.ot != null ? ` · ${x.ot}% on time` : ''}</span></span>
             <span className="nums"><span><b>{x.inn}</b><span>In</span></span><span><b>{x.late}</b><span>Late</span></span><span><b>{x.notin}</b><span>Not in</span></span><span><b>{x.away}</b><span>OD · Leave</span></span></span>
             <span className="bar" style={{ display: 'block' }}><i style={{ width: `${x.ot ?? 0}%`, background: x.ot == null ? '#E2E3E7' : x.ot >= 90 ? 'var(--ok)' : x.ot >= 80 ? 'var(--warn)' : 'var(--bad)' }} /></span>
           </button>); })
         : (<>
           <div className="pillrow" style={{ marginTop: 0 }} role="group" aria-label="Hub">{['All', ...snap.hubs].map((h) => <button key={h} className={`pill ${hub === h ? 'on' : ''}`} onClick={() => setHub(h)}>{h === 'All' ? 'All hubs' : h}</button>)}</div>
           <label className="search" htmlFor="cq"><Icon n="search" /><input id="cq" placeholder="Search name" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search employees" /></label>
-          <div className="pillrow" role="group" aria-label="Status">{['All', 'Late', 'Not in', 'OD', 'Leave'].map((k) => <button key={k} className={`pill ${f === k ? 'on' : ''}`} onClick={() => setF(k)}>{k}</button>)}</div>
+          <div className="pillrow" role="group" aria-label="Status">{['All', 'Red flag', 'Late', 'Not in', 'OD', 'Leave'].map((k) => <button key={k} className={`pill ${f === k ? 'on' : ''}`} onClick={() => setF(k)}>{k}</button>)}</div>
           <p className="more" style={{ margin: '0 0 10px', textAlign: 'left' }}>{list.length} people · {hub === 'All' ? 'all hubs' : hub}</p>
-          {list.map((s) => <button key={s.id} className="lrow" onClick={() => onPerson(s)}><Av n={s.name} /><span className="t"><b>{s.name}</b><span>{s.designation ?? 'Staff'} · {s.hub}</span></span><span className="v">{statusChip(s)}</span></button>)}
+          {list.map((s) => <button key={s.id} className="lrow" onClick={() => onPerson(s)}><Av n={s.name} /><span className="t"><Nm s={s} /><span>{s.designation ?? 'Staff'} · {s.hub}</span></span><span className="v">{statusChip(s)}</span></button>)}
           {list.length === 0 && <div className="empty"><b>No match</b>Try another name.</div>}
         </>)}
     </div>
@@ -323,7 +329,7 @@ function HubView({ hub, staff, onBack, onPerson }: { hub: string; staff: Staff[]
       <div className="dark"><div className="top"><div><div className="hi">{x.n} staff</div><div className="day">{x.ot != null ? `${x.ot}% on time` : 'No check-ins yet'}</div></div><span className="live"><i />Live</span></div>
         <div className="gcard"><span><small>In</small><b>{x.inn}</b><em>{x.late} late</em></span><span><small>Not in</small><b>{x.notin}</b><em>today</em></span><span><small>OD · Leave</small><b>{x.away}</b><em>approved</em></span></div></div>
       <div className="sec">Staff</div>
-      {ss.map((s) => <button key={s.id} className="lrow" onClick={() => onPerson(s)}><Av n={s.name} /><span className="t"><b>{s.name}</b><span>{s.outTime ? `Out ${fmtTime(s.outTime)}` : s.cat === 'in' ? 'In office' : s.designation ?? ''}</span></span><span className="v">{statusChip(s)}</span></button>)}
+      {ss.map((s) => <button key={s.id} className="lrow" onClick={() => onPerson(s)}><Av n={s.name} /><span className="t"><Nm s={s} /><span>{s.outTime ? `Out ${fmtTime(s.outTime)}` : s.cat === 'in' ? 'In office' : s.designation ?? ''}</span></span><span className="v">{statusChip(s)}</span></button>)}
       {ss.length === 0 && <div className="empty"><b>No staff yet</b>HR adds people to this hub.</div>}
     </div>
   );
@@ -430,6 +436,12 @@ function PersonSheet({ s, onClose }: { s: Staff; onClose: () => void }) {
         <div className="meta" style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 12 }}>{statusChip(s)}{s.early && <span className="chip c-bad">Early out</span>}</div>
         {month && <div className="ft" style={{ marginTop: 14, background: 'var(--ph-surface)', borderRadius: 16, padding: '12px 6px', gridTemplateColumns: 'repeat(3,minmax(0,1fr))' }}>
           <div><b>{month.on}</b><span>On time</span></div><div><b>{month.late}</b><span>Late</span></div><div><b>{month.early}</b><span>Early out</span></div></div>}
+        {s.outside && <div className={`card ${isRed(s) ? 'redrow' : ''}`} style={{ marginTop: 12 }}>
+          <div className="row"><span className={`ri ${isRed(s) ? '' : 'c-ok'}`}><Icon n="flag" /></span><span className="t"><b>{isRed(s) ? 'Red flag · outside radius' : 'Outside radius · cleared by HR'}</b>
+            <span style={{ whiteSpace: 'normal' }}>{s.outside.distance != null ? `${fmtDistance(s.outside.distance)} from ${s.hub} hub` : 'Away from the hub'}{s.outside.place ? ` · ${s.outside.place}` : ''}</span></span></div>
+          {s.outside.lat != null && s.outside.lng != null && <div className="two" style={{ marginTop: 12 }}>
+            <a className="btn light" style={{ height: 40, fontSize: 14, textDecoration: 'none' }} href={googleMapsUrl(s.outside.lat, s.outside.lng)} target="_blank" rel="noreferrer">Google Maps</a>
+            <a className="btn light" style={{ height: 40, fontSize: 14, textDecoration: 'none' }} href={appleMapsUrl(s.outside.lat, s.outside.lng)} target="_blank" rel="noreferrer">Apple Maps</a></div>}</div>}
         {s.cat === 'od' && s.od && <div className="quote" style={{ marginTop: 12 }}><small>OD today</small>{s.od.subject} · {s.od.venue}</div>}
         {s.cat !== 'lv' && (!d ? <Spin /> : <div className="dayc" style={{ marginTop: 16 }}>{tile('in')}{tile('out')}</div>)}
         <p className="to" style={{ marginBottom: 0 }}><Icon n="eye" size={14} style={{ verticalAlign: -2 }} /> View only. Changes go through HR.</p>
@@ -439,23 +451,26 @@ function PersonSheet({ s, onClose }: { s: Staff; onClose: () => void }) {
 
 // ---------------- dispute alerts (view only) ----------------
 function Alerts({ onBack, onOpen }: { onBack: () => void; onOpen: (f: Flag) => void }) {
-  const [list, setList] = useState<Flag[] | null>(null);
+  const [all, setList] = useState<Flag[] | null>(null);
+  const [fl, setFl] = useState<'all' | 'radius' | 'other'>('all');
   useEffect(() => { chair.alerts().then(setList).catch(() => setList([])); }, []);
+  const list = all && all.filter((f) => fl === 'all' || (fl === 'radius') === (f.kind === 'radius'));
   const st = (f: Flag) => f.status === 'violation' ? ['Violation', 'c-bad'] : f.status === 'valid' ? ['Cleared by HR', 'c-ok'] : f.status === 'reason_asked' ? ['Reason asked', 'c-warn'] : ['Open with HR', 'c-warn'];
   return (
     <div className="scr fade" style={{ paddingBottom: 40 }}>
       <Top small="Last 30 days" big="Dispute alerts" onBack={onBack} />
       <div className="note-hr"><Icon n="eye" size={16} />HR decides. You see every signal.</div>
-      {list && <div className="card"><div className="ft">
-        <div><b>{list.length}</b><span>Raised</span></div><div><b>{list.filter((f) => f.status === 'valid').length}</b><span>Cleared</span></div>
-        <div><b>{list.filter((f) => f.status === 'violation').length}</b><span>Violations</span></div><div><b>{list.filter((f) => f.status === 'open' || f.status === 'reason_asked').length}</b><span>Open</span></div></div></div>}
-      <div className="sec">Latest</div>
+      {all && <div className="card"><div className="ft">
+        <div><b>{all.length}</b><span>Raised</span></div><div className="red"><b>{all.filter((f) => f.kind === 'radius').length}</b><span>Outside radius</span></div>
+        <div><b>{all.filter((f) => f.status === 'violation').length}</b><span>Violations</span></div><div><b>{all.filter((f) => f.status === 'open' || f.status === 'reason_asked').length}</b><span>Open</span></div></div></div>}
+      <div className="pillrow" role="group" aria-label="Filter">{([['all', 'All'], ['radius', 'Outside radius'], ['other', 'Other']] as const).map(([k, l]) => <button key={k} className={`pill ${fl === k ? 'on' : ''}`} onClick={() => setFl(k)}>{l}</button>)}</div>
+      <div className="sec">{fl === 'radius' ? 'Outside radius' : 'Latest'}</div>
       {!list ? <Spin /> : list.length === 0 ? <div className="empty"><b>No alerts</b>All clear for 30 days.</div> : list.map((f) => {
         const [lab, cls] = FLAG_LABEL[f.kind] ?? [f.kind, 'c-pend'], [sl, sc] = st(f);
         return (
-          <button key={f.id} className="req" style={{ width: '100%', textAlign: 'left', display: 'block', marginBottom: 10 }} onClick={() => onOpen(f)}>
-            <span className="hd"><Av n={f.who} /><span className="t"><b>{f.who}</b><span>{f.hub ?? 'No hub'} · {fmtShortDay(new Date(f.created_at))} · {fmtTime(f.created_at)}</span></span><span className={`chip ${cls}`}>{lab}</span></span>
-            <span className="meta" style={{ display: 'flex' }}><span className={`chip ${sc}`}>{sl}</span>{f.punch?.quality_score != null && <span className="chip c-pend">Quality {f.punch.quality_score}</span>}</span>
+          <button key={f.id} className={`req ${f.kind === 'radius' && f.status !== 'valid' ? 'redc' : ''}`} style={{ width: '100%', textAlign: 'left', display: 'block', marginBottom: 10 }} onClick={() => onOpen(f)}>
+            <span className="hd"><Av n={f.who} /><span className="t"><b className={f.kind === 'radius' && f.status !== 'valid' ? 'nmf' : undefined}>{f.who}{f.kind === 'radius' && f.status !== 'valid' && <RF />}</b><span>{f.hub ?? 'No hub'} · {fmtShortDay(new Date(f.created_at))} · {fmtTime(f.created_at)}</span></span><span className={`chip ${cls}`}>{lab}</span></span>
+            <span className="meta" style={{ display: 'flex' }}><span className={`chip ${sc}`}>{sl}</span>{f.kind === 'radius' && f.punch?.distance_m != null && <span className="chip c-bad">{fmtDistance(f.punch.distance_m)} away</span>}{f.punch?.quality_score != null && <span className="chip c-pend">Quality {f.punch.quality_score}</span>}</span>
           </button>);
       })}
     </div>

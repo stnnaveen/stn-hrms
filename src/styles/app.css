@@ -425,3 +425,16 @@ a.btn{color:var(--ph-ink)}
 .csplash{position:absolute;inset:0}
 .hubrow{appearance:none;border:0;background:none;color:inherit;font:inherit}
 .trend svg text{font-family:var(--font)}
+/* Chairman red flags: check-in outside the radius (never on staff screens) */
+.rf{display:inline-grid;place-items:center;width:20px;height:20px;border-radius:6px;background:#FDE4E7;color:#D7263D;margin-left:6px;vertical-align:-4px}
+.rbtn.red{background:#FDE4E7;color:#D7263D}
+.rbtn .bdg{position:absolute;top:-3px;right:-3px;min-width:19px;height:19px;padding:0 5px;border-radius:10px;background:#E5303F;color:#fff;font-size:11px;font-weight:700;font-style:normal;display:grid;place-items:center;border:2px solid var(--ph-bg,#EDEDEF)}
+.redrow{background:#FFF0F2!important;border:1px solid #F9CDD3}
+.redrow .ri{background:#E5303F!important;color:#fff!important}
+.redrow .t b{color:#B4182C}
+.req.redc{box-shadow:inset 4px 0 0 #E5303F,0 4px 14px rgba(13,19,33,.06)}
+.ft .red b{color:#D7263D}
+b.nmf{display:flex!important;align-items:center;min-width:0}
+b.nmf .rf{flex:none}
+.t .rf,.rf{display:inline-grid!important;background:#E5303F!important;color:#fff!important;width:20px;height:20px;margin:0 0 0 6px!important;border-radius:6px}
+.hh .chip.c-bad{color:#D7263D!important;background:#FDE4E7!important}
