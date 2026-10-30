@@ -1,6 +1,7 @@
 // Edge function: check-in and check-out.
 //   POST { action: 'start', ... }    -> device binding + signed S3 upload URL for the selfie
 //   POST { action: 'complete', ... } -> rules, face match, place name, punch, flags, attendance day
+//   POST { action: 'health' }   -> Tech admin: which services are on (no secrets)
 // The reply to the phone never contains distance, radius, inside/outside, flags or face score.
 import { createClient } from 'npm:@supabase/supabase-js@2.45.4';
 import { S3Client, PutObjectCommand } from 'npm:@aws-sdk/client-s3@3.654.0';
@@ -26,7 +27,7 @@ const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
 
 interface Body {
-  action: 'start' | 'complete';
+  action: 'start' | 'complete' | 'health';
   kind: 'in' | 'out';
   idempotency_key: string;
   device_key: string;
@@ -51,6 +52,13 @@ Deno.serve(async (req) => {
 
   let body: Body;
   try { body = await req.json(); } catch { return json({ error: 'bad_json' }, 400); }
+  // ---- health: which services are switched on (names only, never keys). Tech admin only.
+  if (body.action === 'health') {
+    const { data: me } = await db.from('profiles').select('role, active').eq('id', user.id).single();
+    if (me?.role !== 'tech' || !me.active) return json({ error: 'not_allowed' }, 403);
+    const t0 = Date.now(); const { error } = await db.from('settings').select('key').limit(1);
+    return json({ ok: true, db_ms: Date.now() - t0, db_ok: !error, storage: USE_S3 ? 's3' : 'supabase', face_match: USE_S3, geocode: env('GOOGLE_GEOCODING_KEY') ? 'google' : 'osm', region: REGION });
+  }
   if (!['in', 'out'].includes(body.kind) || !body.idempotency_key || !body.device_key) return json({ error: 'bad_request' }, 400);
 
   const { data: profile } = await db.from('profiles').select('id, full_name, hub_id, active, consent_at, face_status, reference_photo_key').eq('id', user.id).single();

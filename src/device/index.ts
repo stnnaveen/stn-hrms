@@ -93,5 +93,5 @@ export function firstViewToday(name: string): boolean {
 }
 /** Forget daily flags, so the next sign-in shows the greeting again. */
 export function clearDailyFlags() {
-  try { for (const k of ['stn-greeted', 'stn-chair-intro']) localStorage.removeItem(k); } catch { /* private mode */ }
+  try { for (const k of ['stn-greeted', 'stn-chair-intro', 'stn-tech-intro']) localStorage.removeItem(k); } catch { /* private mode */ }
 }

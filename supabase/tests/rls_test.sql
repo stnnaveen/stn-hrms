@@ -188,3 +188,42 @@ end $$;
 select pg_temp.as_user('00000000-0000-0000-0000-000000000001');
 do $$ begin begin perform set_chairman_away(true); raise exception 'FAIL staff set away';
   exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end; raise notice 'PASS 12d only Chairman sets In/Away'; end $$;
+
+-- 13. Tech admin: role logins, rules, phones, audit check; nobody else can
+select pg_temp.reset();
+insert into devices (id, user_id, device_key, status) values
+ ('00000000-0000-0000-0000-00000000de01','00000000-0000-0000-0000-000000000002','old-phone','active'),
+ ('00000000-0000-0000-0000-00000000de02','00000000-0000-0000-0000-000000000002','new-phone','pending');
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000a1');
+do $$ begin
+  begin perform add_role_login('x@startuptn.in','X','hr'); raise exception 'FAIL HR added role login'; exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
+  begin perform set_setting('face_threshold','70'); raise exception 'FAIL HR changed rule'; exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
+  begin perform decide_device('00000000-0000-0000-0000-00000000de02', true); raise exception 'FAIL HR approved phone'; exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
+  begin perform verify_audit_chain(); raise exception 'FAIL HR read audit check'; exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
+  delete from staff_roster where email = 'chairmanoffice@startuptn.in';
+  raise exception 'FAIL HR deleted role account from roster';
+exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; raise notice 'PASS 13 HR cannot do Tech admin work';
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000f1');
+select add_role_login('NewHR@StartupTN.in', 'New HR', 'hr');
+select set_setting('face_threshold', '85');
+select set_setting('office_start', '"09:30"');
+select decide_device('00000000-0000-0000-0000-00000000de02', true);
+do $$ begin
+  if (select role from staff_roster where email = 'newhr@startuptn.in') <> 'hr' then raise exception 'FAIL role login not added'; end if;
+  if (setting('face_threshold'))::int <> 85 or setting('office_start') #>> '{}' <> '09:30' then raise exception 'FAIL setting not saved'; end if;
+  begin perform set_setting('face_threshold', '10'); raise exception 'FAIL bad value saved'; exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
+  begin perform set_setting('chairman_away', 'true'); raise exception 'FAIL tech set chairman away'; exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
+  if (select status from devices where device_key = 'new-phone') <> 'active' or (select status from devices where device_key = 'old-phone') <> 'revoked' then raise exception 'FAIL phone switch'; end if;
+  if not (verify_audit_chain() ->> 'ok')::boolean then raise exception 'FAIL audit chain broken'; end if;
+  begin perform remove_role_login('ai@startuptn.in'); raise exception 'FAIL removed own login'; exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
+  perform remove_role_login('naveenbackup7@gmail.com');
+  raise notice 'PASS 13b Tech adds logins, tunes rules, approves phones, checks audit';
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-000000000002');
+do $$ begin if not exists (select 1 from notifications where kind = 'device_ok') then raise exception 'FAIL staff not told'; end if; raise notice 'PASS 13d staff told the new phone is approved'; end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000c7');
+do $$ begin
+  if my_role() is not null or sees_all() then raise exception 'FAIL removed login still has access'; end if;
+  raise notice 'PASS 13c removed login loses access at once';
+end $$;
