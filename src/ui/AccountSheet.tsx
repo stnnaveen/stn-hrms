@@ -1,3 +1,4 @@
+import { clearDailyFlags } from '../device';
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
 import { Icon } from './Icon';
@@ -10,7 +11,7 @@ export function AccountSheet({ name, sub, onClose }: { name: string; sub: string
   useEffect(() => { api.session().then((s) => setEmail(s?.email ?? '')); }, []);
   const logout = async () => {
     setBusy(true);
-    try { localStorage.removeItem('stn-greeted'); } catch { /* private mode */ }
+    clearDailyFlags();
     await api.signOut();
   };
   const ini = name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();

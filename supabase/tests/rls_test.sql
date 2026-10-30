@@ -160,3 +160,31 @@ do $$ begin
   if not exists (select 1 from profiles where email='kavya@startuptn.in') then raise exception 'FAIL kavya removed'; end if;
   raise notice 'PASS 11c account and profile removed, records kept';
 end $$;
+
+-- 12. Chairman: temp login gets the chairman role; sees everything; decides OD and In/Away only; cannot change people, hubs or leave
+select pg_temp.reset();
+insert into auth.users values ('00000000-0000-0000-0000-0000000000c7','naveenbackup7@gmail.com');
+do $$ begin if (select role from profiles where email='naveenbackup7@gmail.com') <> 'chairman' then raise exception 'FAIL temp chairman role'; end if;
+  raise notice 'PASS 12 temp Chairman login'; end $$;
+insert into leave_requests (user_id, leave_type, starts_on, ends_on) values ('00000000-0000-0000-0000-000000000002','casual',current_date+3,current_date+3);
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000c7');
+do $$ begin
+  if (select count(*) from profiles) < 5 or (select count(*) from punches) < 1 or (select count(*) from hubs) <> 10 then raise exception 'FAIL chairman cannot see all'; end if;
+  perform set_chairman_away(true);
+  if not (setting('chairman_away'))::boolean then raise exception 'FAIL away not set'; end if;
+  perform set_chairman_away(false);
+  begin perform decide_leave((select id from leave_requests limit 1),'approved'); raise exception 'FAIL chairman decided leave';
+    exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
+  update profiles set active = false where email = 'kavya@startuptn.in';
+  update hubs set radius_m = 9999 where name = 'Chennai';
+  raise notice 'PASS 12b Chairman sees all, sets In/Away, cannot decide leave';
+end $$;
+select pg_temp.reset();
+do $$ begin
+  if not (select active from profiles where email='kavya@startuptn.in') then raise exception 'FAIL chairman deactivated staff'; end if;
+  if (select radius_m from hubs where name='Chennai') = 9999 then raise exception 'FAIL chairman edited hub'; end if;
+  raise notice 'PASS 12c Chairman cannot edit people or hubs';
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-000000000001');
+do $$ begin begin perform set_chairman_away(true); raise exception 'FAIL staff set away';
+  exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end; raise notice 'PASS 12d only Chairman sets In/Away'; end $$;

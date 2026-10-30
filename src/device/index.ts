@@ -83,3 +83,15 @@ export async function permissionsGranted(): Promise<boolean> {
     return cam.state === 'granted' && geo.state === 'granted';
   } catch { return false; } // Safari: unknown, ask in flow
 }
+
+// Small per-device flags (e.g. "greeting shown today"). v2 swaps this for Capacitor Preferences.
+const istDay = () => new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+/** True the first time it is called for `name` on this device each IST day. */
+export function firstViewToday(name: string): boolean {
+  try { const k = `stn-${name}`, d = istDay(), seen = localStorage.getItem(k) === d; localStorage.setItem(k, d); return !seen; }
+  catch { return false; }
+}
+/** Forget daily flags, so the next sign-in shows the greeting again. */
+export function clearDailyFlags() {
+  try { for (const k of ['stn-greeted', 'stn-chair-intro']) localStorage.removeItem(k); } catch { /* private mode */ }
+}
