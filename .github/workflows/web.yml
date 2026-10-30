@@ -20,6 +20,8 @@ jobs:
         run: test -n "$VERCEL_TOKEN"
       - name: Type-check and build
         run: npm ci && npm run build
+      - name: Create Vercel project stn-hrms if missing
+        run: npx --yes vercel@latest project add stn-hrms --token "$VERCEL_TOKEN" || true
       - name: Link Vercel project stn-hrms
         run: npx --yes vercel@latest link --yes --project stn-hrms --token "$VERCEL_TOKEN"
       - name: Deploy to production
