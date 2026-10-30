@@ -6,7 +6,7 @@ export interface HrToday {
   pending_leave: number; pending_od: number; open_flags: number; chairman_away: boolean;
 }
 export interface Person {
-  id: string; full_name: string; email: string; role: string; hub: string | null; phone: string | null;
+  id: string; full_name: string; email: string; role: string; designation: string | null; hub: string | null; phone: string | null;
   employee_code: string | null; active: boolean; face_status: string;
   today?: { in_time: string | null; out_time: string | null; band: string | null; status: string } | null;
 }
@@ -28,7 +28,7 @@ const must = <T,>(r: { data: T | null; error: unknown }): T => { if (r.error) th
 const real = {
   async today(): Promise<HrToday> { return must(await sb!.rpc('hr_today')) as HrToday; },
   async people(): Promise<Person[]> {
-    const ps = must(await sb!.from('profiles').select('id, full_name, email, role, phone, employee_code, active, face_status, hub:hubs(name)').in('role', ['staff', 'intern']).order('full_name'));
+    const ps = must(await sb!.from('profiles').select('id, full_name, email, role, designation, phone, employee_code, active, face_status, hub:hubs(name)').in('role', ['staff', 'intern']).order('full_name'));
     const days = must(await sb!.from('attendance_days').select('user_id, in_time, out_time, band, status').eq('day', istToday()));
     const byUser = new Map((days as { user_id: string }[]).map((d) => [d.user_id, d]));
     return (ps as unknown as (Person & { hub: { name: string } | null })[]).map((p) => ({ ...p, hub: p.hub?.name ?? null, today: (byUser.get(p.id) as Person['today']) ?? null }));
@@ -67,7 +67,7 @@ const real = {
       : sb!.from('hubs').insert({ name: h.name, lat: h.lat, lng: h.lng, radius_m: h.radius_m, maps_url: h.maps_url });
     const { error } = await q; if (error) throw new ApiError('save_failed');
   },
-  async addStaff(s: { full_name: string; email: string; role: 'staff' | 'intern'; hub_name: string; phone?: string; joined_on?: string; employee_code?: string }) {
+  async addStaff(s: { full_name: string; email: string; role: 'staff' | 'intern'; designation: string; hub_name: string; phone?: string; joined_on?: string; employee_code?: string }) {
     const { error } = await sb!.from('staff_roster').insert({ ...s, email: s.email.trim().toLowerCase(), employee_code: s.employee_code || null, phone: s.phone || null });
     if (error) throw new ApiError(error.code === '23505' ? 'already_added' : 'save_failed');
   },
@@ -84,11 +84,11 @@ const now = Date.now();
 const iso = (minAgo: number) => new Date(now - minAgo * 60000).toISOString();
 const D = {
   people: [
-    { id: 'p1', full_name: 'Kavya R', email: 'kavya@startuptn.in', role: 'staff', hub: 'Chennai', phone: '98400 10001', employee_code: 'STN0142', active: true, face_status: 'approved', today: { in_time: iso(300), out_time: null, band: 'ok', status: 'present' } },
-    { id: 'p2', full_name: 'Vignesh P', email: 'vignesh@startuptn.in', role: 'staff', hub: 'Trichy', phone: '98400 10002', employee_code: 'STN0117', active: true, face_status: 'approved', today: { in_time: iso(260), out_time: null, band: 'bad', status: 'present' } },
-    { id: 'p3', full_name: 'Deepa V', email: 'deepa@startuptn.in', role: 'staff', hub: 'Villupuram', phone: '98400 10003', employee_code: 'STN0161', active: true, face_status: 'approved', today: { in_time: iso(295), out_time: null, band: 'ok', status: 'present' } },
-    { id: 'p4', full_name: 'Imran A', email: 'imran@startuptn.in', role: 'staff', hub: 'Hosur', phone: '98400 10004', employee_code: 'STN0109', active: true, face_status: 'approved', today: { in_time: iso(268), out_time: null, band: 'bad', status: 'present' } },
-    { id: 'p5', full_name: 'Sneha P', email: 'sneha.p@gmail.com', role: 'intern', hub: 'Erode', phone: null, employee_code: 'STNI021', active: true, face_status: 'pending', today: null }
+    { id: 'p1', full_name: 'Kavya R', designation: 'Project Associate', email: 'kavya@startuptn.in', role: 'staff', hub: 'Chennai', phone: '98400 10001', employee_code: 'STN0142', active: true, face_status: 'approved', today: { in_time: iso(300), out_time: null, band: 'ok', status: 'present' } },
+    { id: 'p2', full_name: 'Vignesh P', designation: 'Project Lead', email: 'vignesh@startuptn.in', role: 'staff', hub: 'Trichy', phone: '98400 10002', employee_code: 'STN0117', active: true, face_status: 'approved', today: { in_time: iso(260), out_time: null, band: 'bad', status: 'present' } },
+    { id: 'p3', full_name: 'Deepa V', designation: 'Project Associate', email: 'deepa@startuptn.in', role: 'staff', hub: 'Villupuram', phone: '98400 10003', employee_code: 'STN0161', active: true, face_status: 'approved', today: { in_time: iso(295), out_time: null, band: 'ok', status: 'present' } },
+    { id: 'p4', full_name: 'Imran A', designation: 'Hub Lead', email: 'imran@startuptn.in', role: 'staff', hub: 'Hosur', phone: '98400 10004', employee_code: 'STN0109', active: true, face_status: 'approved', today: { in_time: iso(268), out_time: null, band: 'bad', status: 'present' } },
+    { id: 'p5', full_name: 'Sneha P', designation: 'Intern', email: 'sneha.p@gmail.com', role: 'intern', hub: 'Erode', phone: null, employee_code: 'STNI021', active: true, face_status: 'pending', today: null }
   ] as Person[],
   leaves: [{ id: 'l1', who: 'Anitha R', hub: 'Salem', leave_type: 'casual', starts_on: '2026-11-12', ends_on: '2026-11-13', half_day: null, reason: 'Sister’s wedding', status: 'pending', created_at: iso(120) }] as LeaveReq[],
   ods: [{ id: 'o1', who: 'Gokul M', hub: 'Coimbatore', subject: 'Investor demo day', note: null, venue_name: 'Codissia, Coimbatore', starts_at: iso(-180), ends_at: iso(-360), status: 'pending', created_at: iso(60) }] as OdReq[],
@@ -118,7 +118,7 @@ const demo: typeof real = {
   async selfieUrl() { return null; },
   async hubs() { await wait(); return D.hubs; },
   async saveHub(h) { await wait(); const i = D.hubs.findIndex((x) => x.id === h.id); if (i >= 0) D.hubs[i] = { ...D.hubs[i], ...h }; else D.hubs.push({ ...h, id: crypto.randomUUID(), active: true, maps_url: h.maps_url ?? null, staff: 0 }); },
-  async addStaff(s) { await wait(); D.people.push({ id: crypto.randomUUID(), full_name: s.full_name, email: s.email, role: s.role, hub: s.hub_name, phone: s.phone ?? null, employee_code: s.employee_code ?? null, active: true, face_status: 'none', today: null }); },
+  async addStaff(s) { await wait(); D.people.push({ id: crypto.randomUUID(), full_name: s.full_name, email: s.email, role: s.role, designation: s.designation, hub: s.hub_name, phone: s.phone ?? null, employee_code: s.employee_code ?? null, active: true, face_status: 'none', today: null }); },
   async setActive(id, active) { await wait(); const p = D.people.find((x) => x.id === id); if (p) p.active = active; },
   async decideLeave(id) { await wait(); D.leaves = D.leaves.filter((x) => x.id !== id); },
   async decideOd(id) { await wait(); D.ods = D.ods.filter((x) => x.id !== id); },

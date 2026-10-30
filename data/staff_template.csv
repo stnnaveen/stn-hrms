@@ -1,3 +1,3 @@
-full_name,email,phone,employee_code,role,hub,joined_on
-Kavya R,kavya@startuptn.in,9876543210,STN0142,staff,Chennai,2024-06-03
-Sneha P,sneha.p@gmail.com,9123456780,STNI021,intern,Erode,2026-10-01
+full_name,email,phone,employee_code,role,designation,hub,joined_on
+Kavya R,kavya@startuptn.in,9876543210,STN0142,staff,Project Associate,Chennai,2024-06-03
+Sneha P,sneha.p@gmail.com,9123456780,STNI021,intern,Intern,Erode,2026-10-01

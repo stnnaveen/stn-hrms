@@ -16,6 +16,8 @@ const tint = (s: string) => TINTS[[...s].reduce((a, c) => a + c.charCodeAt(0), 0
 const ini = (n: string) => n.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
 const Av = ({ n }: { n: string }) => <span className="av sm" style={{ background: tint(n) }} aria-hidden="true">{ini(n)}</span>;
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
+// Suggestions only; HR can type any designation
+const DESIGNATIONS = ['Project Associate', 'Senior Project Associate', 'Project Lead', 'Hub Lead', 'Manager', 'Senior Manager', 'AVP', 'VP', 'Consultant', 'Intern'];
 
 function Top({ small, big, onBack, right }: { small: string; big: string; onBack: () => void; right?: React.ReactNode }) {
   return <div className="ttl"><button className="rbtn" onClick={onBack} aria-label="Back"><Icon n="chevL" /></button><div className="mid"><small>{small}</small><b>{big}</b></div>{right ?? <span className="sp" />}</div>;
@@ -150,7 +152,7 @@ function StaffList({ open }: { open: (s: Sub) => void }) {
       <label className="search" htmlFor="q"><Icon n="search" /><input id="q" placeholder="Search name or hub" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search staff" /></label>
       <div className="pillrow" role="group" aria-label="Filter">{['All', 'Late', 'Interns', 'Inactive'].map((k) => <button key={k} className={`pill ${f === k ? 'on' : ''}`} onClick={() => setF(k)}>{k}</button>)}</div>
       {!people ? <Spin /> : <div className="list">{list.map((p) => (
-        <button key={p.id} className="card row" onClick={() => open({ name: 'person', p })}><Av n={p.full_name} /><div className="t"><b>{p.full_name}</b><span>{cap(p.role)} · {p.hub ?? 'No hub'}</span></div>{p.active ? dayChip(p) : <span className="chip c-pend">Inactive</span>}</button>
+        <button key={p.id} className="card row" onClick={() => open({ name: 'person', p })}><Av n={p.full_name} /><div className="t"><b>{p.full_name}</b><span>{p.designation ?? cap(p.role)} · {p.hub ?? 'No hub'}</span></div>{p.active ? dayChip(p) : <span className="chip c-pend">Inactive</span>}</button>
       ))}{list.length === 0 && <div className="empty"><b>No match</b>Try another name or hub.</div>}</div>}
     </div>
   );
@@ -174,10 +176,10 @@ function PersonView({ p, onBack, open }: { p: Person; onBack: () => void; open: 
   return (
     <><div className="scr fade" style={{ paddingBottom: 40 }}>
       <Top small="Staff" big="Profile" onBack={onBack} />
-      <div className="pcard"><span className="av" style={{ background: tint(p.full_name), display: 'grid', placeItems: 'center', color: '#fff' }}>{ini(p.full_name)}</span><h2>{p.full_name}</h2><p>{cap(p.role)} · {p.hub ?? 'No hub'} hub</p>
+      <div className="pcard"><span className="av" style={{ background: tint(p.full_name), display: 'grid', placeItems: 'center', color: '#fff' }}>{ini(p.full_name)}</span><h2>{p.full_name}</h2><p>{p.designation ?? cap(p.role)} · {p.hub ?? 'No hub'} hub</p>
         <div className="meta">{dayChip(p)}<span className="chip c-mute">Face {p.face_status}</span></div></div>
       <div className="sec">Details</div>
-      <div className="card"><dl className="kv" style={{ margin: 0 }}><dt>Email</dt><dd>{p.email}</dd><dt>Code</dt><dd>{p.employee_code ?? '—'}</dd><dt>Phone</dt><dd>{p.phone ?? '—'}</dd><dt>Status</dt><dd>{active ? 'Active' : 'Inactive'}</dd></dl></div>
+      <div className="card"><dl className="kv" style={{ margin: 0 }}><dt>Designation</dt><dd>{p.designation ?? '—'}</dd><dt>Type</dt><dd>{cap(p.role)}</dd><dt>Email</dt><dd>{p.email}</dd><dt>Code</dt><dd>{p.employee_code ?? '—'}</dd><dt>Phone</dt><dd>{p.phone ?? '—'}</dd><dt>Status</dt><dd>{active ? 'Active' : 'Inactive'}</dd></dl></div>
       <div className="sec">Location pattern · 7 check-ins</div>
       {!pat ? <Spin /> : (
         <div className="card row">{pat.same
@@ -380,7 +382,7 @@ function HubEdit({ h, onBack }: { h: Hub | null; onBack: () => void }) {
 
 function AddStaff({ onBack }: { onBack: () => void }) {
   const { toast } = useApp();
-  const [f, setF] = useState({ name: '', email: '', type: 'staff' as 'staff' | 'intern', phone: '', joined: new Date().toISOString().slice(0, 10), hub: '', code: '' });
+  const [f, setF] = useState({ name: '', email: '', type: 'staff' as 'staff' | 'intern', designation: '', phone: '', joined: new Date().toISOString().slice(0, 10), hub: '', code: '' });
   const [hubs, setHubs] = useState<Hub[]>([]);
   const [errs, setErrs] = useState<Record<string, string>>({});
   useEffect(() => { hr.hubs().then((h) => { setHubs(h); setF((x) => ({ ...x, hub: x.hub || h[0]?.name || '' })); }); }, []);
@@ -389,8 +391,9 @@ function AddStaff({ onBack }: { onBack: () => void }) {
     const e: Record<string, string> = {};
     if (f.name.trim().length < 2) e.name = 'Add a name.';
     if (!/^\S+@\S+\.\S+$/.test(f.email)) e.email = 'Add a valid email.';
+    if (!f.designation.trim()) e.designation = 'Add a designation.';
     setErrs(e); if (Object.keys(e).length) return;
-    try { await hr.addStaff({ full_name: f.name.trim(), email: f.email, role: f.type, hub_name: f.hub, phone: f.phone, joined_on: f.joined, employee_code: f.code }); toast(`${f.name.split(' ')[0]} added · can sign in now`); onBack(); }
+    try { await hr.addStaff({ full_name: f.name.trim(), email: f.email, role: f.type, designation: f.designation.trim(), hub_name: f.hub, phone: f.phone, joined_on: f.joined, employee_code: f.code }); toast(`${f.name.split(' ')[0]} added · can sign in now`); onBack(); }
     catch (err) { setErrs({ email: err instanceof ApiError && err.code === 'already_added' ? 'This email is already added.' : errorText('save_failed') }); }
   };
   return (
@@ -399,7 +402,11 @@ function AddStaff({ onBack }: { onBack: () => void }) {
       <label className="lab" htmlFor="a-n" style={{ marginTop: 0 }}>Full name</label><input className="inp" id="a-n" value={f.name} onChange={(e) => set('name', e.target.value)} placeholder="Priya Raman" />{errs.name && <div className="err">{errs.name}</div>}
       <label className="lab" htmlFor="a-e">Email</label><input className="inp" id="a-e" type="email" value={f.email} onChange={(e) => set('email', e.target.value)} placeholder={f.type === 'intern' ? 'personal@gmail.com' : 'name@startuptn.in'} />{errs.email && <div className="err">{errs.email}</div>}
       <label className="lab">Type</label>
-      <div className="seg" role="group" aria-label="Type"><button className={f.type === 'staff' ? 'on' : ''} onClick={() => set('type', 'staff')}>Staff</button><button className={f.type === 'intern' ? 'on' : ''} onClick={() => set('type', 'intern')}>Intern</button></div>
+      <div className="seg" role="group" aria-label="Type"><button className={f.type === 'staff' ? 'on' : ''} onClick={() => set('type', 'staff')}>Staff</button><button className={f.type === 'intern' ? 'on' : ''} onClick={() => { set('type', 'intern'); if (!f.designation) set('designation', 'Intern'); }}>Intern</button></div>
+      <label className="lab" htmlFor="a-d">Designation</label>
+      <input className="inp" id="a-d" list="designations" value={f.designation} onChange={(e) => set('designation', e.target.value)} placeholder="Pick or type" />
+      <datalist id="designations">{DESIGNATIONS.map((d) => <option key={d} value={d} />)}</datalist>
+      {errs.designation && <div className="err">{errs.designation}</div>}
       <div className="two">
         <div><label className="lab" htmlFor="a-ph">Phone</label><input className="inp" id="a-ph" inputMode="tel" value={f.phone} onChange={(e) => set('phone', e.target.value)} placeholder="98400 00000" /></div>
         <div><label className="lab" htmlFor="a-c">Code</label><input className="inp" id="a-c" value={f.code} onChange={(e) => set('code', e.target.value)} placeholder="STN0150" /></div>

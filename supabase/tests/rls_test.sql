@@ -126,3 +126,12 @@ do $$ begin if (hr_today()->>'staff')::int < 1 then raise exception 'FAIL hr_tod
 select pg_temp.as_user('00000000-0000-0000-0000-000000000001');
 do $$ begin begin perform hr_today(); raise exception 'FAIL staff read hr_today';
   exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end; raise notice 'PASS 9b staff blocked from HR summary'; end $$;
+
+-- 10. designation flows from roster to profile on first sign-in
+select pg_temp.reset();
+insert into staff_roster (email, full_name, role, hub_name, designation) values ('desig@startuptn.in','Desig Test','staff','Salem','Project Lead');
+insert into auth.users values ('00000000-0000-0000-0000-0000000000d1','desig@startuptn.in');
+do $$ begin if (select designation from profiles where email='desig@startuptn.in') <> 'Project Lead' then raise exception 'FAIL designation not copied'; end if;
+  update staff_roster set designation='Hub Lead' where email='desig@startuptn.in';
+  if (select designation from profiles where email='desig@startuptn.in') <> 'Hub Lead' then raise exception 'FAIL designation not synced'; end if;
+  raise notice 'PASS 10 designation copied and kept in sync'; end $$;
