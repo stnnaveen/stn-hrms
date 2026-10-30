@@ -51,8 +51,9 @@ const real = {
   async session() { const { data } = await sb!.auth.getSession(); return data.session ? { email: data.session.user.email ?? '' } : null; },
   onAuth(cb: (signedIn: boolean) => void) { const { data } = sb!.auth.onAuthStateChange((_e, s) => cb(!!s)); return () => data.subscription.unsubscribe(); },
   async sendCode(email: string) {
-    const { error } = await sb!.auth.signInWithOtp({ email, options: { shouldCreateUser: false } });
-    if (error) throw new ApiError(error.status === 400 || /not.*found|signups/i.test(error.message) ? 'unknown_email' : 'send_failed');
+    // First sign-in creates the account; the database refuses any email not on HR's staff roster.
+    const { error } = await sb!.auth.signInWithOtp({ email, options: { shouldCreateUser: true } });
+    if (error) throw new ApiError(/database error|not_on_roster|signups|not.*found/i.test(error.message) ? 'unknown_email' : error.status === 429 ? 'too_many' : 'send_failed');
   },
   async verifyCode(email: string, token: string) {
     const { error } = await sb!.auth.verifyOtp({ email, token, type: 'email' });
@@ -152,6 +153,7 @@ export function errorText(code: string): string {
     unknown_email: 'This email is not set up yet. Ask HR.',
     bad_code: 'That code did not work. Try again.',
     send_failed: 'Could not send the code. Try again.',
+    too_many: 'Too many tries. Wait a minute.',
     device_pending: 'New phone. Waiting for approval.',
     device_revoked: 'This phone is blocked. Contact HR.',
     consent_needed: 'Please accept the consent first.',

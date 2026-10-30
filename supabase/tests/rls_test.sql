@@ -1,5 +1,7 @@
 -- Run against a local copy: checks the security promises in the PRD. Each block raises on failure.
 \set ON_ERROR_STOP 1
+insert into staff_roster (email, full_name, role, hub_name) values
+ ('kavya@startuptn.in','Kavya R','staff','Chennai'),('arun@startuptn.in','Arun K','staff','Chennai') on conflict do nothing;
 insert into auth.users values
  ('00000000-0000-0000-0000-000000000001','kavya@startuptn.in'),('00000000-0000-0000-0000-000000000002','arun@startuptn.in'),
  ('00000000-0000-0000-0000-0000000000a1','hr@startuptn.in'),('00000000-0000-0000-0000-0000000000c1','chairmanoffice@startuptn.in'),
@@ -9,7 +11,8 @@ insert into profiles (id,email,full_name,role,hub_id) values
  ('00000000-0000-0000-0000-000000000002','arun@startuptn.in','Arun K','staff',(select id from hubs where name='Chennai')),
  ('00000000-0000-0000-0000-0000000000a1','hr@startuptn.in','HR team','hr',null),
  ('00000000-0000-0000-0000-0000000000c1','chairmanoffice@startuptn.in','Chairman','chairman',null),
- ('00000000-0000-0000-0000-0000000000f1','ai@startuptn.in','Tech admin','tech',null);
+ ('00000000-0000-0000-0000-0000000000f1','ai@startuptn.in','Tech admin','tech',null)
+on conflict (id) do nothing;
 -- a punch for Kavya written by the server (service role bypasses RLS)
 insert into punches (user_id,kind,idempotency_key,client_time,lat,lng,accuracy_m,target_type,distance_m,inside,band,place_name)
 values ('00000000-0000-0000-0000-000000000001','in','k1',now(),13.08,80.27,12,'hub',40,true,'ok','Guindy, Chennai');
@@ -95,3 +98,24 @@ end $$;
 select pg_temp.as_user('00000000-0000-0000-0000-000000000001');
 do $$ begin begin perform notify_role('staff','x','spam','spam','{}'); raise exception 'FAIL staff called notify_role';
   exception when insufficient_privilege then null; end; raise notice 'PASS 7 internal functions locked'; end $$;
+
+-- 8. roster: only listed emails can sign in; first sign-in creates the profile with the roster role
+select pg_temp.reset();
+do $$ begin
+  begin insert into auth.users values ('00000000-0000-0000-0000-0000000000e1','stranger@gmail.com'); raise exception 'FAIL stranger signed up';
+    exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
+  insert into auth.users values ('00000000-0000-0000-0000-0000000000e2','Naveen@StartupTN.in');
+  if (select role from profiles where id='00000000-0000-0000-0000-0000000000e2') <> 'staff'
+     or (select h.name from profiles p join hubs h on h.id=p.hub_id where p.id='00000000-0000-0000-0000-0000000000e2') <> 'Chennai' then
+    raise exception 'FAIL roster profile'; end if;
+  raise notice 'PASS 8 roster gates sign-in and builds the profile';
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000a1');
+do $$ begin
+  begin insert into staff_roster (email, full_name, role) values ('boss@startuptn.in','X','chairman'); raise exception 'FAIL hr added a role account';
+    exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
+  insert into staff_roster (email, full_name, role, hub_name) values ('new@startuptn.in','New Staff','staff','Erode');
+  raise notice 'PASS 8b HR adds staff, not role accounts';
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-000000000001');
+do $$ begin if (select count(*) from staff_roster)<>0 then raise exception 'FAIL staff reads roster'; end if; raise notice 'PASS 8c roster hidden from staff'; end $$;

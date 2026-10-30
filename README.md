@@ -22,10 +22,10 @@ npm run dev        # open the URL on your phone (same Wi-Fi) or desktop
 1. **Supabase** (Mumbai region): create the project, then
    ```
    npx supabase link --project-ref YOUR_REF
-   npx supabase db push            # runs supabase/migrations
-   psql "$DB_URL" -f supabase/seed.sql   # hubs (placeholder coordinates)
+   npx supabase db push            # runs supabase/migrations (also seeds hubs and the 3 role logins)
    ```
-2. **Auth**: enable Email (OTP, 6 digits) and Google. Turn **off** "Allow new users to sign up" so only staff HR adds can sign in. Set SMTP to **Resend** (verify startuptn.in with SPF, DKIM, DMARC first).
+   Or let GitHub do it: add `SUPABASE_PROJECT_REF`, `SUPABASE_DB_PASSWORD`, `SUPABASE_ACCESS_TOKEN` as Actions secrets; every push to main deploys.
+2. **Auth**: enable Email and Google. Keep "Allow new users to sign up" **on**: the database only accepts emails on the staff roster. Edit the **Magic Link** email template so it sends the 6-digit code (`{{ .Token }}`). Set SMTP to **Resend** (verify startuptn.in with SPF, DKIM, DMARC first); the built-in mailer sends only a few emails an hour.
 3. **AWS (StartupTN account, ap-south-1)**: S3 bucket `stn-hr-selfies` (private, encrypted, lifecycle: delete `selfies/` after 90 days, CORS: PUT from your app domain). IAM user/role with `s3:PutObject`, `s3:GetObject` on the bucket and `rekognition:CompareFaces`.
 4. **Edge function**:
    ```
@@ -33,7 +33,7 @@ npm run dev        # open the URL on your phone (same Wi-Fi) or desktop
    npx supabase functions deploy check-in
    ```
 5. **Frontend**: copy `.env.example` to `.env`, set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`, `npm run build`, host `dist/` on HTTPS (Vercel, Netlify or S3 + CloudFront). Camera and GPS need HTTPS.
-6. **Data**: replace each hub's placeholder coordinates with its real pin. Create staff: invite each email in Supabase Auth, then insert their `profiles` row (role, hub). The first three role accounts: hr@, chairmanoffice@, ai@startuptn.in.
+6. **Data**: replace each hub's placeholder coordinates with its real pin. Load staff into `staff_roster` (from `data/staff_template.csv`); they sign in with their email code, no invite needed. The three role logins (hr@, chairmanoffice@, ai@startuptn.in) are already on the roster.
 
 ## Install on phones
 - **Android (Chrome)**: open the link, tap **Install app** (or menu > Add to Home screen).
