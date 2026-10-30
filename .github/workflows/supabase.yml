@@ -1,0 +1,31 @@
+# Deploys the database and edge functions on every push to main.
+# Secrets live in GitHub (Settings > Secrets and variables > Actions), never in code or chat:
+#   SUPABASE_ACCESS_TOKEN, SUPABASE_DB_PASSWORD, SUPABASE_PROJECT_REF
+name: Supabase deploy
+on:
+  push:
+    branches: [main]
+    paths: ['supabase/**']
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: node --experimental-strip-types --no-warnings supabase/tests/rules.test.ts
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    if: ${{ secrets.SUPABASE_PROJECT_REF != '' }}
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with: { version: latest }
+      - run: supabase link --project-ref ${{ secrets.SUPABASE_PROJECT_REF }} --password "$SUPABASE_DB_PASSWORD"
+      - run: supabase db push --password "$SUPABASE_DB_PASSWORD"
+      - run: supabase functions deploy check-in --project-ref ${{ secrets.SUPABASE_PROJECT_REF }}
