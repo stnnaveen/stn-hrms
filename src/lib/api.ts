@@ -58,7 +58,12 @@ const real = {
   async sendCode(email: string) {
     // First sign-in creates the account; the database refuses any email not on HR's staff roster.
     const { error } = await sb!.auth.signInWithOtp({ email, options: { shouldCreateUser: true, emailRedirectTo: location.origin } });
-    if (error) throw new ApiError(/database error|not_on_roster|signups|not.*found/i.test(error.message) ? 'unknown_email' : error.status === 429 ? 'too_many' : 'send_failed');
+    if (error) {
+      console.warn('sign-in email failed:', error.status, error.message);
+      throw new ApiError(/database error|not_on_roster|signups|not.*found/i.test(error.message) ? 'unknown_email'
+        : error.status === 429 || /rate limit/i.test(error.message) ? 'too_many'
+        : /sending|smtp|email/i.test(error.message) ? 'email_failed' : 'send_failed');
+    }
   },
   async verifyCode(email: string, token: string) {
     const { error } = await sb!.auth.verifyOtp({ email, token, type: 'email' });
@@ -165,6 +170,7 @@ export function errorText(code: string): string {
     bad_code: 'That code did not work. Try again.',
     send_failed: 'Could not send the code. Try again.',
     too_many: 'Too many tries. Wait a minute.',
+    email_failed: 'Email couldn’t be sent. Check email settings.',
     device_pending: 'New phone. Waiting for approval.',
     device_revoked: 'This phone is blocked. Contact HR.',
     consent_needed: 'Please accept the consent first.',
