@@ -14,7 +14,7 @@ export interface PunchResult {
   kind: 'in' | 'out'; server_time: string; band: 'ok' | 'warn' | 'bad' | null; early_out: boolean;
   place_name: string | null; lat: number; lng: number; queued?: boolean;
 }
-export interface Notif { id: string; kind: string; title: string; body: string | null; created_at: string; read_at: string | null }
+export interface Notif { id: string; kind: string; title: string; body: string | null; created_at: string; read_at: string | null; data?: { flag_id?: string } }
 export interface ODInput { subject: string; note?: string; venue_name: string; venue_lat: number | null; venue_lng: number | null; starts_at: string; ends_at: string }
 export interface LeaveInput { leave_type: string; starts_on: string; ends_on: string; half_day?: 'first' | 'second' | null; reason?: string }
 
@@ -86,10 +86,11 @@ const real = {
     return sent;
   },
   async notifications(): Promise<Notif[]> {
-    const { data } = await sb!.from('notifications').select('id, kind, title, body, created_at, read_at').order('created_at', { ascending: false }).limit(50);
+    const { data } = await sb!.from('notifications').select('id, kind, title, body, created_at, read_at, data').order('created_at', { ascending: false }).limit(50);
     return (data ?? []) as Notif[];
   },
   async markAllRead() { await sb!.from('notifications').update({ read_at: new Date().toISOString() }).is('read_at', null); },
+  async submitReason(flagId: string, reason: string) { const { error } = await sb!.rpc('submit_flag_reason', { p_flag: flagId, p_reason: reason }); if (error) throw new ApiError('save_failed'); },
   async createOD(od: ODInput) {
     const { data: u } = await sb!.auth.getUser();
     const { error } = await sb!.from('od_requests').insert({ ...od, user_id: u.user!.id });
@@ -108,11 +109,12 @@ function offlineResult(p: QueuedPunch): PunchResult {
 
 // ---------------- demo ----------------
 const demoState = {
-  signedIn: false, consented: false,
+  signedIn: false, consented: false, email: 'kavya@startuptn.in',
   today: null as Today['today'],
   requests: [{ type: 'od', id: 'd1', title: 'TIDCO policy meet', starts: '2026-11-03', status: 'approved' }] as Today['requests'],
   notifs: [
     { id: 'n1', kind: 'od_approved', title: 'OD approved', body: 'TIDCO policy meet', created_at: new Date(Date.now() - 36e5).toISOString(), read_at: null },
+    { id: 'n3', kind: 'reason_asked', title: 'Add a reason', body: 'For your check-in on 30 Oct, 10:24 AM', created_at: new Date(Date.now() - 6e5).toISOString(), read_at: null, data: { flag_id: 'f3' } },
     { id: 'n2', kind: 'info', title: 'Welcome to StartupTN HR', body: 'Check in by 10:00 AM.', created_at: new Date(Date.now() - 864e5).toISOString(), read_at: new Date().toISOString() }
   ] as Notif[]
 };
@@ -122,14 +124,17 @@ const listeners = new Set<(b: boolean) => void>();
 const demo = {
   async session() { return demoState.signedIn ? { email: 'kavya@startuptn.in' } : null; },
   onAuth(cb: (b: boolean) => void) { listeners.add(cb); return () => { listeners.delete(cb); }; },
-  async sendCode(email: string) { await wait(400); if (!/@/.test(email)) throw new ApiError('unknown_email'); },
+  async sendCode(email: string) { await wait(400); if (!/@/.test(email)) throw new ApiError('unknown_email'); demoState.email = email.toLowerCase(); },
   async verifyCode(_e: string, code: string) { await wait(400); if (code.length !== 6) throw new ApiError('bad_code'); demoState.signedIn = true; listeners.forEach((l) => l(true)); },
   async google() { demoState.signedIn = true; listeners.forEach((l) => l(true)); },
   async signOut() { demoState.signedIn = false; listeners.forEach((l) => l(false)); },
   async today(): Promise<Today> {
     await wait(150);
     return {
-      profile: { full_name: 'Kavya R', employee_code: 'STN0142', role: 'staff', hub: 'Chennai', face_status: 'approved', consented: demoState.consented },
+      profile: demoState.email.startsWith('hr@') ? { full_name: 'HR team', employee_code: null, role: 'hr', hub: null, face_status: 'none', consented: true }
+        : demoState.email.startsWith('chairman') ? { full_name: 'Chairman', employee_code: null, role: 'chairman', hub: null, face_status: 'none', consented: true }
+        : demoState.email.startsWith('ai@') ? { full_name: 'Tech admin', employee_code: null, role: 'tech', hub: null, face_status: 'none', consented: true }
+        : { full_name: 'Kavya R', employee_code: 'STN0142', role: 'staff', hub: 'Chennai', face_status: 'approved', consented: demoState.consented },
       today: demoState.today, month: { on_time: 18, late: 2, early: 1 }, requests: demoState.requests
     };
   },
@@ -146,6 +151,7 @@ const demo = {
   async flushQueue() { return 0; },
   async notifications() { return demoState.notifs; },
   async markAllRead() { demoState.notifs.forEach((n) => (n.read_at = n.read_at ?? new Date().toISOString())); },
+  async submitReason(_f: string, _r: string) { await wait(300); },
   async createOD(od: ODInput) { await wait(300); demoState.requests.unshift({ type: 'od', id: crypto.randomUUID(), title: od.subject, starts: od.starts_at, status: 'pending' }); },
   async createLeave(lv: LeaveInput) { await wait(300); demoState.requests.unshift({ type: 'leave', id: crypto.randomUUID(), title: `${lv.leave_type[0].toUpperCase()}${lv.leave_type.slice(1)} leave`, starts: lv.starts_on, status: 'pending' }); }
 };

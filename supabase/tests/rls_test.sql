@@ -119,3 +119,10 @@ do $$ begin
 end $$;
 select pg_temp.as_user('00000000-0000-0000-0000-000000000001');
 do $$ begin if (select count(*) from staff_roster)<>0 then raise exception 'FAIL staff reads roster'; end if; raise notice 'PASS 8c roster hidden from staff'; end $$;
+
+-- 9. HR summary: HR can read it, staff cannot
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000a1');
+do $$ begin if (hr_today()->>'staff')::int < 1 then raise exception 'FAIL hr_today empty'; end if; raise notice 'PASS 9 HR summary works'; end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-000000000001');
+do $$ begin begin perform hr_today(); raise exception 'FAIL staff read hr_today';
+  exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end; raise notice 'PASS 9b staff blocked from HR summary'; end $$;

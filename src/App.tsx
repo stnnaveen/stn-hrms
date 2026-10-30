@@ -7,8 +7,9 @@ import { Camera, Result } from './screens/Camera';
 import { ODForm, LeaveForm } from './screens/Forms';
 import { Notifications } from './screens/Notifications';
 import { AdminSoon } from './screens/AdminSoon';
+import { HRApp } from './screens/hr/HRApp';
 
-export type Screen = 'splash' | 'signin' | 'code' | 'consent' | 'welcome' | 'home' | 'camera' | 'result' | 'od' | 'leave' | 'notifs' | 'admin';
+export type Screen = 'splash' | 'signin' | 'code' | 'consent' | 'welcome' | 'home' | 'camera' | 'result' | 'od' | 'leave' | 'notifs' | 'admin' | 'hr';
 
 interface Ctx {
   screen: Screen;
@@ -39,7 +40,7 @@ export default function App() {
 
   const go = useCallback((s: Screen) => {
     setScreen((cur) => {
-      if (['home', 'signin', 'welcome', 'admin'].includes(s)) stack.current = [];
+      if (['home', 'signin', 'welcome', 'admin', 'hr'].includes(s)) stack.current = [];
       else if (cur !== s) { stack.current.push(cur); history.pushState({ s }, ''); }
       return s;
     });
@@ -65,6 +66,7 @@ export default function App() {
   const enter = useCallback(async () => {
     const t = await reload();
     if (!t) { go('signin'); return; }
+    if (t.profile.role === 'hr') { go('hr'); return; }
     if (ADMIN_ROLES.includes(t.profile.role)) { go('admin'); return; }
     if (!t.profile.consented) { go('consent'); return; }
     const key = new Date().toISOString().slice(0, 10);
@@ -91,14 +93,14 @@ export default function App() {
   const view = {
     splash: <Splash />, signin: <SignIn />, code: <Code />, consent: <Consent />, welcome: <Welcome />,
     home: <Home />, camera: <Camera />, result: <Result />, od: <ODForm />, leave: <LeaveForm />,
-    notifs: <Notifications />, admin: <AdminSoon />
+    notifs: <Notifications />, admin: <AdminSoon />, hr: <HRApp />
   }[screen];
 
   return (
     <AppCtx.Provider value={ctx}>
       <div className="screen">
         {view}
-        {DEMO && (screen === 'signin' || screen === 'home') && (
+        {DEMO && (screen === 'signin' || screen === 'home' || screen === 'hr') && (
           <div style={{ position: 'absolute', top: 'calc(env(safe-area-inset-top,0px) + 4px)', left: 0, right: 0, textAlign: 'center', fontSize: 11, color: 'var(--ph-ink3)', zIndex: 60, pointerEvents: 'none' }}>Demo mode · sample data</div>
         )}
         {toastMsg && <div className="toast" role="status"><Icon n="check" />{toastMsg}</div>}
