@@ -130,7 +130,7 @@ const demo = {
   async session() { return demoState.signedIn ? { email: 'kavya@startuptn.in' } : null; },
   onAuth(cb: (b: boolean) => void) { listeners.add(cb); return () => { listeners.delete(cb); }; },
   async sendCode(email: string) { await wait(400); if (!/@/.test(email)) throw new ApiError('unknown_email'); demoState.email = email.toLowerCase(); },
-  async verifyCode(_e: string, code: string) { await wait(400); if (code.length !== 6) throw new ApiError('bad_code'); demoState.signedIn = true; listeners.forEach((l) => l(true)); },
+  async verifyCode(_e: string, code: string) { await wait(400); if (code.length < 6) throw new ApiError('bad_code'); demoState.signedIn = true; listeners.forEach((l) => l(true)); },
   async google() { demoState.signedIn = true; listeners.forEach((l) => l(true)); },
   async signOut() { demoState.signedIn = false; listeners.forEach((l) => l(false)); },
   async today(): Promise<Today> {

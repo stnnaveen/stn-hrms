@@ -46,6 +46,9 @@ export function SignIn() {
   );
 }
 
+// Must match Supabase: Authentication > Providers > Email > Email OTP Length (this project uses 8)
+const OTP_LEN = Number(import.meta.env.VITE_OTP_LENGTH ?? 8);
+
 export function Code() {
   const { go, email, toast } = useApp();
   const [code, setCode] = useState('');
@@ -64,14 +67,14 @@ export function Code() {
     <div className="scr fade" style={{ paddingBottom: 30 }}>
       <button className="back" onClick={() => go('signin')}><Icon n="chevL" />Back</button>
       <h1 className="h1">Check your mail</h1>
-      <p className="sub">Sent to {email}. Tap the link or enter the code.</p>
+      <p className="sub">Code sent to {email}</p>
       <div className="otpw" onClick={() => ref.current?.focus()}>
-        <input ref={ref} inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} aria-label="6-digit code"
-          onChange={(e) => { const v = e.target.value.replace(/\D/g, '').slice(0, 6); setCode(v); if (v.length === 6) verify(v); }} />
-        <div className="otp" aria-hidden="true">{Array.from({ length: 6 }, (_, i) => <span key={i}>{code[i] ?? ''}</span>)}</div>
+        <input ref={ref} inputMode="numeric" autoComplete="one-time-code" maxLength={OTP_LEN} value={code} aria-label={`${OTP_LEN}-digit code`}
+          onChange={(e) => { const v = e.target.value.replace(/\D/g, '').slice(0, OTP_LEN); setCode(v); if (v.length === OTP_LEN) verify(v); }} />
+        <div className={`otp ${OTP_LEN > 6 ? 'otp8' : ''}`} aria-hidden="true">{Array.from({ length: OTP_LEN }, (_, i) => <span key={i}>{code[i] ?? ''}</span>)}</div>
       </div>
       {err && <div className="err" role="alert" style={{ marginTop: -12, marginBottom: 12 }}>{err}</div>}
-      <button className="btn dark" disabled={code.length !== 6 || busy} onClick={() => verify()}>{busy ? 'Checking' : 'Verify'}</button>
+      <button className="btn dark" disabled={code.length !== OTP_LEN || busy} onClick={() => verify()}>{busy ? 'Checking' : 'Verify'}</button>
       {left > 0
         ? <p className="to">Resend in 0:{String(left).padStart(2, '0')}</p>
         : <p className="to"><button style={{ color: 'var(--ph-ink)', fontWeight: 600 }} onClick={async () => { await api.sendCode(email); setLeft(30); toast('Code sent'); }}>Resend code</button></p>}

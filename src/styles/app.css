@@ -340,3 +340,5 @@ select.inp{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.
 .toast{z-index:60}
 button.card,button.req{width:100%;text-align:left}
 .shot .center{height:100%}
+.otp.otp8{gap:6px}
+.otp.otp8 span{height:52px;border-radius:13px;font-size:20px}
