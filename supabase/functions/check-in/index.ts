@@ -13,6 +13,8 @@ const REGION = env('AWS_REGION') || 'ap-south-1';
 const BUCKET = env('S3_SELFIE_BUCKET');
 const aws = { region: REGION, credentials: { accessKeyId: env('AWS_ACCESS_KEY_ID'), secretAccessKey: env('AWS_SECRET_ACCESS_KEY') } };
 const s3 = new S3Client(aws);
+// Until StartupTN's AWS keys are set, selfies go to private Supabase Storage and face match is skipped.
+const USE_S3 = !!(BUCKET && env('AWS_ACCESS_KEY_ID') && env('AWS_SECRET_ACCESS_KEY'));
 const rek = new RekognitionClient(aws);
 
 const cors = {
@@ -74,8 +76,14 @@ Deno.serve(async (req) => {
   // ---- start: signed upload URL
   if (body.action === 'start') {
     const key = `selfies/${user.id}/${istDay(new Date())}/${body.idempotency_key}.jpg`;
+    if (!USE_S3) {
+      const path = key.slice('selfies/'.length);
+      const { data, error } = await db.storage.from('selfies').createSignedUploadUrl(path);
+      if (error || !data) return json({ error: 'upload_unavailable' }, 500);
+      return json({ store: 'supabase', upload_path: path, upload_token: data.token, selfie_key: key });
+    }
     const url = await getSignedUrl(s3, new PutObjectCommand({ Bucket: BUCKET, Key: key, ContentType: 'image/jpeg' }), { expiresIn: 120 });
-    return json({ upload_url: url, selfie_key: key });
+    return json({ store: 's3', upload_url: url, selfie_key: key });
   }
 
   // ---- complete
@@ -122,7 +130,7 @@ Deno.serve(async (req) => {
   // face match 1:1 against the approved reference photo (PRD FM-05); keep the score only
   let faceSimilarity: number | null = null;
   let faceError: string | null = null;
-  if (profile.face_status === 'approved' && profile.reference_photo_key) {
+  if (USE_S3 && profile.face_status === 'approved' && profile.reference_photo_key) {
     try {
       const r = await rek.send(new CompareFacesCommand({
         SourceImage: { S3Object: { Bucket: BUCKET, Name: profile.reference_photo_key } },

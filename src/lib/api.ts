@@ -41,9 +41,14 @@ async function invoke<T>(body: Record<string, unknown>): Promise<T> {
 async function sendPunch(p: QueuedPunch): Promise<PunchResult> {
   const device_key = await deviceKey();
   const base = { kind: p.kind, idempotency_key: p.idempotency_key, device_key, platform };
-  const start = await invoke<{ upload_url: string; selfie_key: string }>({ action: 'start', ...base });
-  const put = await fetch(start.upload_url, { method: 'PUT', body: p.selfie, headers: { 'Content-Type': 'image/jpeg' } });
-  if (!put.ok) throw new ApiError('upload_failed');
+  const start = await invoke<{ store: 's3' | 'supabase'; upload_url?: string; upload_path?: string; upload_token?: string; selfie_key: string }>({ action: 'start', ...base });
+  if (start.store === 'supabase') {
+    const { error } = await sb!.storage.from('selfies').uploadToSignedUrl(start.upload_path!, start.upload_token!, p.selfie, { contentType: 'image/jpeg' });
+    if (error) throw new ApiError('upload_failed');
+  } else {
+    const put = await fetch(start.upload_url!, { method: 'PUT', body: p.selfie, headers: { 'Content-Type': 'image/jpeg' } });
+    if (!put.ok) throw new ApiError('upload_failed');
+  }
   return invoke<PunchResult>({ action: 'complete', ...base, selfie_key: start.selfie_key, client_time: p.client_time, location: p.location, liveness: p.liveness });
 }
 
