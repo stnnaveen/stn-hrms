@@ -198,7 +198,17 @@ async function placeFor(db: any, lat: number, lng: number): Promise<string | nul
   const { data: hit } = await db.from('geo_cache').select('place_name').eq('key', key).maybeSingle();
   if (hit) return hit.place_name;
   const gkey = env('GOOGLE_GEOCODING_KEY');
-  if (!gkey) return null;
+  if (!gkey) {
+    // Free fallback: OpenStreetMap Nominatim (1 request a second, cached here, so fine for this team)
+    try {
+      const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`,
+        { headers: { 'User-Agent': 'StartupTN-HR/1.0 (attendance app)', 'Accept-Language': 'en' } });
+      const j = await r.json();
+      const name = osmLabel(j);
+      if (name) await db.from('geo_cache').insert({ key, place_name: name });
+      return name;
+    } catch { return null; }
+  }
   try {
     const r = await fetch(`https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&result_type=sublocality|locality&key=${gkey}`);
     const j = await r.json();
@@ -208,4 +218,16 @@ async function placeFor(db: any, lat: number, lng: number): Promise<string | nul
     if (name) await db.from('geo_cache').insert({ key, place_name: name });
     return name ?? null;
   } catch { return null; }
+}
+
+// "Ashok Pillar Road, Ashok Nagar, Chennai" style label from an OpenStreetMap reverse lookup
+// deno-lint-ignore no-explicit-any
+export function osmLabel(j: any): string | null {
+  const a = j?.address ?? {};
+  const parts = [
+    j?.name || a.amenity || a.building || a.office || a.shop || a.road,
+    a.neighbourhood || a.suburb || a.quarter || a.village || a.hamlet,
+    a.city || a.town || a.municipality || a.county || a.state_district
+  ].filter((x: unknown, i: number, arr: unknown[]) => x && arr.indexOf(x) === i);
+  return parts.length ? parts.join(', ') : (j?.display_name ?? null);
 }

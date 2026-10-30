@@ -8,6 +8,7 @@ export interface HrToday {
 export interface Person {
   id: string; full_name: string; email: string; role: string; designation: string | null; hub: string | null; phone: string | null;
   employee_code: string | null; active: boolean; face_status: string;
+  invited?: boolean;               // on the roster, has not signed in yet
   today?: { in_time: string | null; out_time: string | null; band: string | null; status: string } | null;
 }
 export interface LeaveReq { id: string; who: string; hub: string | null; leave_type: string; starts_on: string; ends_on: string; half_day: string | null; reason: string | null; status: string; created_at: string }
@@ -20,6 +21,13 @@ export interface Flag {
 }
 export interface Hub { id: string; name: string; lat: number; lng: number; radius_m: number; maps_url: string | null; active: boolean; staff?: number }
 export interface Pin { server_time: string; lat: number; lng: number; accuracy_m: number | null }
+export interface DayPunch { kind: 'in' | 'out'; server_time: string; lat: number; lng: number; place_name: string | null; band: string | null; early_out: boolean; selfie_key: string | null; distance_m: number | null }
+export interface PersonDetail {
+  punches: DayPunch[];
+  days: { day: string; band: string | null; status: string; early_out: boolean; in_time: string | null; out_time: string | null }[];
+  ods: { id: string; subject: string; venue_name: string; starts_at: string; ends_at: string; status: string }[];
+  leaves: { id: string; leave_type: string; starts_on: string; ends_on: string; status: string }[];
+}
 
 const istToday = () => new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
 const must = <T,>(r: { data: T | null; error: unknown }): T => { if (r.error) throw new ApiError('load_failed'); return r.data as T; };
@@ -31,7 +39,14 @@ const real = {
     const ps = must(await sb!.from('profiles').select('id, full_name, email, role, designation, phone, employee_code, active, face_status, hub:hubs(name)').in('role', ['staff', 'intern']).order('full_name'));
     const days = must(await sb!.from('attendance_days').select('user_id, in_time, out_time, band, status').eq('day', istToday()));
     const byUser = new Map((days as { user_id: string }[]).map((d) => [d.user_id, d]));
-    return (ps as unknown as (Person & { hub: { name: string } | null })[]).map((p) => ({ ...p, hub: p.hub?.name ?? null, today: (byUser.get(p.id) as Person['today']) ?? null }));
+    const people = (ps as unknown as (Person & { hub: { name: string } | null })[]).map((p) => ({ ...p, hub: p.hub?.name ?? null, today: (byUser.get(p.id) as Person['today']) ?? null }));
+    const roster = must(await sb!.from('staff_roster').select('email, full_name, role, designation, hub_name, phone, employee_code').in('role', ['staff', 'intern'])) as
+      { email: string; full_name: string; role: string; designation: string | null; hub_name: string | null; phone: string | null; employee_code: string | null }[];
+    const known = new Set(people.map((p) => p.email));
+    const invited: Person[] = roster.filter((r) => !known.has(r.email)).map((r) => ({
+      id: `invite:${r.email}`, full_name: r.full_name, email: r.email, role: r.role, designation: r.designation, hub: r.hub_name, phone: r.phone,
+      employee_code: r.employee_code, active: true, face_status: 'none', invited: true, today: null }));
+    return [...people, ...invited].sort((a, b) => a.full_name.localeCompare(b.full_name));
   },
   async leaves(): Promise<LeaveReq[]> {
     const r = must(await sb!.from('leave_requests').select('id, leave_type, starts_on, ends_on, half_day, reason, status, created_at, p:profiles!leave_requests_user_id_fkey(full_name, hub:hubs(name))').eq('status', 'pending').order('starts_on'));
@@ -68,8 +83,30 @@ const real = {
     const { error } = await q; if (error) throw new ApiError('save_failed');
   },
   async addStaff(s: { full_name: string; email: string; role: 'staff' | 'intern'; designation: string; hub_name: string; phone?: string; joined_on?: string; employee_code?: string }) {
-    const { error } = await sb!.from('staff_roster').insert({ ...s, email: s.email.trim().toLowerCase(), employee_code: s.employee_code || null, phone: s.phone || null });
-    if (error) throw new ApiError(error.code === '23505' ? 'already_added' : 'save_failed');
+    const email = s.email.trim().toLowerCase();
+    const { data: dup } = await sb!.from('staff_roster').select('full_name').eq('email', email).maybeSingle();
+    if (dup) throw new ApiError(`already_added:${dup.full_name}`);
+    if (s.employee_code) {
+      const { data: dupc } = await sb!.from('staff_roster').select('full_name').eq('employee_code', s.employee_code).maybeSingle();
+      if (dupc) throw new ApiError(`code_taken:${dupc.full_name}`);
+    }
+    const { error } = await sb!.from('staff_roster').insert({ ...s, email, employee_code: s.employee_code || null, phone: s.phone || null });
+    if (error) throw new ApiError(error.code === '23505' ? 'already_added:' : 'save_failed');
+  },
+  async deleteStaff(email: string) {
+    const { error } = await sb!.rpc('delete_staff', { p_email: email });
+    if (error) throw new ApiError(/has_records/.test(error.message) ? 'has_records' : /role accounts/.test(error.message) ? 'role_account' : 'save_failed');
+  },
+  async personDetail(userId: string): Promise<PersonDetail> {
+    const ist = new Date(Date.now() + 330 * 60000);
+    const today = ist.toISOString().slice(0, 10), monthStart = today.slice(0, 8) + '01';
+    const [punches, days, ods, leaves] = await Promise.all([
+      sb!.from('punches').select('kind, server_time, lat, lng, place_name, band, early_out, selfie_key, distance_m').eq('user_id', userId).gte('server_time', new Date(`${today}T00:00:00+05:30`).toISOString()).order('server_time'),
+      sb!.from('attendance_days').select('day, band, status, early_out, in_time, out_time').eq('user_id', userId).gte('day', monthStart).order('day'),
+      sb!.from('od_requests').select('id, subject, venue_name, starts_at, ends_at, status').eq('user_id', userId).order('starts_at', { ascending: false }).limit(10),
+      sb!.from('leave_requests').select('id, leave_type, starts_on, ends_on, status').eq('user_id', userId).order('starts_on', { ascending: false }).limit(10)
+    ]);
+    return { punches: (punches.data ?? []) as DayPunch[], days: (days.data ?? []) as PersonDetail['days'], ods: (ods.data ?? []) as PersonDetail['ods'], leaves: (leaves.data ?? []) as PersonDetail['leaves'] };
   },
   async setActive(id: string, active: boolean) { const { error } = await sb!.from('profiles').update({ active }).eq('id', id); if (error) throw new ApiError('save_failed'); },
   async decideLeave(id: string, decision: 'approved' | 'returned', reason?: string) { const { error } = await sb!.rpc('decide_leave', { p_id: id, p_decision: decision, p_reason: reason ?? null }); if (error) throw new ApiError(error.message); },
@@ -118,7 +155,19 @@ const demo: typeof real = {
   async selfieUrl() { return null; },
   async hubs() { await wait(); return D.hubs; },
   async saveHub(h) { await wait(); const i = D.hubs.findIndex((x) => x.id === h.id); if (i >= 0) D.hubs[i] = { ...D.hubs[i], ...h }; else D.hubs.push({ ...h, id: crypto.randomUUID(), active: true, maps_url: h.maps_url ?? null, staff: 0 }); },
-  async addStaff(s) { await wait(); D.people.push({ id: crypto.randomUUID(), full_name: s.full_name, email: s.email, role: s.role, designation: s.designation, hub: s.hub_name, phone: s.phone ?? null, employee_code: s.employee_code ?? null, active: true, face_status: 'none', today: null }); },
+  async addStaff(s) { await wait(); const dup = D.people.find((x) => x.email === s.email.trim().toLowerCase()); if (dup) throw new ApiError(`already_added:${dup.full_name}`); D.people.push({ id: crypto.randomUUID(), full_name: s.full_name, email: s.email, role: s.role, designation: s.designation, hub: s.hub_name, phone: s.phone ?? null, employee_code: s.employee_code ?? null, active: true, face_status: 'none', invited: true, today: null }); },
+  async deleteStaff(email) { await wait(); const p = D.people.find((x) => x.email === email); if (p?.today?.in_time) throw new ApiError('has_records'); D.people = D.people.filter((x) => x.email !== email); },
+  async personDetail(uid) {
+    await wait();
+    const p = D.people.find((x) => x.id === uid);
+    const ist = new Date(Date.now() + 330 * 60000); const ym = ist.toISOString().slice(0, 8); const dnow = ist.getUTCDate();
+    const bands = ['ok', 'ok', 'warn', 'ok', 'ok', 'bad', 'ok'];
+    const days = Array.from({ length: dnow - 1 }, (_, i) => i + 1).filter((d) => new Date(`${ym}${String(d).padStart(2, '0')}`).getUTCDay() % 6 !== 0)
+      .map((d, i) => ({ day: `${ym}${String(d).padStart(2, '0')}`, band: i === 4 ? null : bands[i % 7], status: i === 4 ? 'od' : i === 9 ? 'absent' : 'present', early_out: i === 6, in_time: null, out_time: null }));
+    const punches = p?.today?.in_time ? [{ kind: 'in' as const, server_time: p.today.in_time, lat: 13.0108, lng: 80.2206, place_name: 'Guindy, Chennai', band: p.today.band, early_out: false, selfie_key: null, distance_m: 40 }] : [];
+    return { punches, days, ods: [{ id: 'o9', subject: 'TIDCO policy meet', venue_name: 'Guindy, Chennai', starts_at: iso(-2880), ends_at: iso(-3000), status: 'approved' }, { id: 'o8', subject: 'Startup expo', venue_name: 'Codissia, Coimbatore', starts_at: iso(8000), ends_at: iso(7700), status: 'approved' }],
+      leaves: [{ id: 'l9', leave_type: 'casual', starts_on: `${ym}03`, ends_on: `${ym}03`, status: 'approved' }] };
+  },
   async setActive(id, active) { await wait(); const p = D.people.find((x) => x.id === id); if (p) p.active = active; },
   async decideLeave(id) { await wait(); D.leaves = D.leaves.filter((x) => x.id !== id); },
   async decideOd(id) { await wait(); D.ods = D.ods.filter((x) => x.id !== id); },

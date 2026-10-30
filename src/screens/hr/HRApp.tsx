@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useApp } from '../../App';
 import { errorText, ApiError } from '../../lib/api';
-import { hr, FLAG_LABEL, type Flag, type HrToday, type Hub, type LeaveReq, type OdReq, type Person, type Pin } from '../../lib/hr';
+import { hr, FLAG_LABEL, type Flag, type HrToday, type Hub, type LeaveReq, type OdReq, type Person, type PersonDetail, type Pin } from '../../lib/hr';
+import { placeLabel, googleMapsUrl, appleMapsUrl, fmtDistance } from '../../lib/geo';
 import { fmtShortDay, fmtTime, greeting } from '../../lib/time';
 import { parseVenue } from '../Forms';
 import { Icon } from '../../ui/Icon';
@@ -28,6 +29,7 @@ function Head({ small, big, right }: { small: string; big: string; right?: React
 }
 function Spin() { return <div className="center" style={{ height: 240 }}><span className="spin dark" /></div>; }
 function dayChip(p: Person) {
+  if (p.invited) return <span className="chip c-warn">Invited</span>;
   const t = p.today;
   if (!t?.in_time) return <span className="chip c-pend">Not in</span>;
   if (t.status === 'od') return <span className="chip c-od">OD</span>;
@@ -131,7 +133,7 @@ function Today({ onBack, open }: { onBack: () => void; open: (s: Sub) => void })
   const people = usePeople();
   const [f, setF] = useState<'in' | 'late' | 'out' | 'od'>('in');
   const lab = { in: 'Checked in', late: 'Late', out: 'Not in', od: 'OD' };
-  const list = (people ?? []).filter((p) => p.active && (
+  const list = (people ?? []).filter((p) => p.active && !p.invited && (
     f === 'in' ? !!p.today?.in_time : f === 'late' ? ['warn', 'bad'].includes(p.today?.band ?? '') : f === 'od' ? p.today?.status === 'od' : !p.today?.in_time));
   return (
     <div className="scr fade" style={{ paddingBottom: 40 }}>
@@ -148,13 +150,13 @@ function StaffList({ open }: { open: (s: Sub) => void }) {
   const people = usePeople();
   const [q, setQ] = useState('');
   const [f, setF] = useState('All');
-  const list = (people ?? []).filter((p) => (f === 'All' ? p.active : f === 'Interns' ? p.role === 'intern' && p.active : f === 'Late' ? ['warn', 'bad'].includes(p.today?.band ?? '') : !p.active)
+  const list = (people ?? []).filter((p) => (f === 'All' ? p.active : f === 'Interns' ? p.role === 'intern' && p.active : f === 'Late' ? ['warn', 'bad'].includes(p.today?.band ?? '') : f === 'Invited' ? !!p.invited : !p.active)
     && (!q || `${p.full_name} ${p.hub}`.toLowerCase().includes(q.toLowerCase())));
   return (
     <div className="scr fade">
       <Head small={`${people?.filter((p) => p.active).length ?? '–'} people`} big="Staff" right={<button className="rbtn" onClick={() => open({ name: 'add' })} aria-label="Add staff"><Icon n="userplus" /></button>} />
       <label className="search" htmlFor="q"><Icon n="search" /><input id="q" placeholder="Search name or hub" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search staff" /></label>
-      <div className="pillrow" role="group" aria-label="Filter">{['All', 'Late', 'Interns', 'Inactive'].map((k) => <button key={k} className={`pill ${f === k ? 'on' : ''}`} onClick={() => setF(k)}>{k}</button>)}</div>
+      <div className="pillrow" role="group" aria-label="Filter">{['All', 'Late', 'Interns', 'Invited', 'Inactive'].map((k) => <button key={k} className={`pill ${f === k ? 'on' : ''}`} onClick={() => setF(k)}>{k}</button>)}</div>
       {!people ? <Spin /> : <div className="list">{list.map((p) => (
         <button key={p.id} className="card row" onClick={() => open({ name: 'person', p })}><Av n={p.full_name} /><div className="t"><b>{p.full_name}</b><span>{p.designation ?? cap(p.role)} · {p.hub ?? 'No hub'}</span></div>{p.active ? dayChip(p) : <span className="chip c-pend">Inactive</span>}</button>
       ))}{list.length === 0 && <div className="empty"><b>No match</b>Try another name or hub.</div>}</div>}
@@ -170,37 +172,143 @@ function pattern(pins: Pin[]): { same: boolean; drift: string } {
   return { same: max < 1 && accs.size === 1, drift: `Drifts up to ${Math.round(max)} m` };
 }
 
+const DOT: Record<string, string> = { ok: 'var(--ok)', warn: 'var(--warn)', bad: 'var(--bad)', od: 'var(--od)', leave: 'var(--lv)', absent: '#C9CCD3' };
+const STATUS_CHIP: Record<string, string> = { approved: 'c-ok', pending: 'c-pend', returned: 'c-bad', cancelled: 'c-pend' };
+
+function MonthCalendar({ d }: { d: PersonDetail }) {
+  const ist = new Date(Date.now() + 330 * 60000);
+  const y = ist.getUTCFullYear(), m = ist.getUTCMonth(), today = ist.getUTCDate();
+  const first = new Date(Date.UTC(y, m, 1)).getUTCDay(), len = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+  const key = (n: number) => `${y}-${String(m + 1).padStart(2, '0')}-${String(n).padStart(2, '0')}`;
+  const byDay = new Map(d.days.map((x) => [x.day, x]));
+  const onLeave = (k: string) => d.leaves.some((l) => l.status === 'approved' && l.starts_on <= k && l.ends_on >= k);
+  const state = (n: number): string | null => {
+    const k = key(n), wd = new Date(Date.UTC(y, m, n)).getUTCDay(), rec = byDay.get(k);
+    if (onLeave(k)) return 'leave';
+    if (rec?.status === 'od') return 'od';
+    if (rec?.band) return rec.band;
+    if (n < today && wd !== 0 && wd !== 6) return 'absent';
+    return null;
+  };
+  const counts = { ok: 0, warn: 0, bad: 0, od: 0, leave: 0, absent: 0 } as Record<string, number>;
+  for (let n = 1; n <= len; n++) { const st = state(n); if (st) counts[st]++; }
+  return (
+    <div className="card">
+      <div className="cal">
+        {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((w, i) => <span className="dw" key={i}>{w}</span>)}
+        {Array.from({ length: first }, (_, i) => <button key={`b${i}`} className="blank" aria-hidden="true" />)}
+        {Array.from({ length: len }, (_, i) => i + 1).map((n) => {
+          const st = state(n), wd = new Date(Date.UTC(y, m, n)).getUTCDay();
+          return <button key={n} className={`${n === today ? 'today' : ''} ${wd === 0 || wd === 6 ? 'off' : ''}`} aria-label={`${n}${st ? `, ${st}` : ''}`} tabIndex={-1}>
+            {n}{st ? <i style={{ background: DOT[st] }} /> : <i style={{ background: 'transparent' }} />}</button>;
+        })}
+      </div>
+      <div className="legend">
+        <span><i style={{ background: DOT.ok }} />On time {counts.ok}</span><span><i style={{ background: DOT.warn }} />Slightly late {counts.warn}</span>
+        <span><i style={{ background: DOT.bad }} />Late {counts.bad}</span><span><i style={{ background: DOT.od }} />OD {counts.od}</span>
+        <span><i style={{ background: DOT.leave }} />Leave {counts.leave}</span><span><i style={{ background: DOT.absent }} />No check-in {counts.absent}</span>
+      </div>
+    </div>
+  );
+}
+
 function PersonView({ p, onBack, open }: { p: Person; onBack: () => void; open: (s: Sub) => void }) {
   const { toast } = useApp();
+  const [d, setD] = useState<PersonDetail | null>(null);
   const [pins, setPins] = useState<Pin[] | null>(null);
-  const [sheet, setSheet] = useState(false);
+  const [photos, setPhotos] = useState<Record<string, string | null>>({});
+  const [sheet, setSheet] = useState<null | 'deact' | 'delete'>(null);
   const [active, setActive] = useState(p.active);
-  useEffect(() => { hr.pins(p.id).then(setPins).catch(() => setPins([])); }, [p.id]);
+  useEffect(() => {
+    if (p.invited) return;
+    hr.personDetail(p.id).then(async (x) => {
+      setD(x);
+      const urls: Record<string, string | null> = {};
+      for (const pu of x.punches) urls[pu.kind] = await hr.selfieUrl(pu.selfie_key);
+      setPhotos(urls);
+    }).catch(() => setD({ punches: [], days: [], ods: [], leaves: [] }));
+    hr.pins(p.id).then(setPins).catch(() => setPins([]));
+  }, [p.id, p.invited]);
   const pat = pins ? pattern(pins) : null;
+  const first = p.full_name.split(' ')[0];
+  const del = async () => {
+    try { await hr.deleteStaff(p.email); toast(`${first} deleted`); onBack(); }
+    catch (e) { setSheet(null); toast(e instanceof ApiError && e.code === 'has_records' ? 'Has attendance records. Deactivate instead.' : e instanceof ApiError && e.code === 'role_account' ? 'Role accounts are managed by Tech admin.' : 'Could not delete. Try again.'); }
+  };
+  const punch = (k: 'in' | 'out') => d?.punches.find((x) => x.kind === k);
+  const Tile = ({ k }: { k: 'in' | 'out' }) => {
+    const pu = punch(k);
+    if (!pu) return <div className="ph none">{k === 'in' ? 'No check-in' : 'Not checked out'}</div>;
+    return (
+      <div className="ph">{photos[k] ? <img src={photos[k]!} alt={`${p.full_name} check-${k}`} /> : <div className="center" style={{ background: '#D9DCE3', color: 'var(--ph-ink3)', fontSize: 12 }}>Photo</div>}
+        <div className="stamp">{k === 'in' ? 'In' : 'Out'} · {fmtTime(pu.server_time)}<br />{pu.place_name ?? `${pu.lat.toFixed(4)}, ${pu.lng.toFixed(4)}`}</div></div>
+    );
+  };
   return (
     <><div className="scr fade" style={{ paddingBottom: 40 }}>
       <Top small="Staff" big="Profile" onBack={onBack} />
       <div className="pcard"><span className="av" style={{ background: tint(p.full_name), display: 'grid', placeItems: 'center', color: '#fff' }}>{ini(p.full_name)}</span><h2>{p.full_name}</h2><p>{p.designation ?? cap(p.role)} · {p.hub ?? 'No hub'} hub</p>
-        <div className="meta">{dayChip(p)}<span className="chip c-mute">Face {p.face_status}</span></div></div>
+        <div className="meta">{p.invited ? <span className="chip c-warn">Invited · not signed in</span> : <>{dayChip(p)}<span className="chip c-mute">Face {p.face_status}</span></>}{!active && <span className="chip c-pend">Inactive</span>}</div></div>
+
+      {p.invited ? (
+        <div className="note-hr" style={{ marginTop: 16 }}><Icon n="mail" size={16} />Signs in with a code sent to {p.email}. Status turns active after first sign-in.</div>
+      ) : (<>
+        <div className="sec">Today</div>
+        {!d ? <Spin /> : (<>
+          <div className="dayc"><Tile k="in" /><Tile k="out" /></div>
+          {punch('in') && <div className="meta" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 10 }}>
+            {punch('in')!.band && <span className={`chip ${punch('in')!.band === 'ok' ? 'c-ok' : punch('in')!.band === 'warn' ? 'c-warn' : 'c-bad'}`}>{punch('in')!.band === 'ok' ? 'On time' : punch('in')!.band === 'warn' ? 'Slightly late' : 'Late'}</span>}
+            {punch('in')!.distance_m != null && <span className="chip c-pend">{fmtDistance(punch('in')!.distance_m!)} from target</span>}
+            {punch('out')?.early_out && <span className="chip c-bad">Early out</span>}
+          </div>}
+        </>)}
+
+        <div className="sec">This month</div>
+        {!d ? <Spin /> : <MonthCalendar d={d} />}
+
+        <div className="sec">OD</div>
+        <div className="card">
+          {!d ? <Spin /> : d.ods.length === 0 ? <span style={{ color: 'var(--ph-ink3)', fontSize: 14 }}>No OD yet.</span> : d.ods.map((o) => (
+            <div className="row" key={o.id}><div className="ri c-od"><Icon n="brief" /></div>
+              <div className="t"><b>{o.subject}</b><span>{fmtShortDay(new Date(o.starts_at))} · {fmtTime(o.starts_at)} to {fmtTime(o.ends_at)} · {o.venue_name}</span></div>
+              <span className={`chip ${STATUS_CHIP[o.status] ?? 'c-pend'}`}>{cap(o.status)}</span></div>))}
+        </div>
+
+        {d && d.leaves.length > 0 && (<>
+          <div className="sec">Leave</div>
+          <div className="card">{d.leaves.map((l) => (
+            <div className="row" key={l.id}><div className="ri c-lv"><Icon n="leaf" /></div>
+              <div className="t"><b>{cap(l.leave_type)}</b><span>{l.starts_on === l.ends_on ? fmtShortDay(new Date(l.starts_on)) : `${fmtShortDay(new Date(l.starts_on))} to ${fmtShortDay(new Date(l.ends_on))}`}</span></div>
+              <span className={`chip ${STATUS_CHIP[l.status] ?? 'c-pend'}`}>{cap(l.status)}</span></div>))}</div></>)}
+
+        <div className="sec">Location pattern · 7 check-ins</div>
+        {!pat ? <Spin /> : (
+          <div className="card row">{pat.same
+            ? <><span className="ri c-bad"><Icon n="pin" /></span><span className="t"><b>Same pin every day</b><span>Likely a location changer app</span></span></>
+            : <><span className="ri c-ok"><Icon n="pin" /></span><span className="t"><b>Natural variation</b><span>{pat.drift}</span></span></>}</div>
+        )}
+      </>)}
+
       <div className="sec">Details</div>
-      <div className="card"><dl className="kv" style={{ margin: 0 }}><dt>Designation</dt><dd>{p.designation ?? '—'}</dd><dt>Type</dt><dd>{cap(p.role)}</dd><dt>Email</dt><dd>{p.email}</dd><dt>Code</dt><dd>{p.employee_code ?? '—'}</dd><dt>Phone</dt><dd>{p.phone ?? '—'}</dd><dt>Status</dt><dd>{active ? 'Active' : 'Inactive'}</dd></dl></div>
-      <div className="sec">Location pattern · 7 check-ins</div>
-      {!pat ? <Spin /> : (
-        <div className="card row">{pat.same
-          ? <><span className="ri c-bad"><Icon n="pin" /></span><span className="t"><b>Same pin every day</b><span>Likely a location changer app</span></span></>
-          : <><span className="ri c-ok"><Icon n="pin" /></span><span className="t"><b>Natural variation</b><span>{pat.drift}</span></span></>}</div>
-      )}
+      <div className="card"><dl className="kv" style={{ margin: 0 }}><dt>Designation</dt><dd>{p.designation ?? '—'}</dd><dt>Type</dt><dd>{cap(p.role)}</dd><dt>Email</dt><dd>{p.email}</dd><dt>Code</dt><dd>{p.employee_code ?? '—'}</dd><dt>Phone</dt><dd>{p.phone ?? '—'}</dd><dt>Status</dt><dd>{p.invited ? 'Invited' : active ? 'Active' : 'Inactive'}</dd></dl></div>
+
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 20 }}>
-        <button className="btn light" onClick={() => open({ name: 'long', p })}><Icon n="leaf" />Assign long leave</button>
-        {active ? <button className="btn danger" onClick={() => setSheet(true)}>Deactivate</button>
-          : <button className="btn light" onClick={async () => { await hr.setActive(p.id, true); setActive(true); toast('Reactivated'); }}>Reactivate</button>}
+        {!p.invited && <button className="btn light" onClick={() => open({ name: 'long', p })}><Icon n="leaf" />Assign long leave</button>}
+        {!p.invited && (active ? <button className="btn light" onClick={() => setSheet('deact')}>Deactivate</button>
+          : <button className="btn light" onClick={async () => { await hr.setActive(p.id, true); setActive(true); toast('Reactivated'); }}>Reactivate</button>)}
+        <button className="btn danger" onClick={() => setSheet('delete')}>Delete</button>
       </div>
     </div>
-      {sheet && (<><div className="scrim" onClick={() => setSheet(false)} />
-        <div className="sheet" role="dialog" aria-label="Deactivate"><div className="grab" /><h3>Deactivate {p.full_name.split(' ')[0]}?</h3><p>Sign-in stops. Records stay.</p>
+      {sheet === 'deact' && (<><div className="scrim" onClick={() => setSheet(null)} />
+        <div className="sheet" role="dialog" aria-label="Deactivate"><div className="grab" /><h3>Deactivate {first}?</h3><p>Sign-in stops. Records stay.</p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 20 }}>
-            <button className="btn danger" onClick={async () => { await hr.setActive(p.id, false); setActive(false); setSheet(false); toast('Deactivated'); }}>Deactivate</button>
-            <button className="btn ghost" onClick={() => setSheet(false)}>Cancel</button></div></div></>)}
+            <button className="btn danger" onClick={async () => { await hr.setActive(p.id, false); setActive(false); setSheet(null); toast('Deactivated'); }}>Deactivate</button>
+            <button className="btn ghost" onClick={() => setSheet(null)}>Cancel</button></div></div></>)}
+      {sheet === 'delete' && (<><div className="scrim" onClick={() => setSheet(null)} />
+        <div className="sheet" role="dialog" aria-label="Delete"><div className="grab" /><h3>Delete {first}?</h3><p>For entries added by mistake. Anyone with attendance records can only be deactivated.</p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 20 }}>
+            <button className="btn danger" onClick={del}>Delete</button>
+            <button className="btn ghost" onClick={() => setSheet(null)}>Cancel</button></div></div></>)}
     </>
   );
 }
@@ -269,7 +377,7 @@ function Approvals({ c, onChange }: { c: HrToday | null; onChange: () => void })
 }
 
 function flagLine(f: Flag) {
-  if (f.kind === 'radius') return `${((f.punch?.distance_m ?? 0) / 1000).toFixed(1)} km from ${f.hub ?? 'the'} hub · tagged ${f.punch?.place_name ?? 'unknown'}`;
+  if (f.kind === 'radius') return `${fmtDistance(f.punch?.distance_m ?? 0)} from ${f.hub ?? 'the'} hub${f.punch?.place_name ? ` · near ${f.punch.place_name}` : ''}`;
   if (f.kind === 'location_changer') return 'Same pin, day after day';
   if (f.kind === 'face') return `Face match ${Math.round(f.punch?.face_similarity ?? 0)}%`;
   if (f.staff_reason) return `“${f.staff_reason}”`;
@@ -302,7 +410,11 @@ function DisputeView({ f, onBack }: { f: Flag; onBack: () => void }) {
   const { toast } = useApp();
   const [photo, setPhoto] = useState<string | null>(null);
   const [pins, setPins] = useState<Pin[] | null>(null);
-  useEffect(() => { hr.selfieUrl(f.punch?.selfie_key ?? null).then(setPhoto); hr.pins(f.user_id).then(setPins).catch(() => setPins([])); }, [f]);
+  const [place, setPlace] = useState<string | null>(f.punch?.place_name ?? null);
+  useEffect(() => {
+    hr.selfieUrl(f.punch?.selfie_key ?? null).then(setPhoto); hr.pins(f.user_id).then(setPins).catch(() => setPins([]));
+    if (f.punch && !f.punch.place_name) placeLabel(f.punch.lat, f.punch.lng).then(setPlace);
+  }, [f]);
   const [label] = FLAG_LABEL[f.kind] ?? [f.kind];
   const pu = f.punch, first = f.who.split(' ')[0];
   const q = pu?.quality_score ?? null;
@@ -312,7 +424,19 @@ function DisputeView({ f, onBack }: { f: Flag; onBack: () => void }) {
     <div className="scr fade" style={{ paddingBottom: 40 }}>
       <Top small={f.who} big={label} onBack={onBack} />
       <div className="shot">{photo ? <img src={photo} alt={`${f.who} check-in selfie`} /> : <div className="center" style={{ background: '#D9DCE3', color: 'var(--ph-ink3)', fontSize: 14 }}>No photo</div>}
-        <div className="stamp">{f.who} · Check in<br />{pu ? `${fmtShortDay(new Date(pu.server_time))} · ${fmtTime(pu.server_time)} IST` : ''}<br />{pu?.place_name ?? ''} {pu ? `· ${pu.lat.toFixed(5)}°N ${pu.lng.toFixed(5)}°E` : ''}</div></div>
+        <div className="stamp">{f.who} · Check in<br />{pu ? `${fmtShortDay(new Date(pu.server_time))} · ${fmtTime(pu.server_time)} IST` : ''}<br />{place ?? ''} {pu ? `· ${pu.lat.toFixed(5)}°N ${pu.lng.toFixed(5)}°E` : ''}</div></div>
+      {pu && <div className="card" style={{ marginTop: 12 }}>
+        <div className="row"><span className="ri c-bad"><Icon n="pin" /></span>
+          <span className="t" style={{ whiteSpace: 'normal' }}><b>Probable location</b><span style={{ whiteSpace: 'normal' }}>{place ?? 'Finding place name…'}</span></span></div>
+        <dl className="kv" style={{ marginTop: 12 }}>
+          {pu.distance_m != null && <><dt>From {f.hub ?? 'target'} hub</dt><dd>{fmtDistance(pu.distance_m)}</dd></>}
+          <dt>Coordinates</dt><dd>{pu.lat.toFixed(5)}, {pu.lng.toFixed(5)}</dd>
+          {pu.accuracy_m != null && <><dt>Accuracy</dt><dd>± {Math.round(pu.accuracy_m)} m</dd></>}
+        </dl>
+        <div className="two" style={{ marginTop: 12 }}>
+          <a className="btn light" style={{ height: 44, fontSize: 14, textDecoration: 'none' }} href={googleMapsUrl(pu.lat, pu.lng)} target="_blank" rel="noreferrer">Google Maps</a>
+          <a className="btn light" style={{ height: 44, fontSize: 14, textDecoration: 'none' }} href={appleMapsUrl(pu.lat, pu.lng)} target="_blank" rel="noreferrer">Apple Maps</a>
+        </div></div>}
       {f.staff_reason && <div className="quote" style={{ marginTop: 12 }}><small>{first} says</small>“{f.staff_reason}”</div>}
       {q !== null && <div className="card" style={{ marginTop: 12 }}><div className="qhd"><span>Live data quality</span><b>{q}<small>/100</small></b></div>
         <div className="bar"><i style={{ width: `${q}%`, background: q >= 70 ? 'var(--ok)' : 'var(--bad)' }} /></div>
@@ -398,7 +522,12 @@ function AddStaff({ onBack }: { onBack: () => void }) {
     if (!f.designation.trim()) e.designation = 'Add a designation.';
     setErrs(e); if (Object.keys(e).length) return;
     try { await hr.addStaff({ full_name: f.name.trim(), email: f.email, role: f.type, designation: f.designation.trim(), hub_name: f.hub, phone: f.phone, joined_on: f.joined, employee_code: f.code }); toast(`${f.name.split(' ')[0]} added · can sign in now`); onBack(); }
-    catch (err) { setErrs({ email: err instanceof ApiError && err.code === 'already_added' ? 'This email is already added.' : errorText('save_failed') }); }
+    catch (err) {
+      const code = err instanceof ApiError ? err.code : '';
+      if (code.startsWith('already_added')) setErrs({ email: code.split(':')[1] ? `Already added as ${code.split(':')[1]}.` : 'This email is already added.' });
+      else if (code.startsWith('code_taken')) setErrs({ code: `Code already used by ${code.split(':')[1]}.` });
+      else setErrs({ email: errorText('save_failed') });
+    }
   };
   return (
     <div className="scr fade" style={{ paddingBottom: 40 }}>
@@ -413,7 +542,7 @@ function AddStaff({ onBack }: { onBack: () => void }) {
       {errs.designation && <div className="err">{errs.designation}</div>}
       <div className="two">
         <div><label className="lab" htmlFor="a-ph">Phone</label><input className="inp" id="a-ph" inputMode="tel" value={f.phone} onChange={(e) => set('phone', e.target.value)} placeholder="98400 00000" /></div>
-        <div><label className="lab" htmlFor="a-c">Code</label><input className="inp" id="a-c" value={f.code} onChange={(e) => set('code', e.target.value)} placeholder="STN0150" /></div>
+        <div><label className="lab" htmlFor="a-c">Code</label><input className="inp" id="a-c" value={f.code} onChange={(e) => set('code', e.target.value)} placeholder="STN0150" />{errs.code && <div className="err">{errs.code}</div>}</div>
       </div>
       <div className="two">
         <div><label className="lab" htmlFor="a-j">Joining</label><input className="inp" id="a-j" type="date" value={f.joined} onChange={(e) => set('joined', e.target.value)} /></div>

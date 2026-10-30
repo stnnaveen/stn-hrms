@@ -135,3 +135,28 @@ do $$ begin if (select designation from profiles where email='desig@startuptn.in
   update staff_roster set designation='Hub Lead' where email='desig@startuptn.in';
   if (select designation from profiles where email='desig@startuptn.in') <> 'Hub Lead' then raise exception 'FAIL designation not synced'; end if;
   raise notice 'PASS 10 designation copied and kept in sync'; end $$;
+
+-- 11. delete: HR removes mistakes, never people with records or role accounts; staff cannot delete
+select pg_temp.reset();
+insert into staff_roster (email, full_name, role, hub_name) values ('mistake@startuptn.in','Wrong Entry','staff','Erode'),('signedin@startuptn.in','Signed In','staff','Erode');
+insert into auth.users values ('00000000-0000-0000-0000-0000000000d2','signedin@startuptn.in');
+select pg_temp.as_user('00000000-0000-0000-0000-000000000001');
+do $$ begin begin perform delete_staff('mistake@startuptn.in'); raise exception 'FAIL staff deleted someone';
+  exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end; raise notice 'PASS 11 staff cannot delete'; end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000a1');
+select delete_staff('mistake@startuptn.in');
+select delete_staff('SignedIn@StartupTN.in');
+do $$ begin
+  if exists (select 1 from staff_roster where email in ('mistake@startuptn.in','signedin@startuptn.in')) then raise exception 'FAIL roster rows remain'; end if;
+  begin perform delete_staff('kavya@startuptn.in'); raise exception 'FAIL deleted person with records';
+    exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
+  begin perform delete_staff('chairmanoffice@startuptn.in'); raise exception 'FAIL HR deleted role account';
+    exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
+  raise notice 'PASS 11b HR deletes mistakes only';
+end $$;
+select pg_temp.reset();
+do $$ begin
+  if exists (select 1 from profiles where email='signedin@startuptn.in') or exists (select 1 from auth.users where email='signedin@startuptn.in') then raise exception 'FAIL account not removed'; end if;
+  if not exists (select 1 from profiles where email='kavya@startuptn.in') then raise exception 'FAIL kavya removed'; end if;
+  raise notice 'PASS 11c account and profile removed, records kept';
+end $$;
