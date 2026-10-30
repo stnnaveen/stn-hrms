@@ -64,7 +64,7 @@ export function Code() {
     <div className="scr fade" style={{ paddingBottom: 30 }}>
       <button className="back" onClick={() => go('signin')}><Icon n="chevL" />Back</button>
       <h1 className="h1">Check your mail</h1>
-      <p className="sub">Code sent to {email}</p>
+      <p className="sub">Sent to {email}. Tap the link or enter the code.</p>
       <div className="otpw" onClick={() => ref.current?.focus()}>
         <input ref={ref} inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} aria-label="6-digit code"
           onChange={(e) => { const v = e.target.value.replace(/\D/g, '').slice(0, 6); setCode(v); if (v.length === 6) verify(v); }} />

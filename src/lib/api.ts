@@ -57,7 +57,7 @@ const real = {
   onAuth(cb: (signedIn: boolean) => void) { const { data } = sb!.auth.onAuthStateChange((_e, s) => cb(!!s)); return () => data.subscription.unsubscribe(); },
   async sendCode(email: string) {
     // First sign-in creates the account; the database refuses any email not on HR's staff roster.
-    const { error } = await sb!.auth.signInWithOtp({ email, options: { shouldCreateUser: true } });
+    const { error } = await sb!.auth.signInWithOtp({ email, options: { shouldCreateUser: true, emailRedirectTo: location.origin } });
     if (error) throw new ApiError(/database error|not_on_roster|signups|not.*found/i.test(error.message) ? 'unknown_email' : error.status === 429 ? 'too_many' : 'send_failed');
   },
   async verifyCode(email: string, token: string) {
