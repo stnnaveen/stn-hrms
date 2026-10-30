@@ -1,0 +1,203 @@
+// Edge function: check-in and check-out.
+//   POST { action: 'start', ... }    -> device binding + signed S3 upload URL for the selfie
+//   POST { action: 'complete', ... } -> rules, face match, place name, punch, flags, attendance day
+// The reply to the phone never contains distance, radius, inside/outside, flags or face score.
+import { createClient } from 'npm:@supabase/supabase-js@2.45.4';
+import { S3Client, PutObjectCommand } from 'npm:@aws-sdk/client-s3@3.654.0';
+import { getSignedUrl } from 'npm:@aws-sdk/s3-request-presigner@3.654.0';
+import { RekognitionClient, CompareFacesCommand } from 'npm:@aws-sdk/client-rekognition@3.654.0';
+import { evaluate, istMinutes, type Settings, type PrevPunch } from '../_shared/rules.ts';
+
+const env = (k: string) => Deno.env.get(k) ?? '';
+const REGION = env('AWS_REGION') || 'ap-south-1';
+const BUCKET = env('S3_SELFIE_BUCKET');
+const aws = { region: REGION, credentials: { accessKeyId: env('AWS_ACCESS_KEY_ID'), secretAccessKey: env('AWS_SECRET_ACCESS_KEY') } };
+const s3 = new S3Client(aws);
+const rek = new RekognitionClient(aws);
+
+const cors = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS'
+};
+const json = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
+
+interface Body {
+  action: 'start' | 'complete';
+  kind: 'in' | 'out';
+  idempotency_key: string;
+  device_key: string;
+  platform?: string;
+  selfie_key?: string;
+  client_time?: string;
+  location?: { lat: number; lng: number; accuracy: number | null; altitude?: number | null; speed?: number | null; mocked?: boolean | null };
+  liveness?: { challenge: string; passed: boolean };
+}
+
+const istDay = (d: Date) => new Date(d.getTime() + 330 * 60000).toISOString().slice(0, 10);
+
+Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
+  if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
+
+  const authHeader = req.headers.get('Authorization') ?? '';
+  const asUser = createClient(env('SUPABASE_URL'), env('SUPABASE_ANON_KEY'), { global: { headers: { Authorization: authHeader } } });
+  const { data: { user } } = await asUser.auth.getUser();
+  if (!user) return json({ error: 'not_signed_in' }, 401);
+  const db = createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'));
+
+  let body: Body;
+  try { body = await req.json(); } catch { return json({ error: 'bad_json' }, 400); }
+  if (!['in', 'out'].includes(body.kind) || !body.idempotency_key || !body.device_key) return json({ error: 'bad_request' }, 400);
+
+  const { data: profile } = await db.from('profiles').select('id, full_name, hub_id, active, consent_at, face_status, reference_photo_key').eq('id', user.id).single();
+  if (!profile?.active) return json({ error: 'not_active' }, 403);
+  if (!profile.consent_at) return json({ error: 'consent_needed' }, 403);
+
+  // ---- phone binding: first phone is bound; any other waits for the Tech admin (PRD LC-06)
+  const { data: devices } = await db.from('devices').select('id, device_key, status').eq('user_id', user.id);
+  let device = devices?.find((d) => d.device_key === body.device_key);
+  if (!device) {
+    const first = !devices?.some((d) => d.status === 'active');
+    const { data: created } = await db.from('devices').insert({
+      user_id: user.id, device_key: body.device_key, platform: body.platform ?? 'web',
+      user_agent: req.headers.get('user-agent'), status: first ? 'active' : 'pending'
+    }).select('id, device_key, status').single();
+    device = created!;
+    if (!first) {
+      await db.rpc('notify_role', { p_role: 'tech', p_kind: 'device_new', p_title: 'New phone request', p_body: profile.full_name, p_data: { device_id: device.id } });
+    }
+  }
+  if (device.status !== 'active') return json({ error: device.status === 'pending' ? 'device_pending' : 'device_revoked' }, 403);
+
+  // ---- start: signed upload URL
+  if (body.action === 'start') {
+    const key = `selfies/${user.id}/${istDay(new Date())}/${body.idempotency_key}.jpg`;
+    const url = await getSignedUrl(s3, new PutObjectCommand({ Bucket: BUCKET, Key: key, ContentType: 'image/jpeg' }), { expiresIn: 120 });
+    return json({ upload_url: url, selfie_key: key });
+  }
+
+  // ---- complete
+  if (body.action !== 'complete' || !body.location || !body.selfie_key || !body.client_time) return json({ error: 'bad_request' }, 400);
+  if (!body.selfie_key.startsWith(`selfies/${user.id}/`)) return json({ error: 'bad_selfie_key' }, 400);
+
+  const { data: existing } = await db.from('punches').select('server_time, kind, band, early_out, place_name, lat, lng').eq('idempotency_key', body.idempotency_key).maybeSingle();
+  if (existing) return json(reply(existing));
+
+  const now = new Date();
+  const today = istDay(now);
+  const { data: day } = await db.from('attendance_days').select('in_time, out_time').eq('user_id', user.id).eq('day', today).maybeSingle();
+  if (body.kind === 'in' && day?.in_time) return json({ error: 'already_checked_in' }, 409);
+  if (body.kind === 'out' && !day?.in_time) return json({ error: 'not_checked_in' }, 409);
+  if (body.kind === 'out' && day?.out_time) return json({ error: 'already_checked_out' }, 409);
+
+  const settings = await loadSettings(db);
+
+  // target: an approved OD covering now (from 30 min before) beats the hub (PRD LC-04)
+  const { data: od } = await db.from('od_requests').select('id, venue_lat, venue_lng, venue_radius_m')
+    .eq('user_id', user.id).eq('status', 'approved')
+    .lte('starts_at', new Date(now.getTime() + 30 * 60000).toISOString()).gte('ends_at', now.toISOString())
+    .not('venue_lat', 'is', null).limit(1).maybeSingle();
+  let target: { type: 'hub' | 'od'; id: string; lat: number; lng: number; radiusM: number };
+  if (od) target = { type: 'od', id: od.id, lat: od.venue_lat, lng: od.venue_lng, radiusM: od.venue_radius_m };
+  else {
+    const { data: hub } = await db.from('hubs').select('id, lat, lng, radius_m').eq('id', profile.hub_id).single();
+    if (!hub) return json({ error: 'no_hub' }, 409);
+    target = { type: 'hub', id: hub.id, lat: hub.lat, lng: hub.lng, radiusM: hub.radius_m };
+  }
+
+  const { data: history } = await db.from('punches').select('kind, lat, lng, accuracy_m, server_time')
+    .eq('user_id', user.id).order('server_time', { ascending: false }).limit(20);
+  const toPrev = (p: { lat: number; lng: number; accuracy_m: number | null; server_time: string }): PrevPunch =>
+    ({ lat: p.lat, lng: p.lng, accuracy: p.accuracy_m, at: new Date(p.server_time) });
+  const seen = new Set<string>([today]);
+  const recentDays: PrevPunch[] = [];
+  for (const p of history ?? []) {
+    const d = istDay(new Date(p.server_time));
+    if (p.kind === 'in' && !seen.has(d)) { seen.add(d); recentDays.push(toPrev(p)); }
+  }
+  const lastPunch = history?.[0] ? toPrev(history[0]) : null;
+
+  // face match 1:1 against the approved reference photo (PRD FM-05); keep the score only
+  let faceSimilarity: number | null = null;
+  let faceError: string | null = null;
+  if (profile.face_status === 'approved' && profile.reference_photo_key) {
+    try {
+      const r = await rek.send(new CompareFacesCommand({
+        SourceImage: { S3Object: { Bucket: BUCKET, Name: profile.reference_photo_key } },
+        TargetImage: { S3Object: { Bucket: BUCKET, Name: body.selfie_key } },
+        SimilarityThreshold: 0
+      }));
+      faceSimilarity = Math.max(0, ...(r.FaceMatches ?? []).map((m) => m.Similarity ?? 0));
+    } catch (e) { faceError = String(e).slice(0, 200); }
+  }
+
+  const loc = body.location;
+  const ev = evaluate({
+    kind: body.kind, serverTime: now, clientTime: new Date(body.client_time),
+    fix: { lat: loc.lat, lng: loc.lng, accuracy: loc.accuracy, altitude: loc.altitude, speed: loc.speed, mocked: loc.mocked },
+    target, faceSimilarity, liveness: body.liveness ?? null, recentDays, lastPunch,
+    integrityOk: null, settings
+  });
+
+  const placeName = await placeFor(db, loc.lat, loc.lng);
+
+  const { data: punch, error } = await db.from('punches').insert({
+    user_id: user.id, kind: body.kind, status: ev.status, device_id: device.id, idempotency_key: body.idempotency_key,
+    client_time: body.client_time, server_time: now.toISOString(),
+    synced_late_minutes: Math.max(0, Math.round((now.getTime() - new Date(body.client_time).getTime()) / 60000)),
+    lat: loc.lat, lng: loc.lng, accuracy_m: loc.accuracy, altitude: loc.altitude ?? null, speed: loc.speed ?? null, mocked: loc.mocked ?? null,
+    place_name: placeName, target_type: target.type, target_id: target.id, distance_m: Math.round(ev.distanceM), inside: ev.inside,
+    selfie_key: body.selfie_key, face_similarity: faceSimilarity,
+    liveness: { ...(body.liveness ?? {}), face_error: faceError }, quality_score: ev.quality, band: ev.band, early_out: ev.earlyOut
+  }).select('id, server_time, kind, band, early_out, place_name, lat, lng').single();
+  if (error || !punch) return json({ error: 'save_failed' }, 500);
+
+  if (ev.flags.length) {
+    await db.from('flags').insert(ev.flags.map((f) => ({ punch_id: punch.id, user_id: user.id, kind: f.kind, rule: f.rule, details: f.details })));
+  }
+
+  if (body.kind === 'in') {
+    await db.from('attendance_days').insert({ user_id: user.id, day: today, in_punch: punch.id, in_time: now.toISOString(), band: ev.band, status: target.type === 'od' ? 'od' : 'present' });
+  } else {
+    await db.from('attendance_days').update({ out_punch: punch.id, out_time: now.toISOString(), early_out: ev.earlyOut }).eq('user_id', user.id).eq('day', today);
+  }
+
+  return json(reply(punch));
+});
+
+// What the phone is allowed to know
+function reply(p: { server_time: string; kind: string; band: string | null; early_out: boolean; place_name: string | null; lat: number; lng: number }) {
+  return { ok: true, kind: p.kind, server_time: p.server_time, band: p.band, early_out: p.early_out, place_name: p.place_name, lat: p.lat, lng: p.lng, ist_minutes: istMinutes(new Date(p.server_time)) };
+}
+
+// deno-lint-ignore no-explicit-any
+async function loadSettings(db: any): Promise<Settings> {
+  const { data } = await db.from('settings').select('key, value');
+  const m = Object.fromEntries((data ?? []).map((r: { key: string; value: unknown }) => [r.key, r.value]));
+  return {
+    officeStart: m.office_start ?? '10:00', lateUntil: m.late_until ?? '10:15', officeEnd: m.office_end ?? '18:00',
+    faceThreshold: Number(m.face_threshold ?? 80), samePointDays: Number(m.same_point_days ?? 5),
+    offlineFlagMinutes: Number(m.offline_flag_minutes ?? 30), clockGapMinutes: Number(m.clock_gap_minutes ?? 2), jumpKmh: Number(m.jump_kmh ?? 150)
+  };
+}
+
+// Reverse geocode, cached by coordinates rounded to 4 decimals (~11 m) (PRD LC-09)
+// deno-lint-ignore no-explicit-any
+async function placeFor(db: any, lat: number, lng: number): Promise<string | null> {
+  const key = `${lat.toFixed(4)},${lng.toFixed(4)}`;
+  const { data: hit } = await db.from('geo_cache').select('place_name').eq('key', key).maybeSingle();
+  if (hit) return hit.place_name;
+  const gkey = env('GOOGLE_GEOCODING_KEY');
+  if (!gkey) return null;
+  try {
+    const r = await fetch(`https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&result_type=sublocality|locality&key=${gkey}`);
+    const j = await r.json();
+    const comps = j.results?.[0]?.address_components ?? [];
+    const pick = (t: string) => comps.find((c: { types: string[] }) => c.types.includes(t))?.long_name;
+    const name = [pick('sublocality_level_1') ?? pick('sublocality'), pick('locality')].filter(Boolean).join(', ') || j.results?.[0]?.formatted_address;
+    if (name) await db.from('geo_cache').insert({ key, place_name: name });
+    return name ?? null;
+  } catch { return null; }
+}
