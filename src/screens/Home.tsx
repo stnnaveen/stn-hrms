@@ -3,6 +3,7 @@ import { useApp } from '../App';
 import { api, type Notif } from '../lib/api';
 import { fmtShortDay, greeting, hoursBetween, istMinutesNow, splitTime } from '../lib/time';
 import { Icon } from '../ui/Icon';
+import { AccountSheet } from '../ui/AccountSheet';
 
 const BAND_CHIP = {
   ok: <span className="chip c-ok"><i />On time</span>,
@@ -16,6 +17,7 @@ export function Home() {
   const [fab, setFab] = useState(false);
   const [sheet, setSheet] = useState<null | 'early' | 'early1h'>(null);
   const [notifs, setNotifs] = useState<Notif[]>([]);
+  const [account, setAccount] = useState(false);
   const [now, setNow] = useState(istMinutesNow());
   useEffect(() => { reload(); api.notifications().then(setNotifs); const t = setInterval(() => setNow(istMinutesNow()), 30000); return () => clearInterval(t); }, [reload]);
 
@@ -41,7 +43,7 @@ export function Home() {
     <>
       <div className="scr fade">
         <div className="hdr">
-          <div className="av" aria-label={p.full_name}>{p.full_name.split(' ').map((w) => w[0]).join('').slice(0, 2)}</div>
+          <button className="av" onClick={() => setAccount(true)} aria-label={`${p.full_name}, account and log out`}>{p.full_name.split(' ').map((w) => w[0]).join('').slice(0, 2)}</button>
           <div className="r">
             <button className="rbtn" onClick={() => go('notifs')} aria-label="Notifications"><Icon n="bell" />{unread && <span className="badge" />}</button>
           </div>
@@ -94,6 +96,7 @@ export function Home() {
       </div>
       <button className={`fab ${fab ? 'open' : ''}`} onClick={() => setFab(!fab)} aria-label={fab ? 'Close' : 'New request'} aria-expanded={fab}><Icon n="plus" /></button>
 
+      {account && <AccountSheet name={p.full_name} sub={`${p.employee_code ? p.employee_code + ' · ' : ''}${p.hub ?? 'No'} hub`} onClose={() => setAccount(false)} />}
       {sheet && <div className="scrim" onClick={() => setSheet(null)} />}
       {sheet === 'early' && (
         <div className="sheet" role="dialog" aria-label="Leaving early"><div className="grab" />

@@ -127,7 +127,7 @@ const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const listeners = new Set<(b: boolean) => void>();
 
 const demo = {
-  async session() { return demoState.signedIn ? { email: 'kavya@startuptn.in' } : null; },
+  async session() { return demoState.signedIn ? { email: demoState.email } : null; },
   onAuth(cb: (b: boolean) => void) { listeners.add(cb); return () => { listeners.delete(cb); }; },
   async sendCode(email: string) { await wait(400); if (!/@/.test(email)) throw new ApiError('unknown_email'); demoState.email = email.toLowerCase(); },
   async verifyCode(_e: string, code: string) { await wait(400); if (code.length < 6) throw new ApiError('bad_code'); demoState.signedIn = true; listeners.forEach((l) => l(true)); },

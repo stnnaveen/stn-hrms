@@ -14,7 +14,7 @@ export function AdminSoon() {
         <Logo size={64} />
         <h1 className="h1" style={{ marginTop: 20, fontSize: 26 }}>{role} view is next.</h1>
         <p className="sub">Staff check-in is live first.</p>
-        <button className="btn light" style={{ marginTop: 24 }} onClick={() => api.signOut()}>Sign out</button>
+        <button className="btn light" style={{ marginTop: 24 }} onClick={() => api.signOut()}>Log out</button>
       </div>
     </div>
   );

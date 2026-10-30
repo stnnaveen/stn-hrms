@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useApp } from '../../App';
-import { api, errorText, ApiError } from '../../lib/api';
+import { errorText, ApiError } from '../../lib/api';
 import { hr, FLAG_LABEL, type Flag, type HrToday, type Hub, type LeaveReq, type OdReq, type Person, type Pin } from '../../lib/hr';
 import { fmtShortDay, fmtTime, greeting } from '../../lib/time';
 import { parseVenue } from '../Forms';
 import { Icon } from '../../ui/Icon';
 import { Notifications } from '../Notifications';
+import { AccountSheet } from '../../ui/AccountSheet';
 
 type Tab = 'home' | 'staff' | 'approvals' | 'disputes';
 type Sub = { name: 'today' } | { name: 'person'; p: Person } | { name: 'dispute'; f: Flag } | { name: 'hubs' } | { name: 'hub'; h: Hub | null }
@@ -84,11 +85,12 @@ export function HRApp() {
 }
 
 function Home({ c, open, setTab }: { c: HrToday | null; open: (s: Sub) => void; setTab: (t: Tab) => void }) {
+  const [account, setAccount] = useState(false);
   if (!c) return <div className="scr"><Spin /></div>;
   const notIn = Math.max(0, c.staff - c.checked_in - c.leave);
   return (
-    <div className="scr fade">
-      <div className="hdr"><span className="av me" aria-label="HR team">HR</span><div className="r">
+    <><div className="scr fade">
+      <div className="hdr"><button className="av me" onClick={() => setAccount(true)} aria-label="HR account and log out">HR</button><div className="r">
         <button className="rbtn" onClick={() => open({ name: 'hubs' })} aria-label="Hubs"><Icon n="building" /></button>
         <button className="rbtn" onClick={() => open({ name: 'notifs' })} aria-label="Notifications"><Icon n="bell" /></button></div></div>
       <div className="dark">
@@ -111,9 +113,11 @@ function Home({ c, open, setTab }: { c: HrToday | null; open: (s: Sub) => void; 
         <button onClick={() => open({ name: 'add' })}><span className="sq"><Icon n="userplus" /></span>Add staff</button>
         <button onClick={() => open({ name: 'hubs' })}><span className="sq"><Icon n="building" /></span>Hubs</button>
         <button onClick={() => open({ name: 'long' })}><span className="sq"><Icon n="leaf" /></span>Long leave</button>
-        <button onClick={() => api.signOut()}><span className="sq"><Icon n="out" /></span>Sign out</button>
+        <button onClick={() => setAccount(true)}><span className="sq"><Icon n="out" /></span>Log out</button>
       </div>
     </div>
+    {account && <AccountSheet name="HR team" sub="HR · All hubs" onClose={() => setAccount(false)} />}
+    </>
   );
 }
 
