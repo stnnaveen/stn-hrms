@@ -26,7 +26,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Secret SUPABASE_PROJECT_REF is set
-        run: test -n "$PROJECT_REF" && test "${#PROJECT_REF}" -eq 20
+        run: test -n "$PROJECT_REF"
+      - name: Clean SUPABASE_PROJECT_REF (spaces, quotes, full URL)
+        run: |
+          ref=$(printf '%s' "$PROJECT_REF" | tr -d '[:space:]"' | sed -E 's#^https?://##; s#\.supabase\.co.*$##')
+          test "${#ref}" -eq 20
+          echo "PROJECT_REF=$ref" >> "$GITHUB_ENV"
       - name: Secret SUPABASE_ACCESS_TOKEN is set
         run: test -n "$SUPABASE_ACCESS_TOKEN"
       - name: Secret SUPABASE_DB_PASSWORD is set
