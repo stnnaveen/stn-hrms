@@ -34,6 +34,27 @@ const istToday = () => new Date(Date.now() + 330 * 60000).toISOString().slice(0,
 const must = <T,>(r: { data: T | null; error: unknown }): T => { if (r.error) throw new ApiError('load_failed'); return r.data as T; };
 
 // ---------------- real ----------------
+// ---- selfie links: batch keys asked for within 40 ms into one server call, cache for 4 minutes
+const linkCache = new Map<string, { url: string | null; at: number }>();
+let batch: { key: string; res: (u: string | null) => void }[] = [];
+let timer: ReturnType<typeof setTimeout> | null = null;
+function selfieLink(key: string): Promise<string | null> {
+  const hit = linkCache.get(key);
+  if (hit && Date.now() - hit.at < 240000) return Promise.resolve(hit.url);
+  return new Promise((res) => {
+    batch.push({ key, res });
+    if (!timer) timer = setTimeout(async () => {
+      const b = batch; batch = []; timer = null;
+      for (let i = 0; i < b.length; i += 100) {
+        const part = b.slice(i, i + 100);
+        let urls: Record<string, string | null> = {};
+        try { const { data } = await sb!.functions.invoke('check-in', { body: { action: 'selfie_urls', keys: part.map((x) => x.key) } }); urls = data?.urls ?? {}; } catch { /* show placeholders */ }
+        for (const x of part) { const u = urls[x.key] ?? null; linkCache.set(x.key, { url: u, at: Date.now() }); x.res(u); }
+      }
+    }, 40);
+  });
+}
+
 const real = {
   async today(): Promise<HrToday> { return must(await sb!.rpc('hr_today')) as HrToday; },
   async people(): Promise<Person[]> {
@@ -75,11 +96,8 @@ const real = {
   async pins(userId: string): Promise<Pin[]> {
     return must(await sb!.from('punches').select('server_time, lat, lng, accuracy_m').eq('user_id', userId).eq('kind', 'in').order('server_time', { ascending: false }).limit(7)) as Pin[];
   },
-  async selfieUrl(key: string | null): Promise<string | null> {
-    if (!key) return null;
-    const { data } = await sb!.storage.from('selfies').createSignedUrl(key.replace(/^selfies\//, ''), 300);
-    return data?.signedUrl ?? null;
-  },
+  /** 5-minute link to view a selfie, from S3 or Supabase Storage (the server knows which). Requests made together go as one call. */
+  selfieUrl(key: string | null): Promise<string | null> { return key ? selfieLink(key) : Promise.resolve(null); },
   async hubs(): Promise<Hub[]> {
     const hs = must(await sb!.from('hubs').select('id, name, lat, lng, radius_m, maps_url, active, pin_set_at').order('name')) as Hub[];
     const ps = must(await sb!.from('profiles').select('hub_id').in('role', ['staff', 'intern']).eq('active', true)) as { hub_id: string | null }[];

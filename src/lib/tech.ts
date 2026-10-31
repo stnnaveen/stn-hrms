@@ -3,7 +3,7 @@
 import { sb, DEMO, ApiError } from './api';
 import type { Flag } from './hr';
 
-export interface Health { db_ok: boolean; db_ms: number; storage: 's3' | 'supabase'; face_match: boolean; geocode: 'google' | 'ola' | 'osm'; region: string }
+export interface Health { db_ok: boolean; db_ms: number; s3_ok?: boolean | null; s3_error?: string | null; bucket?: string | null; storage: 's3' | 'supabase'; face_match: boolean; geocode: 'google' | 'ola' | 'osm'; region: string }
 export interface Overview {
   staff: number; checkins: number; openAlerts: number; quality: number | null;
   newPhones: number; flaggedPhones: number; falseFlags: number;

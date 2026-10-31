@@ -113,7 +113,8 @@ function services(h: Health | null, chain: { ok: boolean; rows: number } | null)
   if (!h) return [];
   return [
     { n: 'Database', s: `Supabase · Mumbai`, v: h.db_ok ? `${h.db_ms} ms` : 'Down', c: h.db_ok ? '' : 'bad' },
-    { n: 'Selfie storage', s: h.storage === 's3' ? 'AWS S3 · Mumbai' : 'Supabase Storage · until AWS keys', v: 'On', c: h.storage === 's3' ? '' : 'p' },
+    { n: 'Selfie storage', s: h.storage === 's3' ? (h.s3_ok === false ? `AWS S3 · ${h.s3_error ?? 'error'} · check keys and policy` : `AWS S3 · Mumbai · ${h.bucket ?? ''}`) : 'Supabase Storage · until AWS keys',
+      v: h.storage === 's3' ? (h.s3_ok === false ? 'Error' : 'On') : 'On', c: h.storage === 's3' ? (h.s3_ok === false ? 'bad' : '') : 'p' },
     { n: 'Face match', s: h.face_match ? 'AWS Rekognition' : 'Off · needs AWS keys', v: h.face_match ? 'On' : 'Off', c: h.face_match ? '' : 'off' },
     { n: 'Place names', s: h.geocode === 'google' ? 'Google Maps' : h.geocode === 'ola' ? 'Ola Maps · India' : 'OpenStreetMap · free', v: 'On', c: h.geocode === 'osm' ? 'p' : '' },
     { n: 'Sign-in codes', s: 'Resend · hr.startuptn.in', v: 'On', c: '' },

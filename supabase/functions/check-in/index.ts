@@ -2,11 +2,12 @@
 //   POST { action: 'start', ... }    -> device binding + signed S3 upload URL for the selfie
 //   POST { action: 'complete', ... } -> rules, face match, place name, punch, flags, attendance day
 //   POST { action: 'health' }   -> Tech admin: which services are on (no secrets)
+//   POST { action: 'selfie_urls', keys } -> HR / Chairman / Tech: short-lived links to view selfies (S3 or Supabase Storage)
 //   POST { action: 'resolve_venue', url } -> OD form: Google/Apple Maps link -> pin, name, place
 //   kind 'visit' = OD venue check-in during an approved OD; never changes the day's check-in or check-out
 // The reply to the phone never contains distance, radius, inside/outside, flags or face score.
 import { createClient } from 'npm:@supabase/supabase-js@2.45.4';
-import { S3Client, PutObjectCommand, DeleteObjectsCommand } from 'npm:@aws-sdk/client-s3@3.654.0';
+import { S3Client, PutObjectCommand, DeleteObjectsCommand, GetObjectCommand, DeleteObjectCommand } from 'npm:@aws-sdk/client-s3@3.654.0';
 import { getSignedUrl } from 'npm:@aws-sdk/s3-request-presigner@3.654.0';
 import { RekognitionClient, CompareFacesCommand } from 'npm:@aws-sdk/client-rekognition@3.654.0';
 import { evaluate, istMinutes, radiusCheck, type Settings, type PrevPunch } from '../_shared/rules.ts';
@@ -30,8 +31,8 @@ const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
 
 interface Body {
-  action: 'start' | 'complete' | 'punch' | 'ping' | 'timing' | 'health' | 'resolve_venue' | 'radius_test' | 'purge' | 'delete_person' | 'remove_selfie';
-  timings?: Record<string, number>; total_ms?: number;
+  action: 'start' | 'complete' | 'punch' | 'ping' | 'timing' | 'health' | 'selfie_urls' | 'resolve_venue' | 'radius_test' | 'purge' | 'delete_person' | 'remove_selfie';
+  timings?: Record<string, number>; total_ms?: number; keys?: string[];
   kind: 'in' | 'out' | 'visit';
   url?: string;
   // radius_test (Tech): a point to test against a hub, or against a pin + radius
@@ -96,8 +97,36 @@ Deno.serve(async (req) => {
     const { data: me } = await db.from('profiles').select('role, active').eq('id', user.id).single();
     if (me?.role !== 'tech' || !me.active) return json({ error: 'not_allowed' }, 403);
     const t0 = Date.now(); const { error } = await db.from('settings').select('key').limit(1);
-    return json({ ok: true, db_ms: Date.now() - t0, db_ok: !error, storage: USE_S3 ? 's3' : 'supabase', face_match: USE_S3, geocode: env('GOOGLE_GEOCODING_KEY') ? 'google' : env('OLA_MAPS_KEY') ? 'ola' : 'osm', region: REGION });
+    const dbMs = Date.now() - t0;
+    // with AWS keys set, prove the bucket really accepts a write and a delete (names the error, never the keys)
+    let s3Ok: boolean | null = null, s3Err: string | null = null;
+    if (USE_S3) {
+      try {
+        const k = `selfies/_health/${crypto.randomUUID()}.txt`;
+        await s3.send(new PutObjectCommand({ Bucket: BUCKET, Key: k, Body: 'ok', ContentType: 'text/plain' }));
+        await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: k }));
+        s3Ok = true;
+      } catch (e) { s3Ok = false; s3Err = (e as { name?: string }).name ?? 'S3Error'; }
+    }
+    return json({ ok: true, db_ms: dbMs, db_ok: !error, s3_ok: s3Ok, s3_error: s3Err, bucket: USE_S3 ? BUCKET : null, storage: USE_S3 ? 's3' : 'supabase', face_match: USE_S3, geocode: env('GOOGLE_GEOCODING_KEY') ? 'google' : env('OLA_MAPS_KEY') ? 'ola' : 'osm', region: REGION });
   }
+  // ---- HR / Chairman / Tech: short-lived links (5 min) to view selfies, wherever each file lives
+  if (body.action === 'selfie_urls') {
+    const { data: me } = await db.from('profiles').select('role, active').eq('id', user.id).single();
+    if (!me?.active || !['hr', 'chairman', 'tech'].includes(me.role)) return json({ error: 'not_allowed' }, 403);
+    const keys = [...new Set((body.keys ?? []).filter((k) => typeof k === 'string' && k.startsWith('selfies/')))].slice(0, 100);
+    const { data: rows } = keys.length ? await db.from('punches').select('selfie_key, selfie_store').in('selfie_key', keys) : { data: [] };
+    const store = new Map((rows ?? []).map((r: { selfie_key: string; selfie_store: string | null }) => [r.selfie_key, r.selfie_store ?? 'supabase']));
+    const urls: Record<string, string | null> = {};
+    await Promise.all(keys.map(async (k) => {
+      try {
+        if (store.get(k) === 's3' && USE_S3) urls[k] = await getSignedUrl(s3, new GetObjectCommand({ Bucket: BUCKET, Key: k }), { expiresIn: 300 });
+        else { const { data } = await db.storage.from('selfies').createSignedUrl(k.slice('selfies/'.length), 300); urls[k] = data?.signedUrl ?? null; }
+      } catch { urls[k] = null; }
+    }));
+    return json({ ok: true, urls });
+  }
+
   // ---- HR/Tech: delete a person completely; Tech: remove one selfie. The database decides who may; photos go here.
   if (body.action === 'delete_person' || body.action === 'remove_selfie') {
     if (body.action === 'delete_person') {
@@ -272,7 +301,7 @@ Deno.serve(async (req) => {
     synced_late_minutes: Math.max(0, Math.round((now.getTime() - new Date(body.client_time).getTime()) / 60000)),
     lat: loc.lat, lng: loc.lng, accuracy_m: loc.accuracy, altitude: loc.altitude ?? null, speed: loc.speed ?? null, mocked: loc.mocked ?? null,
     place_name: placeName, target_type: target.type, target_id: target.id, distance_m: Math.round(ev.distanceM), inside: ev.inside,
-    selfie_key: body.selfie_key, face_similarity: faceSimilarity,
+    selfie_key: body.selfie_key, selfie_store: USE_S3 ? 's3' : 'supabase', face_similarity: faceSimilarity,
     liveness: { ...(body.liveness ?? {}), face_error: faceError }, quality_score: ev.quality, band: ev.band, early_out: ev.earlyOut,
     timings: { ...(body.timings ?? {}), auth_ms: tAuth, upload_ms: uploadMs, server_ms: Date.now() - T0, one_shot: body.action === 'punch' }
   }).select('id, server_time, kind, band, early_out, place_name, lat, lng').single();
