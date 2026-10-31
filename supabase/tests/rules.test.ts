@@ -73,4 +73,10 @@ ok(nameFrom('https://maps.apple.com/?ll=13.0,80.2&q=TIDCO%20Office') === 'TIDCO 
 ok(coordsFromHtml('<meta content="https://maps.google.com/maps/api/staticmap?center=11.0301%2C77.0322&zoom=15">')?.lat === 11.0301, 'coordinates found in page');
 ok(evaluate({ ...base, kind: 'visit' as const, serverTime: ist(14, 5), clientTime: ist(14, 5) }).flags.length === 0, 'venue check-in: no late or early-out flags');
 
+// ---- radius check used by check-in and the Tech radius test
+import { radiusCheck } from '../functions/_shared/rules.ts';
+const rc = radiusCheck({ lat: 13.0318, lng: 80.2433, accuracy: 13 }, { lat: 13.0827, lng: 80.2707, radiusM: 500 });
+ok(!rc.inside && Math.round(rc.distanceM / 100) === 64, 'old placeholder Chennai pin is 6.4 km away (the bug HR saw)');
+ok(radiusCheck({ lat: 13.0318, lng: 80.2433, accuracy: 13 }, { lat: 13.0321, lng: 80.2436, radiusM: 200 }).inside, 'same building, 200 m radius: inside');
+ok(radiusCheck({ lat: 13.0, lng: 80.0, accuracy: 300 }, { lat: 13.0063, lng: 80.0, radiusM: 500 }).creditM === 100, 'accuracy credit capped at 100 m');
 process.exit(fails ? 1 : 0);

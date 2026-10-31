@@ -6,10 +6,10 @@
 //   kind 'visit' = OD venue check-in during an approved OD; never changes the day's check-in or check-out
 // The reply to the phone never contains distance, radius, inside/outside, flags or face score.
 import { createClient } from 'npm:@supabase/supabase-js@2.45.4';
-import { S3Client, PutObjectCommand } from 'npm:@aws-sdk/client-s3@3.654.0';
+import { S3Client, PutObjectCommand, DeleteObjectsCommand } from 'npm:@aws-sdk/client-s3@3.654.0';
 import { getSignedUrl } from 'npm:@aws-sdk/s3-request-presigner@3.654.0';
 import { RekognitionClient, CompareFacesCommand } from 'npm:@aws-sdk/client-rekognition@3.654.0';
-import { evaluate, istMinutes, type Settings, type PrevPunch } from '../_shared/rules.ts';
+import { evaluate, istMinutes, radiusCheck, type Settings, type PrevPunch } from '../_shared/rules.ts';
 import { firstUrl, isMapsHost, coordsFrom, coordsFromHtml, nameFrom } from '../_shared/maplink.ts';
 
 const env = (k: string) => Deno.env.get(k) ?? '';
@@ -30,9 +30,13 @@ const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
 
 interface Body {
-  action: 'start' | 'complete' | 'health' | 'resolve_venue';
+  action: 'start' | 'complete' | 'health' | 'resolve_venue' | 'radius_test' | 'purge';
   kind: 'in' | 'out' | 'visit';
   url?: string;
+  // radius_test (Tech): a point to test against a hub, or against a pin + radius
+  hub_id?: string; point?: { lat: number; lng: number; accuracy: number | null }; target?: { lat: number; lng: number; radius_m: number };
+  // purge (Tech, testing phase)
+  scope?: string; user?: string | null; hub?: string | null; from?: string | null; to?: string | null; what?: string[]; dry?: boolean;
   idempotency_key: string;
   device_key: string;
   platform?: string;
@@ -63,6 +67,33 @@ Deno.serve(async (req) => {
     const t0 = Date.now(); const { error } = await db.from('settings').select('key').limit(1);
     return json({ ok: true, db_ms: Date.now() - t0, db_ok: !error, storage: USE_S3 ? 's3' : 'supabase', face_match: USE_S3, geocode: env('GOOGLE_GEOCODING_KEY') ? 'google' : 'osm', region: REGION });
   }
+  // ---- Tech admin tools: radius test (same decision as check-in) and clearing test records
+  if (body.action === 'radius_test' || body.action === 'purge') {
+    const { data: me } = await db.from('profiles').select('role, active').eq('id', user.id).single();
+    if (me?.role !== 'tech' || !me.active) return json({ error: 'not_allowed' }, 403);
+    if (body.action === 'radius_test') {
+      const pt = body.point;
+      if (!pt || !Number.isFinite(pt.lat) || !Number.isFinite(pt.lng)) return json({ error: 'bad_request' }, 400);
+      let t = body.target ? { lat: body.target.lat, lng: body.target.lng, radiusM: body.target.radius_m } : null;
+      if (!t && body.hub_id) { const { data: h } = await db.from('hubs').select('lat, lng, radius_m').eq('id', body.hub_id).single(); if (h) t = { lat: h.lat, lng: h.lng, radiusM: h.radius_m }; }
+      if (!t) return json({ error: 'no_target' }, 400);
+      const r = radiusCheck(pt, t);
+      return json({ ok: true, distance_m: Math.round(r.distanceM), credit_m: Math.round(r.creditM), inside: r.inside, radius_m: t.radiusM, place: await placeFor(db, pt.lat, pt.lng) });
+    }
+    const { data: res, error } = await asUser.rpc('purge_records', { p_scope: body.scope, p_user: body.user ?? null, p_hub: body.hub ?? null,
+      p_from: body.from ?? null, p_to: body.to ?? null, p_what: body.what ?? ['checkins', 'flags', 'od', 'leave', 'notifications'], p_dry: body.dry !== false });
+    if (error) return json({ error: (error.message || 'purge_failed').replace(/^.*?:\s*/, '') }, 400);
+    let photos = 0;
+    const keys: string[] = res?.selfie_keys ?? [];
+    for (let i = 0; i < keys.length; i += 100) {
+      const chunk = keys.slice(i, i + 100);
+      if (USE_S3) { try { await s3.send(new DeleteObjectsCommand({ Bucket: BUCKET, Delete: { Objects: chunk.map((Key) => ({ Key })) } })); photos += chunk.length; } catch { /* keep going */ } }
+      const { data: gone } = await db.storage.from('selfies').remove(chunk.map((k) => k.replace(/^selfies\//, '')));
+      if (!USE_S3) photos += gone?.length ?? 0;
+    }
+    return json({ ok: true, ...res, selfie_keys: undefined, photos_removed: photos });
+  }
+
   // ---- OD venue: read a Google or Apple Maps link on the server (short links need redirects the phone can't follow)
   if (body.action === 'resolve_venue') {
     const r = await resolveVenue(db, String(body.url ?? ''));
@@ -258,35 +289,50 @@ async function placeFor(db: any, lat: number, lng: number): Promise<string | nul
   const key = `${lat.toFixed(4)},${lng.toFixed(4)}`;
   const { data: hit } = await db.from('geo_cache').select('place_name').eq('key', key).maybeSingle();
   if (hit) return hit.place_name;
+  let name: string | null = null;
   const gkey = env('GOOGLE_GEOCODING_KEY');
-  if (!gkey) {
-    // Free fallback: OpenStreetMap Nominatim (1 request a second, cached here, so fine for this team)
+  if (gkey) {
+    // Google: the same names people see in Google Maps
     try {
-      const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`,
-        { headers: { 'User-Agent': 'StartupTN-HR/1.0 (attendance app)', 'Accept-Language': 'en' } });
+      const r = await fetch(`https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${gkey}`, { signal: AbortSignal.timeout(5000) });
       const j = await r.json();
-      const name = osmLabel(j);
-      if (name) await db.from('geo_cache').insert({ key, place_name: name });
-      return name;
-    } catch { return null; }
+      const comps = j.results?.[0]?.address_components ?? [];
+      const pick = (t: string) => comps.find((c: { types: string[] }) => c.types.includes(t))?.long_name;
+      name = [pick('route'), pick('sublocality_level_1') ?? pick('sublocality') ?? pick('neighborhood'), pick('locality')].filter(Boolean).join(', ') || j.results?.[0]?.formatted_address || null;
+    } catch { /* fall back */ }
   }
-  try {
-    const r = await fetch(`https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&result_type=sublocality|locality&key=${gkey}`);
-    const j = await r.json();
-    const comps = j.results?.[0]?.address_components ?? [];
-    const pick = (t: string) => comps.find((c: { types: string[] }) => c.types.includes(t))?.long_name;
-    const name = [pick('sublocality_level_1') ?? pick('sublocality'), pick('locality')].filter(Boolean).join(', ') || j.results?.[0]?.formatted_address;
-    if (name) await db.from('geo_cache').insert({ key, place_name: name });
-    return name ?? null;
-  } catch { return null; }
+  if (!name) {
+    // Free: OpenStreetMap (Nominatim), then Photon if Nominatim refuses cloud servers
+    try {
+      const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&zoom=17&addressdetails=1`,
+        { headers: { 'User-Agent': 'StartupTN-HR/1.0 (hr.startuptn.in; attendance app)', 'Accept-Language': 'en' }, signal: AbortSignal.timeout(5000) });
+      if (r.ok) name = osmLabel(await r.json());
+    } catch { /* next */ }
+  }
+  if (!name) {
+    try {
+      const r = await fetch(`https://photon.komoot.io/reverse?lat=${lat}&lon=${lng}&lang=en`, { headers: { 'User-Agent': 'StartupTN-HR/1.0' }, signal: AbortSignal.timeout(5000) });
+      if (r.ok) name = photonLabel(await r.json());
+    } catch { /* give up: the app shows coordinates and map links */ }
+  }
+  if (name) await db.from('geo_cache').insert({ key, place_name: name });
+  return name;
+}
+
+// deno-lint-ignore no-explicit-any
+function photonLabel(j: any): string | null {
+  const p = j?.features?.[0]?.properties ?? {};
+  const parts = [p.street ?? p.name, p.district ?? p.locality, p.city ?? p.county].filter((x: unknown, i: number, a: unknown[]) => x && a.indexOf(x) === i);
+  return parts.length ? parts.join(', ') : null;
 }
 
 // "Ashok Pillar Road, Ashok Nagar, Chennai" style label from an OpenStreetMap reverse lookup
 // deno-lint-ignore no-explicit-any
 export function osmLabel(j: any): string | null {
   const a = j?.address ?? {};
+  // road first, not the nearest named building: a building name can match a different branch elsewhere in the city
   const parts = [
-    j?.name || a.amenity || a.building || a.office || a.shop || a.road,
+    a.road || a.pedestrian || a.footway || j?.name,
     a.neighbourhood || a.suburb || a.quarter || a.village || a.hamlet,
     a.city || a.town || a.municipality || a.county || a.state_district
   ].filter((x: unknown, i: number, arr: unknown[]) => x && arr.indexOf(x) === i);

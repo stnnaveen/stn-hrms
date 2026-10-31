@@ -1,19 +1,21 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useApp } from '../../App';
 import { ApiError } from '../../lib/api';
-import { tech, phoneName, type Accuracy, type AuditRow, type Devices, type Device, type Health, type Overview, type RoleLogin, type Roles, type Settings } from '../../lib/tech';
+import { tech, phoneName, type HubPunch, type PurgeArgs, type PurgeResult, type PurgeWhat, type RadiusResult, type Accuracy, type AuditRow, type Devices, type Device, type Health, type Overview, type RoleLogin, type Roles, type Settings } from '../../lib/tech';
 import { hr, FLAG_LABEL, type Flag } from '../../lib/hr';
 import { placeLabel, googleMapsUrl, appleMapsUrl, fmtDistance } from '../../lib/geo';
 import { fmtDay, fmtShortDay, fmtTime, greeting } from '../../lib/time';
 import { Icon } from '../../ui/Icon';
 import { AccountSheet } from '../../ui/AccountSheet';
 import { Notifications } from '../Notifications';
-import { firstViewToday } from '../../device';
+import { bestFix, firstViewToday } from '../../device';
+import { hr as hrApi, type Hub, type Person } from '../../lib/hr';
+const MapView = lazy(() => import('../../ui/MapView'));
 
 type Tab = 'home' | 'audit' | 'alerts' | 'accuracy' | 'setup';
-type Sub = { name: 'roles' } | { name: 'devices' } | { name: 'rules' } | { name: 'integrations' } | { name: 'alert'; f: Flag } | { name: 'notifs' };
+type Sub = { name: 'roles' } | { name: 'devices' } | { name: 'rules' } | { name: 'integrations' } | { name: 'radius' } | { name: 'purge' } | { name: 'alert'; f: Flag } | { name: 'notifs' };
 type Sheet = null | { t: 'account' } | { t: 'entry'; e: AuditRow } | { t: 'addlogin' } | { t: 'login'; l: RoleLogin } | { t: 'rule'; k: string; v: string }
-  | { t: 'device'; d: Device } | { t: 'exports' } | { t: 'privacy' };
+  | { t: 'device'; d: Device } | { t: 'exports' } | { t: 'privacy' } | { t: 'addtest' };
 
 const TINTS = ['#3B4A6B', '#5B4AA8', '#2F62D9', '#1F7A55', '#9C3F5A', '#7A5A2E', '#4E5464'];
 const tint = (s: string) => TINTS[[...s].reduce((a, c) => a + c.charCodeAt(0), 0) % TINTS.length];
@@ -40,7 +42,8 @@ const t12 = (hm: string | number | undefined) => { if (typeof hm !== 'string') r
 const ERR: Record<string, string> = {
   not_yourself: 'You can’t remove your own login.', last_tech: 'Keep at least one Tech login.', is_staff: 'That email belongs to a staff member.',
   bad_email: 'Enter a valid email.', out_of_range: 'Value is outside the allowed range.', bad_time: 'Enter a time like 10:00.',
-  late_before_start: '“Late until” must be after “On time until”.', not_pending: 'Already decided.'
+  late_before_start: '“Late until” must be after “On time until”.', not_pending: 'Already decided.',
+  already_added: 'That email is already a staff member.', radius_out_of_range: 'Radius must be 50 m to 3 km.'
 };
 const errMsg = (e: unknown) => (e instanceof ApiError && ERR[e.code]) || 'Could not save. Try again.';
 
@@ -151,6 +154,8 @@ export function TechApp() {
     if (sub.name === 'roles') body = <RolesView key={tick} onBack={back} setSheet={setSheet} />;
     if (sub.name === 'devices') body = <DevicesView key={tick} onBack={back} setSheet={setSheet} onChanged={refresh} />;
     if (sub.name === 'rules') body = <RulesView key={tick} onBack={back} setSheet={setSheet} />;
+    if (sub.name === 'radius') body = <RadiusTest onBack={back} />;
+    if (sub.name === 'purge') body = <Purge onBack={back} onDone={refresh} />;
     if (sub.name === 'integrations') body = <Integrations svc={svc} health={health} onBack={back} />;
     if (sub.name === 'alert') body = <AlertView f={sub.f} onBack={back} />;
     if (sub.name === 'notifs') body = <div style={{ position: 'absolute', inset: 0 }}><Notifications onBackOverride={back} /></div>;
@@ -367,6 +372,12 @@ function Setup({ roles, ov, health, open, setSheet }: { roles: Roles | null; ov:
         {row(() => open({ name: 'devices' }), 'phone', 'c-pend', 'Devices', 'Phones, new requests, flags', ov?.newPhones ? `${ov.newPhones} new` : '')}
         {row(() => open({ name: 'rules' }), 'sliders', 'c-warn', 'Rules', 'Office hours, face, location')}
       </div>
+      <div className="sec">Testing</div>
+      <div className="card" style={{ padding: '4px 16px' }}>
+        {row(() => open({ name: 'radius' }), 'target', 'c-od', 'Radius test', 'Hub pin, circle and your live GPS')}
+        {row(() => open({ name: 'roles' }), 'users', 'c-lv', 'Test staff', 'Logins for trying the staff app')}
+        {row(() => open({ name: 'purge' }), 'x', 'c-bad', 'Clear test data', 'By person, hub, test staff or everyone')}
+      </div>
       <div className="card" style={{ padding: '4px 16px', marginTop: 12 }}>
         {row(() => open({ name: 'integrations' }), 'plug', off ? 'c-warn' : 'c-ok', 'Integrations', 'Database, storage, face, maps', off ? `${off} to set up` : 'All on')}
         {row(() => setSheet({ t: 'exports' }), 'down', 'c-pend', 'Exports', 'Attendance and audit CSV')}
@@ -390,6 +401,11 @@ function RolesView({ onBack, setSheet }: { onBack: () => void; setSheet: (s: She
               <span className="v">{l.temp ? <span className="chip c-warn">Test</span> : !l.signedIn ? <span className="chip c-pend">Not yet in</span> : !l.active ? <span className="chip c-bad">Off</span> : null}</span><Icon n="chevR" /></button>))}
             {r.logins.filter((l) => l.role === role).length === 0 && <p className="more" style={{ textAlign: 'left' }}>No login.</p>}</div></div>))}
       {r && r.logins.some((l) => l.temp) && <div className="note-hr" style={{ marginTop: 12 }}><Icon n="alert" size={16} />Remove test logins before the pilot.</div>}
+      <div className="sec">Test staff <button onClick={() => setSheet({ t: 'addtest' })}>Add</button></div>
+      <div className="card" style={{ padding: '4px 16px' }}>
+        {(r?.tests ?? []).length === 0 ? <p className="more" style={{ textAlign: 'left' }}>None yet. Add one to try the staff app on a phone.</p>
+          : r!.tests!.map((t) => <div key={t.email} className="setrow"><span className="ab" style={{ background: '#7A5A2E' }}>TS</span><span className="t"><b>{t.name}</b><span>{t.email} · {t.hub ?? 'No hub'}</span></span><span className="v">{t.signedIn ? <span className="chip c-ok">Signed in</span> : <span className="chip c-pend">Not yet in</span>}</span></div>)}
+      </div>
       <div className="sec">Everyone else</div>
       <div className="card" style={{ padding: '4px 16px' }}>
         <div className="setrow"><span className="ri c-ok"><Icon n="users" /></span><span className="t"><b>Staff</b><span>Added by HR · official email</span></span><span className="v">{r?.staff ?? '—'}</span></div>
@@ -477,11 +493,13 @@ function TechSheets({ sheet, setSheet, onChanged }: { sheet: Sheet; setSheet: (s
   const [err, setErr] = useState<string | null>(null);
   const [name, setName] = useState(''); const [email, setEmail] = useState(''); const [role, setRole] = useState<RoleLogin['role'] | null>(null);
   const [val, setVal] = useState(''); const [confirm, setConfirm] = useState(false);
+  const [hubs, setHubs] = useState<string[]>([]);
+  useEffect(() => { if (sheet?.t === 'addtest') hrApi.hubs().then((h) => setHubs(h.filter((x) => x.active).map((x) => x.name))).catch(() => setHubs([])); }, [sheet]);
   const months = useMemo(() => Array.from({ length: 6 }, (_, i) => { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - i); return d.toISOString().slice(0, 7); }), []);
   const [month, setMonth] = useState(months[0]);
   useEffect(() => {
     setBusy(false); setErr(null); setConfirm(false); setName(''); setEmail(''); setRole(null);
-    if (sheet?.t === 'rule') setVal(sheet.v);
+    if (sheet?.t === 'rule') setVal(sheet.v); else setVal('');
   }, [sheet]);
   if (!sheet) return null;
   const close = () => setSheet(null);
@@ -511,6 +529,18 @@ function TechSheets({ sheet, setSheet, onChanged }: { sheet: Sheet; setSheet: (s
       {err && <div className="err">{err}</div>}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 18 }}>
         <button className="btn dark" disabled={!ok || busy} onClick={() => run(() => tech.addLogin(email, name.trim() || ROLE_NAME[role!], role!), `Added · ${email.trim().toLowerCase()}`)}>{busy ? 'Saving' : 'Add'}</button>
+        <button className="btn ghost" onClick={close}>Cancel</button></div></>);
+  }
+  if (sheet.t === 'addtest') {
+    const ok = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim()) && !!val;
+    return wrap('Add test staff', <>
+      <h3>Add test staff</h3><p>A real staff login for trying check-in. Clear its records any time.</p>
+      <label className="fld"><span>Name</span><input value={name} onChange={(e) => setName(e.target.value)} placeholder="Test" /></label>
+      <label className="fld"><span>Email (gets the sign-in code)</span><input type="email" inputMode="email" autoCapitalize="none" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you+test@startuptn.in" /></label>
+      <label className="fld"><span>Hub</span><select value={val} onChange={(e) => setVal(e.target.value)}><option value="">Pick a hub</option>{hubs.map((h) => <option key={h} value={h}>{h}</option>)}</select></label>
+      {err && <div className="err">{err}</div>}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 18 }}>
+        <button className="btn dark" disabled={!ok || busy} onClick={() => run(() => tech.addTestStaff(email, name.trim() || 'Test', val), 'Test staff added')}>{busy ? 'Saving' : 'Add'}</button>
         <button className="btn ghost" onClick={close}>Cancel</button></div></>);
   }
   if (sheet.t === 'login') {
@@ -580,4 +610,115 @@ function TechSheets({ sheet, setSheet, onChanged }: { sheet: Sheet; setSheet: (s
       <VRow l="Selfie retention" v="Set before pilot" c="warn" />
     </div>
     <button className="btn ghost" style={{ marginTop: 10 }} onClick={close}>Close</button></>);
+}
+
+// ---------------- testing: radius test ----------------
+// Live check of a hub pin and radius: your GPS (or a tap) is judged on the server by the same rule the check-in uses.
+function RadiusTest({ onBack }: { onBack: () => void }) {
+  const { toast } = useApp();
+  const [hubs, setHubs] = useState<Hub[] | null>(null);
+  const [hid, setHid] = useState<string | null>(null);
+  const [pin, setPin] = useState<{ lat: number; lng: number } | null>(null);
+  const [r, setR] = useState(300);
+  const [pt, setPt] = useState<{ lat: number; lng: number; accuracy: number | null; src: 'gps' | 'tap' } | null>(null);
+  const [res, setRes] = useState<RadiusResult | null>(null);
+  const [recent, setRecent] = useState<HubPunch[]>([]);
+  const [busy, setBusy] = useState<'gps' | 'save' | null>(null);
+  const [dirty, setDirty] = useState(false);
+  useEffect(() => { hrApi.hubs().then((h) => { const a = h.filter((x) => x.active); setHubs(a); if (a[0]) setHid(a.find((x) => x.name === 'Chennai')?.id ?? a[0].id); }).catch(() => setHubs([])); }, []);
+  const hub = hubs?.find((h) => h.id === hid) ?? null;
+  useEffect(() => { if (!hub) return; setPin({ lat: hub.lat, lng: hub.lng }); setR(hub.radius_m); setPt(null); setRes(null); setDirty(false); tech.hubPunches(hub.id).then(setRecent).catch(() => setRecent([])); }, [hid, hubs]); // eslint-disable-line react-hooks/exhaustive-deps
+  const test = async (p: { lat: number; lng: number; accuracy: number | null; src: 'gps' | 'tap' }, rr = r, pp = pin) => {
+    setPt(p); setRes(null);
+    if (!pp) return;
+    try { setRes(await tech.radiusTest({ lat: p.lat, lng: p.lng, accuracy: p.accuracy }, { target: { lat: pp.lat, lng: pp.lng, radius_m: rr } })); } catch { toast('Could not test. Try again.'); }
+  };
+  const gps = async () => { setBusy('gps'); try { const f = await bestFix(15000, 30); await test({ lat: f.lat, lng: f.lng, accuracy: f.accuracy, src: 'gps' }); } catch (e) { toast((e as Error).message === 'location_denied' ? 'Allow location for this site.' : 'No GPS fix. Try near a window.'); } setBusy(null); };
+  const save = async () => {
+    if (!hub || !pin) return; setBusy('save');
+    try { await hrApi.saveHub({ id: hub.id, name: hub.name, lat: pin.lat, lng: pin.lng, radius_m: r, maps_url: hub.maps_url }); toast(`${hub.name} hub saved`); setDirty(false); setHubs((hs) => hs?.map((h) => (h.id === hub.id ? { ...h, lat: pin.lat, lng: pin.lng, radius_m: r, pin_set_at: new Date().toISOString() } : h)) ?? null); }
+    catch (e) { toast(errMsg(e)); }
+    setBusy(null);
+  };
+  const points = [...recent.map((p) => ({ lat: p.lat, lng: p.lng, color: p.inside === false ? '#E5303F' : '#1FAA6B', label: `${p.who} · ${p.kind === 'out' ? 'out' : 'in'} ${fmtShortDay(new Date(p.at))} ${fmtTime(p.at)}` })),
+    ...(pt ? [{ lat: pt.lat, lng: pt.lng, acc: pt.accuracy, color: '#2F62D9', label: pt.src === 'gps' ? 'You' : 'Test point' }] : [])];
+  return (
+    <div className="scr fade" style={{ paddingBottom: 40 }}>
+      <Top small="Testing" big="Radius test" onBack={onBack} />
+      {!hubs ? <Spin /> : <>
+        <div className="pillrow" style={{ marginTop: 0 }} role="group" aria-label="Hub">{hubs.map((h) => <button key={h.id} className={`pill ${hid === h.id ? 'on' : ''}`} onClick={() => setHid(h.id)}>{h.name}{h.pin_set_at ? '' : ' · no pin'}</button>)}</div>
+        {hub && !hub.pin_set_at && !dirty && <div className="note-hr" style={{ background: '#FFF4E0', color: '#8A5A00' }}><Icon n="alert" size={16} />{hub.name} still has the starter pin (city centre). Check-ins are measured from the wrong spot.</div>}
+        <Suspense fallback={<div className="mapv" style={{ height: 300 }} />}>
+          <MapView height={300} circle={pin ? { lat: pin.lat, lng: pin.lng, radius: r } : null} points={points} onTap={(lat, lng) => test({ lat, lng, accuracy: null, src: 'tap' })} />
+        </Suspense>
+        <p className="to" style={{ textAlign: 'left', margin: '8px 0 0' }}>Tap the map to test a spot. Green and red dots: last 7 days of check-ins here.</p>
+        {res && <div className={`verdict ${res.inside ? 'in' : 'out'}`}><Icon n={res.inside ? 'check' : 'flag'} /><div><b>{res.inside ? 'Inside the radius' : 'Outside the radius'}</b>
+          <span>{fmtDistance(res.distance_m)} from pin{res.credit_m ? ` · GPS ±${res.credit_m} m credited` : ''} · radius {res.radius_m} m{res.place ? ` · ${res.place}` : ''}</span></div></div>}
+        <button className="btn dark" style={{ marginTop: 12 }} disabled={busy === 'gps'} onClick={gps}><Icon n="pin" />{busy === 'gps' ? 'Getting GPS…' : 'Test my location'}</button>
+        <div className="sec">Adjust {hub?.name} hub</div>
+        <div className="seg" role="group" aria-label="Radius">{[100, 200, 300, 500, 800].map((x) => <button key={x} className={r === x ? 'on' : ''} onClick={() => { setR(x); setDirty(true); if (pt) test(pt, x); }}>{x} m</button>)}</div>
+        {pt && <button className="btn light" style={{ marginTop: 10 }} onClick={() => { setPin({ lat: pt.lat, lng: pt.lng }); setDirty(true); test(pt, r, { lat: pt.lat, lng: pt.lng }); }}><Icon n="building" />Move hub pin here</button>}
+        {pin && <p className="to" style={{ textAlign: 'left' }}>Pin {pin.lat.toFixed(5)}, {pin.lng.toFixed(5)} · <a href={`https://www.google.com/maps/search/?api=1&query=${pin.lat},${pin.lng}`} target="_blank" rel="noreferrer">check in Google Maps</a></p>}
+        {dirty && <button className="btn dark" disabled={busy === 'save'} onClick={save}>{busy === 'save' ? 'Saving' : `Save ${hub?.name} hub`}</button>}
+        <p className="to">Same rule as check-in: outside when distance minus GPS accuracy (max 100 m) is more than the radius.</p>
+      </>}
+    </div>
+  );
+}
+
+// ---------------- testing: clear test data ----------------
+const WHAT: [PurgeWhat, string][] = [['checkins', 'Check-ins and photos'], ['flags', 'Disputes'], ['od', 'OD'], ['leave', 'Leave'], ['notifications', 'Notifications'], ['devices', 'Linked phones']];
+function Purge({ onBack, onDone }: { onBack: () => void; onDone: () => void }) {
+  const { toast } = useApp();
+  const [scope, setScope] = useState<PurgeArgs['scope']>('test');
+  const [people, setPeople] = useState<Person[]>([]);
+  const [hubs, setHubs] = useState<string[]>([]);
+  const [q, setQ] = useState(''); const [user, setUser] = useState<Person | null>(null); const [hub, setHub] = useState('');
+  const [period, setPeriod] = useState<'today' | '7' | '30' | 'all'>('all');
+  const [what, setWhat] = useState<PurgeWhat[]>(['checkins', 'flags', 'od', 'leave', 'notifications']);
+  const [prev, setPrev] = useState<PurgeResult | null>(null);
+  const [confirm, setConfirm] = useState(false); const [typed, setTyped] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { hrApi.people().then((p) => setPeople(p.filter((x) => !x.invited))).catch(() => undefined); hrApi.hubs().then((h) => setHubs(h.map((x) => x.name))).catch(() => undefined); }, []);
+  useEffect(() => { setPrev(null); }, [scope, user, hub, period, what]);
+  const ist = (d: number) => new Date(Date.now() + 330 * 60000 - d * 864e5).toISOString().slice(0, 10);
+  const args = (dry: boolean): PurgeArgs => ({ scope, user: scope === 'person' ? user?.id ?? null : null, hub: scope === 'hub' ? hub : null,
+    from: period === 'all' ? null : ist(period === 'today' ? 0 : Number(period) - 1), to: period === 'all' ? null : ist(0), what, dry });
+  const ready = what.length > 0 && (scope !== 'person' || !!user) && (scope !== 'hub' || !!hub);
+  const label = scope === 'person' ? user?.full_name ?? 'a person' : scope === 'hub' ? `${hub || 'a'} hub` : scope === 'test' ? 'test staff' : 'everyone';
+  const preview = async () => { setBusy(true); try { setPrev(await tech.purge(args(true))); } catch (e) { toast(errMsg(e)); } setBusy(false); };
+  const run = async () => { setBusy(true); try { const r = await tech.purge(args(false)); toast(`Cleared · ${r.checkins} check-ins, ${r.photos_removed ?? 0} photos`); setConfirm(false); setTyped(''); setPrev(null); onDone(); } catch (e) { toast(errMsg(e)); } setBusy(false); };
+  const total = prev ? prev.checkins + prev.flags + prev.od + prev.leave + prev.notifications + prev.devices + prev.days : 0;
+  return (
+    <><div className="scr fade" style={{ paddingBottom: 40 }}>
+      <Top small="Testing" big="Clear test data" onBack={onBack} />
+      <div className="note-hr" style={{ background: '#FDE7EA', color: '#B4182C' }}><Icon n="alert" size={16} />For the testing phase. Deleted records can’t be brought back.</div>
+      <div className="sec" style={{ marginTop: 4 }}>Whose records</div>
+      <div className="seg" role="group" aria-label="Scope">{([['test', 'Test staff'], ['person', 'Person'], ['hub', 'Hub'], ['everyone', 'Everyone']] as const).map(([k, l]) => <button key={k} className={scope === k ? 'on' : ''} onClick={() => setScope(k)}>{l}</button>)}</div>
+      {scope === 'person' && <>
+        <label className="search" htmlFor="pq" style={{ marginTop: 12 }}><Icon n="search" /><input id="pq" placeholder="Search name" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search person" /></label>
+        {user ? <div className="lrow"><Av n={user.full_name} /><span className="t"><b>{user.full_name}</b><span>{user.email} · {user.hub ?? 'No hub'}</span></span><span className="v"><button className="chip c-pend" onClick={() => setUser(null)}>Change</button></span></div>
+          : people.filter((p) => !q || p.full_name.toLowerCase().includes(q.toLowerCase()) || p.email.includes(q.toLowerCase())).slice(0, 6).map((p) => <button key={p.id} className="lrow" onClick={() => setUser(p)}><Av n={p.full_name} /><span className="t"><b>{p.full_name}</b><span>{p.email} · {p.hub ?? 'No hub'}</span></span></button>)}
+      </>}
+      {scope === 'hub' && <label className="fld"><span>Hub</span><select value={hub} onChange={(e) => setHub(e.target.value)}><option value="">Pick a hub</option>{hubs.map((h) => <option key={h} value={h}>{h}</option>)}</select></label>}
+      <div className="sec">Period</div>
+      <div className="pillrow" style={{ marginTop: 0 }} role="group" aria-label="Period">{([['today', 'Today'], ['7', '7 days'], ['30', '30 days'], ['all', 'All time']] as const).map(([k, l]) => <button key={k} className={`pill ${period === k ? 'on' : ''}`} onClick={() => setPeriod(k)}>{l}</button>)}</div>
+      <div className="sec">What</div>
+      <div className="rolechips" role="group" aria-label="What to clear">{WHAT.map(([k, l]) => <button key={k} className={what.includes(k) ? 'on' : ''} aria-pressed={what.includes(k)} onClick={() => setWhat((w) => (w.includes(k) ? w.filter((x) => x !== k) : [...w, k]))}>{l}</button>)}</div>
+      {prev && <div className="card" style={{ marginTop: 16 }}><div className="ft" style={{ gridTemplateColumns: 'repeat(3,minmax(0,1fr))' }}>
+        <div><b>{prev.people}</b><span>People</span></div><div><b>{prev.checkins}</b><span>Check-ins</span></div><div><b>{prev.flags}</b><span>Disputes</span></div>
+        <div><b>{prev.od}</b><span>OD</span></div><div><b>{prev.leave}</b><span>Leave</span></div><div><b>{prev.notifications + prev.devices}</b><span>Other</span></div></div></div>}
+      <p className="to">The audit log is kept. Each clear is logged with who did it.</p>
+      {!prev ? <button className="btn light" disabled={!ready || busy} onClick={preview}>{busy ? 'Counting…' : 'Preview'}</button>
+        : <button className="btn danger" disabled={busy || total === 0} onClick={() => setConfirm(true)}>{total === 0 ? 'Nothing to clear' : `Delete for ${label}`}</button>}
+    </div>
+      {confirm && prev && (<><div className="scrim" onClick={() => setConfirm(false)} />
+        <div className="sheet" role="dialog" aria-label="Confirm delete"><div className="grab" /><h3>Delete for {label}?</h3>
+          <p>{prev.checkins} check-ins, {prev.flags} disputes, {prev.od} OD, {prev.leave} leave{what.includes('devices') ? `, ${prev.devices} phones` : ''}. Photos go too. Type DELETE to confirm.</p>
+          <label className="fld"><span>Type DELETE</span><input value={typed} onChange={(e) => setTyped(e.target.value)} autoCapitalize="characters" /></label>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 16 }}>
+            <button className="btn danger" disabled={typed.trim() !== 'DELETE' || busy} onClick={run}>{busy ? 'Deleting' : 'Delete'}</button>
+            <button className="btn ghost" onClick={() => setConfirm(false)}>Cancel</button></div></div></>)}
+    </>
+  );
 }

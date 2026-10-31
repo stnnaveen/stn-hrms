@@ -258,3 +258,32 @@ do $$ begin
   if not exists (select 1 from notifications where user_id = '00000000-0000-0000-0000-000000000002' and kind = 'hub_changed') then raise exception 'FAIL not told'; end if;
   raise notice 'PASS 14c HR moves staff to another hub; staff told';
 end $$;
+
+-- 15. Hub pins, test staff, and Tech purge (audit log kept)
+select pg_temp.reset();
+do $$ begin
+  if (select pin_set_at from hubs where name = 'Chennai') is not null then raise exception 'FAIL seed pin counted as set'; end if;
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000a1');
+update hubs set radius_m = 300 where name = 'Chennai';
+do $$ begin if (select pin_set_at from hubs where name = 'Chennai') is not null then raise exception 'FAIL same pin counted as set'; end if; end $$;
+update hubs set lat = 13.0321, lng = 80.2436 where name = 'Chennai';
+do $$ begin if (select pin_set_at from hubs where name = 'Chennai') is null then raise exception 'FAIL new pin not marked'; end if;
+  begin perform purge_records('everyone', p_dry => false); raise exception 'FAIL HR purged'; exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
+  begin perform add_test_staff('t1@startuptn.in', 'T', 'Chennai'); raise exception 'FAIL HR added test staff'; exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
+  raise notice 'PASS 15 real hub pins tracked; HR cannot purge';
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000f1');
+select add_test_staff('Tester@StartupTN.in', 'Tester', 'Chennai');
+do $$ declare r jsonb; a bigint; begin
+  if not (select is_test from staff_roster where email = 'tester@startuptn.in') then raise exception 'FAIL test staff not added'; end if;
+  a := (select count(*) from audit_log);
+  r := purge_records('person', p_user => '00000000-0000-0000-0000-000000000001');
+  if (r->>'checkins')::int < 1 or exists (select 1 from punches where user_id = '00000000-0000-0000-0000-000000000001') is false then raise exception 'FAIL dry run wrong %', r; end if;
+  r := purge_records('person', p_user => '00000000-0000-0000-0000-000000000001', p_dry => false);
+  if exists (select 1 from punches where user_id = '00000000-0000-0000-0000-000000000001') then raise exception 'FAIL punches remain'; end if;
+  if exists (select 1 from od_requests where user_id = '00000000-0000-0000-0000-000000000001') then raise exception 'FAIL ODs remain'; end if;
+  if (select count(*) from audit_log) <= a then raise exception 'FAIL purge not logged'; end if;
+  if not (verify_audit_chain() ->> 'ok')::boolean then raise exception 'FAIL audit chain broken by purge'; end if;
+  raise notice 'PASS 15b Tech previews then clears a person; audit log kept and chained';
+end $$;

@@ -19,7 +19,7 @@ export interface Flag {
   punch: { server_time: string; lat: number; lng: number; accuracy_m: number | null; place_name: string | null; distance_m: number | null;
     quality_score: number | null; face_similarity: number | null; selfie_key: string | null; mocked: boolean | null } | null;
 }
-export interface Hub { id: string; name: string; lat: number; lng: number; radius_m: number; maps_url: string | null; active: boolean; staff?: number }
+export interface Hub { id: string; name: string; lat: number; lng: number; radius_m: number; maps_url: string | null; active: boolean; staff?: number; pin_set_at?: string | null }
 export interface Pin { server_time: string; lat: number; lng: number; accuracy_m: number | null }
 export interface DayPunch { kind: 'in' | 'out'; server_time: string; lat: number; lng: number; place_name: string | null; band: string | null; early_out: boolean; selfie_key: string | null; distance_m: number | null }
 export interface PersonDetail {
@@ -73,7 +73,7 @@ const real = {
     return data?.signedUrl ?? null;
   },
   async hubs(): Promise<Hub[]> {
-    const hs = must(await sb!.from('hubs').select('id, name, lat, lng, radius_m, maps_url, active').order('name')) as Hub[];
+    const hs = must(await sb!.from('hubs').select('id, name, lat, lng, radius_m, maps_url, active, pin_set_at').order('name')) as Hub[];
     const ps = must(await sb!.from('profiles').select('hub_id').in('role', ['staff', 'intern']).eq('active', true)) as { hub_id: string | null }[];
     return hs.map((h) => ({ ...h, staff: ps.filter((p) => p.hub_id === h.id).length }));
   },

@@ -495,3 +495,9 @@ b.nmf .rf{flex:none}
 .inrow .inp{flex:1;min-width:0}
 .inrow .btn{width:auto;padding:0 16px;height:52px;flex:none}
 .hintl{font-size:12.5px;color:var(--ph-ink3);margin-top:6px}
+.mapv{border-radius:20px;overflow:hidden;position:relative;z-index:0;isolation:isolate;background:#E4E6EA;box-shadow:0 4px 14px rgba(13,19,33,.06)}
+.mapv .leaflet-control-attribution{font-size:9px}
+.verdict{display:flex;align-items:center;gap:12px;margin-top:12px;padding:14px;border-radius:16px}
+.verdict.in{background:#E8F6EF;color:#14653F}.verdict.out{background:#FDE7EA;color:#B4182C}
+.verdict b{display:block;font-size:17px}.verdict span{font-size:13px;opacity:.85}
+.dayc a.ph{display:block;text-decoration:none;color:inherit}

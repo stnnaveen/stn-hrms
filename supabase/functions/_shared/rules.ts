@@ -52,6 +52,14 @@ export function haversineM(a: { lat: number; lng: number }, b: { lat: number; ln
 }
 
 /** On time by 10:00, slightly late to 10:15, late after (PRD: strict, no grace). */
+/** Location: outside when distance minus GPS accuracy exceeds the radius; accuracy credit capped at 100 m (PRD LC-03).
+ *  The one place this decision is made; the Tech radius test calls it too. */
+export function radiusCheck(fix: { lat: number; lng: number; accuracy?: number | null }, target: Target) {
+  const distanceM = haversineM(fix, target);
+  const creditM = Math.min(fix.accuracy ?? 0, 100);
+  return { distanceM, creditM, inside: distanceM - creditM <= target.radiusM };
+}
+
 export function bandFor(at: Date, s: Settings): Band {
   const m = istMinutes(at);
   if (m <= toMin(s.officeStart)) return 'ok';
@@ -83,10 +91,7 @@ export function evaluate(input: {
   const flags: Evaluation['flags'] = [];
   let quality = 100;
 
-  // Location: outside when distance minus accuracy exceeds the radius; accuracy credit capped at 100 m
-  const distanceM = haversineM(fix, target);
-  const credit = Math.min(fix.accuracy ?? 0, 100);
-  const inside = distanceM - credit <= target.radiusM;
+  const { distanceM, inside } = radiusCheck(fix, target);
   if (!inside) flags.push({ kind: 'radius', rule: `R-02 distance > ${target.radiusM} m`, details: { distance_m: Math.round(distanceM), accuracy_m: fix.accuracy } });
 
   // Time

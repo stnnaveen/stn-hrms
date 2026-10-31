@@ -430,12 +430,14 @@ function PersonSheet({ s, onClose }: { s: Staff; onClose: () => void }) {
   useEffect(() => {
     hr.personDetail(s.id).then(async (x) => { setD(x); const u: Record<string, string | null> = {}; for (const p of x.punches) u[p.kind] = await hr.selfieUrl(p.selfie_key); setPhotos(u); }).catch(() => setD({ punches: [], days: [], ods: [], leaves: [] }));
   }, [s.id]);
+  const [places, setPlaces] = useState<Record<string, string | null>>({});
+  useEffect(() => { d?.punches.forEach((pu) => { if (!pu.place_name) placeLabel(pu.lat, pu.lng).then((n) => setPlaces((x) => ({ ...x, [pu.kind]: n }))); }); }, [d]);
   const month = d ? { on: d.days.filter((x) => x.band === 'ok' || x.status === 'od').length, late: d.days.filter((x) => x.band === 'warn' || x.band === 'bad').length, early: d.days.filter((x) => x.early_out).length } : null;
   const tile = (k: 'in' | 'out') => {
     const p = d?.punches.find((x) => x.kind === k);
     const t = k === 'in' ? s.inTime : s.outTime;
     if (!p) return <div className="ph none">{t ? `${k === 'in' ? 'In' : 'Out'} · ${fmtTime(t)}` : k === 'in' ? 'No check-in' : s.cat === 'in' ? 'Still in office' : 'Not checked out'}</div>;
-    return <div className="ph">{photos[k] ? <img src={photos[k]!} alt={`${s.name} check-${k}`} /> : <div className="center" style={{ background: '#D9DCE3', color: 'var(--ph-ink3)', fontSize: 12 }}>Photo</div>}<div className="stamp">{k === 'in' ? 'In' : 'Out'} · {fmtTime(p.server_time)}<br />{p.place_name ?? `${s.hub} hub area`}</div></div>;
+    return <a className="ph" href={googleMapsUrl(p.lat, p.lng)} target="_blank" rel="noreferrer">{photos[k] ? <img src={photos[k]!} alt={`${s.name} check-${k}`} /> : <div className="center" style={{ background: '#D9DCE3', color: 'var(--ph-ink3)', fontSize: 12 }}>Photo</div>}<div className="stamp">{k === 'in' ? 'In' : 'Out'} · {fmtTime(p.server_time)}<br />{p.place_name ?? places[k] ?? 'Finding place…'}<br />{p.lat.toFixed(5)}, {p.lng.toFixed(5)}</div></a>;
   };
   return (<><div className="scrim" onClick={onClose} />
     <div className="sheet" role="dialog" aria-label={s.name}><div className="grab" />

@@ -11,7 +11,8 @@ export interface Overview {
 }
 export interface AuditRow { id: number; at: string; actor: string; who?: string | null; actorRole: string; action: string; entity: string; entityId: string | null; before: Record<string, unknown> | null; after: Record<string, unknown> | null; hash: string; prev: string | null }
 export interface RoleLogin { email: string; name: string; role: 'hr' | 'chairman' | 'tech'; signedIn: boolean; active: boolean; temp: boolean }
-export interface Roles { logins: RoleLogin[]; staff: number; interns: number }
+export interface TestStaff { email: string; name: string; hub: string | null; signedIn: boolean }
+export interface Roles { logins: RoleLogin[]; staff: number; interns: number; tests?: TestStaff[] }
 export interface Device { id: string; userId: string; who: string; hub: string | null; platform: string; ua: string | null; status: 'active' | 'pending' | 'revoked'; created_at: string; approved_at: string | null }
 export interface Devices { pending: Device[]; active: Device[]; flagged: { userId: string; who: string; hub: string | null; kind: string; at: string }[] }
 export interface Accuracy {
@@ -21,6 +22,11 @@ export interface Accuracy {
   falseList: { id: string; who: string; kind: string; at: string }[];
 }
 export type Settings = Record<string, string | number>;
+export interface RadiusResult { distance_m: number; credit_m: number; inside: boolean; radius_m: number; place: string | null }
+export interface HubPunch { lat: number; lng: number; acc: number | null; inside: boolean | null; at: string; who: string; kind: string }
+export type PurgeWhat = 'checkins' | 'flags' | 'od' | 'leave' | 'notifications' | 'devices';
+export interface PurgeArgs { scope: 'person' | 'hub' | 'test' | 'everyone'; user?: string | null; hub?: string | null; from?: string | null; to?: string | null; what: PurgeWhat[]; dry: boolean }
+export interface PurgeResult { people: number; checkins: number; days: number; flags: number; od: number; leave: number; notifications: number; devices: number; photos_removed?: number }
 export const TEMP_LOGINS = ['naveenflop@gmail.com', 'naveenbackup7@gmail.com'];
 
 const must = <T,>(r: { data: T | null; error: unknown }): T => { if (r.error) throw new ApiError('load_failed'); return r.data as T; };
@@ -99,16 +105,20 @@ const real = {
     };
   },
   async roles(): Promise<Roles> {
-    const [ro, pr, st, it] = await Promise.all([
+    const [ro, pr, st, it, ts, tp] = await Promise.all([
       sb!.from('staff_roster').select('email, full_name, role').in('role', ['hr', 'chairman', 'tech']).order('role'),
       sb!.from('profiles').select('email, active').in('role', ['hr', 'chairman', 'tech']),
       sb!.from('profiles').select('id', { count: 'exact', head: true }).eq('role', 'staff').eq('active', true),
-      sb!.from('profiles').select('id', { count: 'exact', head: true }).eq('role', 'intern').eq('active', true)
+      sb!.from('profiles').select('id', { count: 'exact', head: true }).eq('role', 'intern').eq('active', true),
+      sb!.from('staff_roster').select('email, full_name, hub_name').eq('is_test', true).order('full_name'),
+      sb!.from('profiles').select('email').eq('role', 'staff')
     ]);
+    const signed = new Set(((tp.data ?? []) as { email: string }[]).map((x) => x.email));
     const pm = new Map((must(pr) as { email: string; active: boolean }[]).map((p) => [p.email, p.active]));
     return {
       logins: (must(ro) as { email: string; full_name: string; role: RoleLogin['role'] }[]).map((r) => ({ email: r.email, name: r.full_name, role: r.role, signedIn: pm.has(r.email), active: pm.get(r.email) ?? true, temp: TEMP_LOGINS.includes(r.email) })),
-      staff: st.count ?? 0, interns: it.count ?? 0
+      staff: st.count ?? 0, interns: it.count ?? 0,
+      tests: ((ts.data ?? []) as { email: string; full_name: string; hub_name: string | null }[]).map((t) => ({ email: t.email, name: t.full_name, hub: t.hub_name, signedIn: signed.has(t.email) }))
     };
   },
   async addLogin(email: string, name: string, role: RoleLogin['role']) { const { error } = await sb!.rpc('add_role_login', { p_email: email, p_name: name, p_role: role }); rpcErr(error); },
@@ -134,6 +144,24 @@ const real = {
   },
   async setSetting(key: string, value: string | number) { const { error } = await sb!.rpc('set_setting', { p_key: key, p_value: value }); rpcErr(error); },
   /** CSV text for download. Every export is logged (PRD TA-08). */
+  /** Same radius decision the check-in uses, run on the server. */
+  async radiusTest(point: { lat: number; lng: number; accuracy: number | null }, t: { hub_id?: string; target?: { lat: number; lng: number; radius_m: number } }): Promise<RadiusResult> {
+    const { data, error } = await sb!.functions.invoke('check-in', { body: { action: 'radius_test', point, ...t } });
+    if (error || !data?.ok) throw new ApiError('test_failed');
+    return data as RadiusResult;
+  },
+  async hubPunches(hubId: string): Promise<HubPunch[]> {
+    const since = new Date(Date.now() - 7 * 864e5).toISOString();
+    const r = must(await sb!.from('punches').select('lat, lng, accuracy_m, inside, server_time, kind, p:profiles!punches_user_id_fkey(full_name)').eq('target_type', 'hub').eq('target_id', hubId).gte('server_time', since).order('server_time', { ascending: false }).limit(60)) as unknown as
+      { lat: number; lng: number; accuracy_m: number | null; inside: boolean | null; server_time: string; kind: string; p: { full_name: string } | null }[];
+    return r.map((x) => ({ lat: x.lat, lng: x.lng, acc: x.accuracy_m, inside: x.inside, at: x.server_time, kind: x.kind, who: x.p?.full_name ?? '' }));
+  },
+  async purge(a: PurgeArgs): Promise<PurgeResult> {
+    const { data, error } = await sb!.functions.invoke('check-in', { body: { action: 'purge', ...a } });
+    if (error) { let code = 'purge_failed'; try { code = (await (error as { context?: Response }).context?.json())?.error ?? code; } catch { /* keep */ } throw new ApiError(code); }
+    return data as PurgeResult;
+  },
+  async addTestStaff(email: string, name: string, hub: string) { const { error } = await sb!.rpc('add_test_staff', { p_email: email, p_name: name, p_hub: hub }); rpcErr(error); },
   async exportCsv(kind: 'attendance' | 'audit', month: string): Promise<string> {
     const start = `${month}-01`, end = new Date(new Date(`${start}T00:00:00Z`).getTime() + 32 * 864e5).toISOString().slice(0, 7) + '-01';
     await sb!.rpc('log_action', { p_action: 'export', p_entity: kind, p_entity_id: month, p_details: {} });
@@ -173,6 +201,7 @@ const DS = {
     { id: 'd4', userId: 's4', who: 'Lakshmi N', hub: 'Salem', platform: 'web', ua: 'Mozilla/5.0 (Linux; Android 14; V2250) Chrome/129', status: 'active', created_at: ago(7000), approved_at: null }
   ] as Device[],
   falseIds: new Set<string>(),
+  tests: [{ email: 'test1@startuptn.in', name: 'Test', hub: 'Chennai', signedIn: true }] as TestStaff[],
   audit: [] as AuditRow[]
 };
 (() => {
@@ -212,7 +241,7 @@ const demo: typeof real = {
       rules: [{ kind: 'late', raised: 21, valid: 9, violation: 4, falseFlags: 0 }, { kind: 'radius', raised: 6, valid: 3, violation: 1, falseFlags: 1 }, { kind: 'location_changer', raised: 2, valid: 0, violation: 1, falseFlags: 0 }, { kind: 'mock_location', raised: 1, valid: 0, violation: 1, falseFlags: 0 }],
       falseList: [{ id: 'f5', who: 'Karthik R', kind: 'radius', at: ago(4300) }] };
   },
-  async roles() { await wait(); return { logins: DS.logins, staff: 92, interns: 4 }; },
+  async roles() { await wait(); return { logins: DS.logins, staff: 92, interns: 4, tests: DS.tests }; },
   async addLogin(email, name, role) { await wait(); const e = email.trim().toLowerCase(); DS.logins = [...DS.logins.filter((l) => l.email !== e), { email: e, name: name || role, role, signedIn: false, active: true, temp: false }]; },
   async removeLogin(email) { await wait(); if (email === 'ai@startuptn.in') throw new ApiError('not_yourself'); DS.logins = DS.logins.filter((l) => l.email !== email); },
   async devices() { await wait(); return { pending: DS.pending, active: DS.active, flagged: [{ userId: 's44', who: 'Ramesh T', hub: 'Salem', kind: 'mock_location', at: ago(5800) }] }; },
@@ -220,6 +249,15 @@ const demo: typeof real = {
   async resetDevices(userId) { await wait(); DS.active = DS.active.filter((x) => x.userId !== userId); },
   async settings() { await wait(); return { ...DS.settings }; },
   async setSetting(key, value) { await wait(); DS.settings[key] = value; },
+  async radiusTest(point, t) {
+    await wait(300); const c = t.target ?? { lat: 13.0321, lng: 80.2436, radius_m: 300 };
+    const R = 6371000, toR = (d: number) => (d * Math.PI) / 180, dl = toR(point.lat - c.lat), dg = toR(point.lng - c.lng);
+    const d = 2 * R * Math.asin(Math.sqrt(Math.sin(dl / 2) ** 2 + Math.cos(toR(c.lat)) * Math.cos(toR(point.lat)) * Math.sin(dg / 2) ** 2)), cr = Math.min(point.accuracy ?? 0, 100);
+    return { distance_m: Math.round(d), credit_m: Math.round(cr), inside: d - cr <= c.radius_m, radius_m: c.radius_m, place: 'Anna Salai, Nandanam, Chennai' };
+  },
+  async hubPunches() { await wait(); return [{ lat: 13.0319, lng: 80.2434, acc: 12, inside: true, at: ago(300), who: 'Kavya R', kind: 'in' }, { lat: 13.0326, lng: 80.2441, acc: 20, inside: true, at: ago(320), who: 'Arun K', kind: 'in' }, { lat: 13.0412, lng: 80.2338, acc: 15, inside: false, at: ago(900), who: 'Ravi S', kind: 'in' }]; },
+  async purge(a) { await wait(500); const n = a.scope === 'person' ? 1 : a.scope === 'test' ? 2 : a.scope === 'hub' ? 28 : 96; return { people: n, checkins: n * 6, days: n * 3, flags: Math.ceil(n / 2), od: a.what.includes('od') ? n : 0, leave: a.what.includes('leave') ? Math.ceil(n / 3) : 0, notifications: a.what.includes('notifications') ? n * 4 : 0, devices: a.what.includes('devices') ? n : 0, photos_removed: a.dry ? undefined : n * 6 }; },
+  async addTestStaff(email, name, hub) { await wait(); DS.tests = [...DS.tests, { email: email.trim().toLowerCase(), name: name || 'Test staff', hub, signedIn: false }]; },
   async exportCsv(kind, month) { await wait(); return kind === 'attendance' ? `Date,Name,Hub,Status\n${month}-01,Kavya R,Chennai,present` : `Id,Action\n1,update`; }
 };
 
