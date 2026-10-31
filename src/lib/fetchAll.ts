@@ -2,7 +2,7 @@
 import { ApiError } from './api';
 
 // deno-lint-ignore no-explicit-any
-type Q = { range: (from: number, to: number) => PromiseLike<{ data: any[] | null; error: unknown }> };
+export type Q = { range: (from: number, to: number) => PromiseLike<{ data: any[] | null; error: unknown }> };
 
 /** `make` must return a fresh, ordered query each time (stable order keeps pages from overlapping). */
 export async function fetchAll<T>(make: () => Q, cap = 60000): Promise<T[]> {

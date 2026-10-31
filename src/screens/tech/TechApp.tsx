@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useApp } from '../../App';
 import { ApiError } from '../../lib/api';
-import { tech, phoneName, type Speed, type HubPunch, type SelfieRow, type SelfieStats, type PurgeArgs, type PurgeResult, type PurgeWhat, type RadiusResult, type Accuracy, type AuditRow, type Devices, type Device, type Health, type Overview, type RoleLogin, type Roles, type Settings } from '../../lib/tech';
+import { tech, phoneName, type BulkResult, type Speed, type HubPunch, type SelfieRow, type SelfieStats, type PurgeArgs, type PurgeResult, type PurgeWhat, type RadiusResult, type Accuracy, type AuditRow, type Devices, type Device, type Health, type Overview, type RoleLogin, type Roles, type Settings } from '../../lib/tech';
 import { hr, FLAG_LABEL, type Flag } from '../../lib/hr';
 import { placeLabel, googleMapsUrl, appleMapsUrl, fmtDistance } from '../../lib/geo';
 import { fmtDay, fmtShortDay, fmtTime, greeting } from '../../lib/time';
@@ -10,11 +10,14 @@ import { AccountSheet } from '../../ui/AccountSheet';
 import { RefreshButton } from '../../ui/RefreshButton';
 import { Notifications } from '../Notifications';
 import { bestFix, firstViewToday } from '../../device';
+import { parseCsv, pick, normDate, toCsv, download } from '../../lib/csv';
+import { buildReport } from '../../lib/report';
+import { api } from '../../lib/api';
 import { hr as hrApi, type Hub, type Person } from '../../lib/hr';
 const MapView = lazy(() => import('../../ui/MapView'));
 
 type Tab = 'home' | 'audit' | 'alerts' | 'accuracy' | 'setup';
-type Sub = { name: 'roles' } | { name: 'devices' } | { name: 'rules' } | { name: 'integrations' } | { name: 'radius' } | { name: 'purge' } | { name: 'selfies' } | { name: 'alert'; f: Flag } | { name: 'notifs' };
+type Sub = { name: 'roles' } | { name: 'devices' } | { name: 'rules' } | { name: 'integrations' } | { name: 'radius' } | { name: 'purge' } | { name: 'selfies' } | { name: 'bulk' } | { name: 'report' } | { name: 'alert'; f: Flag } | { name: 'notifs' };
 type Sheet = null | { t: 'account' } | { t: 'entry'; e: AuditRow } | { t: 'addlogin' } | { t: 'login'; l: RoleLogin } | { t: 'rule'; k: string; v: string }
   | { t: 'device'; d: Device } | { t: 'exports' } | { t: 'privacy' } | { t: 'addtest' };
 
@@ -158,6 +161,8 @@ export function TechApp() {
     if (sub.name === 'rules') body = <RulesView key={tick} onBack={back} setSheet={setSheet} />;
     if (sub.name === 'radius') body = <RadiusTest onBack={back} />;
     if (sub.name === 'selfies') body = <Selfies onBack={back} />;
+    if (sub.name === 'bulk') body = <BulkUpload onBack={back} onDone={refresh} />;
+    if (sub.name === 'report') body = <Report onBack={back} />;
     if (sub.name === 'purge') body = <Purge onBack={back} onDone={refresh} />;
     if (sub.name === 'integrations') body = <Integrations svc={svc} health={health} onBack={back} />;
     if (sub.name === 'alert') body = <AlertView f={sub.f} onBack={back} />;
@@ -393,7 +398,9 @@ function Setup({ roles, ov, health, open, setSheet }: { roles: Roles | null; ov:
       </div>
       <div className="card" style={{ padding: '4px 16px', marginTop: 12 }}>
         {row(() => open({ name: 'integrations' }), 'plug', off ? 'c-warn' : 'c-ok', 'Integrations', 'Database, storage, face, maps', off ? `${off} to set up` : 'All on')}
-        {row(() => setSheet({ t: 'exports' }), 'down', 'c-pend', 'Exports', 'Attendance and audit CSV')}
+        {row(() => open({ name: 'report' }), 'down', 'c-ok', 'Attendance report', 'All, hub or person · OD, map links, flags')}
+        {row(() => open({ name: 'bulk' }), 'userplus', 'c-od', 'Bulk upload', 'Staff and hubs from a CSV file')}
+        {row(() => setSheet({ t: 'exports' }), 'list', 'c-pend', 'Audit export', 'Audit log CSV')}
         {row(() => setSheet({ t: 'privacy' }), 'lock', 'c-pend', 'Data and privacy', 'Where data lives, who sees what')}
       </div>
       <p className="more">StartupTN HR · v1 web app · updates itself</p>
@@ -798,6 +805,152 @@ function Selfies({ onBack }: { onBack: () => void }) {
         {list.map((p) => <button key={p.id} className="lrow" onClick={() => setWho(p)}><Av n={p.name} /><span className="t"><b>{p.name}</b><span>{p.hub ?? 'No hub'} · last {fmtShortDay(new Date(p.last))}</span></span><span className="v"><span className="chip c-pend">{p.count}</span></span></button>)}
         {list.length === 0 && <div className="empty"><b>No photos</b>Nothing stored yet.</div>}
       </>}
+    </div>
+  );
+}
+
+// ---------------- bulk upload (staff and hubs from CSV) ----------------
+const STAFF_TEMPLATE = toCsv(['full_name', 'email', 'phone', 'employee_code', 'role', 'designation', 'hub', 'joined_on'],
+  [['Kavya R', 'kavya@startuptn.in', '9876543210', 'STN0142', 'staff', 'Project Associate', 'Chennai', '2024-06-03'], ['Sneha P', 'sneha.p@gmail.com', '9123456780', 'STNI021', 'intern', 'Intern', 'Erode', '2026-10-01']]);
+const HUBS_TEMPLATE = toCsv(['hub', 'google_maps_link', 'lat', 'lng', 'radius_m'], [['Chennai', 'https://maps.app.goo.gl/…', '', '', '200'], ['Coimbatore', '', '11.0168', '76.9558', '300']]);
+
+function BulkUpload({ onBack, onDone }: { onBack: () => void; onDone: () => void }) {
+  const { toast } = useApp();
+  const [kind, setKind] = useState<'staff' | 'hubs'>('staff');
+  const [rows, setRows] = useState<Record<string, string>[] | null>(null);
+  const [file, setFile] = useState('');
+  const [problems, setProblems] = useState<Record<number, string>>({});
+  const [update, setUpdate] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [res, setRes] = useState<BulkResult[] | null>(null);
+  useEffect(() => { setRows(null); setRes(null); setFile(''); setProblems({}); }, [kind]);
+  const read = async (f: File) => {
+    setRes(null); setFile(f.name);
+    if (!/\.csv$/i.test(f.name)) { toast('Save the sheet as CSV first'); setRows(null); return; }
+    const raw = parseCsv(await f.text());
+    const mapped = kind === 'staff'
+      ? raw.map((r) => ({ full_name: pick(r, 'full_name', 'name', 'employee_name'), email: pick(r, 'email', 'email_id', 'mail').toLowerCase(), phone: pick(r, 'phone', 'mobile', 'phone_number'),
+          employee_code: pick(r, 'employee_code', 'code', 'emp_code', 'employee_id'), role: pick(r, 'role', 'type').toLowerCase(), designation: pick(r, 'designation', 'title'),
+          hub: pick(r, 'hub', 'hub_name', 'location'), joined_on: normDate(pick(r, 'joined_on', 'joining_date', 'date_of_joining', 'doj')) }))
+      : raw.map((r) => ({ name: pick(r, 'hub', 'name', 'hub_name'), maps_url: pick(r, 'google_maps_link', 'maps_link', 'map_link', 'maps_url', 'link'), lat: pick(r, 'lat', 'latitude'), lng: pick(r, 'lng', 'lon', 'longitude'), radius_m: pick(r, 'radius_m', 'radius') }));
+    const p: Record<number, string> = {}; const seen = new Map<string, number>();
+    mapped.forEach((r, i) => {
+      const k = kind === 'staff' ? (r as { email: string }).email : (r as { name: string }).name.toLowerCase();
+      if (kind === 'staff') { const s = r as { email: string; full_name: string; hub: string }; if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(s.email)) p[i] = 'Email missing or not valid'; else if (!s.full_name) p[i] = 'Name missing'; else if (!s.hub) p[i] = 'Hub missing'; }
+      else if (!(r as { name: string }).name) p[i] = 'Hub name missing';
+      if (k && seen.has(k)) p[i] = `Same as row ${seen.get(k)! + 1}`; else if (k) seen.set(k, i);
+    });
+    setRows(mapped); setProblems(p);
+  };
+  const upload = async () => {
+    if (!rows) return;
+    const good = rows.filter((_, i) => !problems[i]);
+    try {
+      if (kind === 'staff') { setBusy('Uploading…'); setRes(await tech.bulkStaff(good, update)); }
+      else {
+        // read map links into pins first (same reader as the hub editor)
+        const ready: Record<string, string>[] = [];
+        for (let i = 0; i < good.length; i++) {
+          const h = { ...good[i] };
+          if ((!h.lat || !h.lng) && h.maps_url) { setBusy(`Reading map link ${i + 1} of ${good.length}…`); try { const v = await api.resolveVenue(h.maps_url); h.lat = String(v.lat); h.lng = String(v.lng); } catch { /* the server reports it */ } }
+          ready.push(h);
+        }
+        setBusy('Uploading…'); setRes(await tech.bulkHubs(ready));
+      }
+      onDone();
+    } catch { toast('Could not upload. Try again.'); }
+    setBusy(null);
+  };
+  const n = (k: BulkResult['result']) => res?.filter((r) => r.result === k).length ?? 0;
+  const cols = kind === 'staff' ? ['full_name', 'email', 'hub', 'role'] : ['name', 'maps_url', 'lat', 'radius_m'];
+  return (
+    <div className="scr fade" style={{ paddingBottom: 40 }}>
+      <Top small="Setup" big="Bulk upload" onBack={onBack} />
+      <div className="seg" role="group" aria-label="What"><button className={kind === 'staff' ? 'on' : ''} onClick={() => setKind('staff')}>Staff</button><button className={kind === 'hubs' ? 'on' : ''} onClick={() => setKind('hubs')}>Hubs</button></div>
+      <div className="card" style={{ marginTop: 14 }}>
+        <ol className="steps" style={{ marginTop: 0 }}>
+          <li>Download the template and fill one row per {kind === 'staff' ? 'person' : 'hub'}.</li>
+          <li>In Excel: File → Save as → CSV.</li>
+          <li>Choose the file below, check the preview, then Upload.</li>
+        </ol>
+        <button className="btn light" style={{ marginTop: 12 }} onClick={() => download(kind === 'staff' ? 'staff-template.csv' : 'hubs-template.csv', kind === 'staff' ? STAFF_TEMPLATE : HUBS_TEMPLATE)}><Icon n="down" />Template</button>
+      </div>
+      <label className="btn dark" style={{ marginTop: 12, cursor: 'pointer' }}><Icon n="plus" />{file ? 'Choose another file' : 'Choose CSV file'}
+        <input type="file" accept=".csv,text/csv" style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) void read(f); e.target.value = ''; }} /></label>
+      {rows && !res && <>
+        <div className="sec">{file} · {rows.length} rows{Object.keys(problems).length ? ` · ${Object.keys(problems).length} to fix` : ''}</div>
+        <div className="card" style={{ padding: 0, overflowX: 'auto' }}>
+          <table className="tbl"><thead><tr><th>#</th>{cols.map((c) => <th key={c}>{c}</th>)}<th>Check</th></tr></thead>
+            <tbody>{rows.slice(0, 200).map((r, i) => <tr key={i} className={problems[i] ? 'bad' : ''}><td>{i + 1}</td>{cols.map((c) => <td key={c}>{(r as Record<string, string>)[c] || '—'}</td>)}<td>{problems[i] ?? '✓'}</td></tr>)}</tbody></table>
+        </div>
+        {kind === 'staff' && <label className="card row" style={{ marginTop: 12, cursor: 'pointer' }}><input type="checkbox" checked={update} onChange={(e) => setUpdate(e.target.checked)} style={{ width: 20, height: 20 }} />
+          <span className="t"><b>Update people already added</b><span>Off: they’re skipped. On: name, hub, code, phone, designation are replaced.</span></span></label>}
+        <p className="to">Rows to fix are left out. Everything else uploads. Logged in the audit.</p>
+        <button className="btn dark" disabled={!!busy || rows.length === Object.keys(problems).length} onClick={upload}>{busy ?? `Upload ${rows.length - Object.keys(problems).length} rows`}</button>
+      </>}
+      {res && <>
+        <div className="sec">Result</div>
+        <div className="card"><div className="ft"><div><b>{n('added')}</b><span>Added</span></div><div><b>{n('updated')}</b><span>Updated</span></div><div><b>{n('skipped')}</b><span>Skipped</span></div><div className="red"><b>{n('error') + Object.keys(problems).length}</b><span>Errors</span></div></div></div>
+        {(res.some((r) => r.result === 'error' || r.result === 'skipped') || Object.keys(problems).length > 0) && <div className="card" style={{ padding: '4px 16px', marginTop: 12 }}>
+          {Object.entries(problems).map(([i, m]) => <div key={`p${i}`} className="setrow"><span className="t"><b>Row {Number(i) + 1} · {(rows?.[Number(i)] as Record<string, string>)?.[kind === 'staff' ? 'email' : 'name'] || '—'}</b><span>{m}</span></span><span className="chip c-bad">Error</span></div>)}
+          {res.filter((r) => r.result === 'error' || r.result === 'skipped').map((r, i) => <div key={i} className="setrow"><span className="t"><b>{r.email ?? r.name}</b><span>{r.message}</span></span><span className={`chip ${r.result === 'error' ? 'c-bad' : 'c-pend'}`}>{r.result === 'error' ? 'Error' : 'Skipped'}</span></div>)}
+        </div>}
+        <button className="btn light" style={{ marginTop: 12 }} onClick={() => download(`${kind}-upload-result.csv`, toCsv(['Row', kind === 'staff' ? 'Email' : 'Hub', 'Result', 'Message'], res.map((r) => [r.row, r.email ?? r.name ?? '', r.result, r.message])))}><Icon n="down" />Download result</button>
+        {kind === 'staff' && n('added') > 0 && <p className="to">New people can sign in now with their email. Their hub pins are used from the first check-in.</p>}
+      </>}
+    </div>
+  );
+}
+
+// ---------------- attendance report (Excel) ----------------
+function Report({ onBack }: { onBack: () => void }) {
+  const { toast } = useApp();
+  const [scope, setScope] = useState<'all' | 'hub' | 'person'>('all');
+  const [hubs, setHubs] = useState<string[]>([]);
+  const [people, setPeople] = useState<Person[]>([]);
+  const [hub, setHub] = useState(''); const [q, setQ] = useState(''); const [who, setWho] = useState<Person | null>(null);
+  const ist = (d = 0) => new Date(Date.now() + 330 * 60000 - d * 864e5).toISOString().slice(0, 10);
+  const monthStart = (back = 0) => { const d = new Date(Date.now() + 330 * 60000); d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() - back); return d.toISOString().slice(0, 10); };
+  const monthEnd = (back = 0) => { const d = new Date(monthStart(back) + 'T00:00:00Z'); d.setUTCMonth(d.getUTCMonth() + 1); d.setUTCDate(0); return d.toISOString().slice(0, 10); };
+  const [period, setPeriod] = useState<'this' | 'last' | '7' | 'custom'>('this');
+  const [from, setFrom] = useState(monthStart()); const [to, setTo] = useState(ist());
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { hrApi.hubs().then((h) => setHubs(h.map((x) => x.name))).catch(() => undefined); hrApi.people().then((p) => setPeople(p.filter((x) => !x.invited))).catch(() => undefined); }, []);
+  useEffect(() => { if (period === 'this') { setFrom(monthStart()); setTo(ist()); } else if (period === 'last') { setFrom(monthStart(1)); setTo(monthEnd(1)); } else if (period === '7') { setFrom(ist(6)); setTo(ist()); } }, [period]); // eslint-disable-line react-hooks/exhaustive-deps
+  const ready = (scope !== 'hub' || !!hub) && (scope !== 'person' || !!who) && from <= to;
+  const go = async () => {
+    setBusy(true);
+    try {
+      const r = await buildReport({ scope, hub: scope === 'hub' ? hub : null, userId: scope === 'person' ? who!.id : null, from, to });
+      const a = document.createElement('a'); a.href = URL.createObjectURL(r.blob); a.download = r.name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+      toast(`Downloaded · ${r.counts.people} ${r.counts.people === 1 ? "person" : "people"} · ${r.counts.days} day${r.counts.days === 1 ? "" : "s"}`);
+    } catch (e) { toast(e instanceof ApiError && e.code === 'range_too_long' ? 'Pick up to 3 months at a time.' : 'Could not build the report. Try again.'); }
+    setBusy(false);
+  };
+  return (
+    <div className="scr fade" style={{ paddingBottom: 40 }}>
+      <Top small="Setup" big="Attendance report" onBack={onBack} />
+      <div className="sec" style={{ marginTop: 0 }}>Who</div>
+      <div className="seg" role="group" aria-label="Who"><button className={scope === 'all' ? 'on' : ''} onClick={() => setScope('all')}>All staff</button><button className={scope === 'hub' ? 'on' : ''} onClick={() => setScope('hub')}>Hub</button><button className={scope === 'person' ? 'on' : ''} onClick={() => setScope('person')}>Person</button></div>
+      {scope === 'hub' && <label className="fld"><span>Hub</span><select value={hub} onChange={(e) => setHub(e.target.value)}><option value="">Pick a hub</option>{hubs.map((h) => <option key={h}>{h}</option>)}</select></label>}
+      {scope === 'person' && <>
+        <label className="search" htmlFor="rq" style={{ marginTop: 12 }}><Icon n="search" /><input id="rq" placeholder="Search name" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search person" /></label>
+        {who ? <div className="lrow"><Av n={who.full_name} /><span className="t"><b>{who.full_name}</b><span>{who.hub ?? 'No hub'}{who.test ? ' · test' : ''}</span></span><span className="v"><button className="chip c-pend" onClick={() => setWho(null)}>Change</button></span></div>
+          : people.filter((p) => !q || p.full_name.toLowerCase().includes(q.toLowerCase())).slice(0, 6).map((p) => <button key={p.id} className="lrow" onClick={() => setWho(p)}><Av n={p.full_name} /><span className="t"><b>{p.full_name}</b><span>{p.hub ?? 'No hub'}</span></span></button>)}
+      </>}
+      <div className="sec">When</div>
+      <div className="pillrow" style={{ marginTop: 0 }} role="group" aria-label="Period">{([['this', 'This month'], ['last', 'Last month'], ['7', 'Last 7 days'], ['custom', 'Custom']] as const).map(([k, l]) => <button key={k} className={`pill ${period === k ? 'on' : ''}`} onClick={() => setPeriod(k)}>{l}</button>)}</div>
+      {period === 'custom' && <div className="two"><label className="fld"><span>From</span><input type="date" value={from} max={to} onChange={(e) => setFrom(e.target.value)} /></label><label className="fld"><span>To</span><input type="date" value={to} min={from} max={ist()} onChange={(e) => setTo(e.target.value)} /></label></div>}
+      <p className="to" style={{ textAlign: 'left' }}>{from} to {to} · up to 3 months per file</p>
+      <div className="sec">In the file</div>
+      <div className="card" style={{ padding: '6px 16px' }}>
+        <VRow l="Summary · totals per person" v="Sheet 1" c="ok" />
+        <VRow l="Attendance · each day: in/out, place, map link, inside/outside, late, early" v="Sheet 2" c="ok" />
+        <VRow l="OD · venue, map, approval, who decided, timings, venue check-in" v="Sheet 3" c="ok" />
+        <VRow l="Flags · every check signal, status, staff reason, map" v="Sheet 4" c="ok" />
+      </div>
+      <p className="to">Test staff are left out unless you pick them as the person. Each download is logged.</p>
+      <button className="btn dark" disabled={!ready || busy} onClick={go}><Icon n="down" />{busy ? 'Building…' : 'Download Excel'}</button>
     </div>
   );
 }

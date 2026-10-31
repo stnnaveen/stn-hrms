@@ -29,6 +29,7 @@ export interface SelfieStats { total: number; people: { id: string; name: string
 export interface SelfieRow { id: string; kind: string; at: string; place: string | null; key: string }
 export interface SpeedRow { who: string; at: string; kind: string; total: number | null; gps: number | null; upload: number | null; server: number | null; oneShot: boolean }
 export interface Speed { n: number; median: number | null; p95: number | null; over60: number; slowest: SpeedRow[] }
+export interface BulkResult { row: number; email?: string; name?: string; result: 'added' | 'updated' | 'skipped' | 'error'; message: string }
 export type PurgeWhat = 'checkins' | 'flags' | 'od' | 'leave' | 'notifications' | 'devices';
 export interface PurgeArgs { scope: 'person' | 'hub' | 'test' | 'everyone'; user?: string | null; hub?: string | null; from?: string | null; to?: string | null; what: PurgeWhat[]; dry: boolean }
 export interface PurgeResult { people: number; checkins: number; days: number; flags: number; od: number; leave: number; notifications: number; devices: number; photos_removed?: number }
@@ -192,6 +193,8 @@ const real = {
     const { error } = await sb!.functions.invoke('check-in', { body: { action: 'remove_selfie', punch_id: punchId, reason } });
     if (error) throw new ApiError('remove_failed');
   },
+  async bulkStaff(rows: Record<string, string>[], update: boolean): Promise<BulkResult[]> { const { data, error } = await sb!.rpc('bulk_upsert_staff', { p_rows: rows, p_update: update }); rpcErr(error); return data as BulkResult[]; },
+  async bulkHubs(rows: Record<string, string>[]): Promise<BulkResult[]> { const { data, error } = await sb!.rpc('bulk_upsert_hubs', { p_rows: rows }); rpcErr(error); return data as BulkResult[]; },
   async setTestMode(email: string, on: boolean) { const { error } = await sb!.rpc('set_test_mode', { p_email: email, p_on: on }); rpcErr(error); },
   async addTestStaff(email: string, name: string, hub: string) { const { error } = await sb!.rpc('add_test_staff', { p_email: email, p_name: name, p_hub: hub }); rpcErr(error); },
   async exportCsv(kind: 'attendance' | 'audit', month: string): Promise<string> {
@@ -295,6 +298,8 @@ const demo: typeof real = {
   async selfieStats() { await wait(); return { total: DS.selfies.length + 160, people: [{ id: 's1', name: 'Kavya R', hub: 'Chennai', count: DS.selfies.length, last: ago(60) }, { id: 's2', name: 'Arun K', hub: 'Chennai', count: 44, last: ago(90) }, { id: 's3', name: 'Ravi S', hub: 'Madurai', count: 38, last: ago(120) }, { id: 'st', name: 'Test', hub: 'Chennai', count: 78, last: ago(20) }] }; },
   async personSelfies() { await wait(); return DS.selfies; },
   async removeSelfie(id) { await wait(); DS.selfies = DS.selfies.filter((x) => x.id !== id); },
+  async bulkStaff(rows) { await wait(600); return rows.map((r, i) => ({ row: i + 1, email: r.email, result: !/@/.test(r.email) ? 'error' as const : !r.hub ? 'error' as const : i % 5 === 4 ? 'skipped' as const : 'added' as const, message: !/@/.test(r.email) ? 'Email is not valid' : !r.hub ? 'Hub "" not found' : i % 5 === 4 ? 'Already added' : '' })); },
+  async bulkHubs(rows) { await wait(600); return rows.map((r, i) => ({ row: i + 1, name: r.name, result: r.lat ? 'updated' as const : 'error' as const, message: r.lat ? '' : 'New hub needs a map link or lat/lng' })); },
   async setTestMode(email, on) { await wait(); DS.tests = DS.tests.map((t) => (t.email === email ? { ...t, testMode: on } : t)); },
   async addTestStaff(email, name, hub) { await wait(); DS.tests = [...DS.tests, { email: email.trim().toLowerCase(), name: name || 'Test staff', hub, signedIn: false, testMode: true }]; },
   async exportCsv(kind, month) { await wait(); return kind === 'attendance' ? `Date,Name,Hub,Status\n${month}-01,Kavya R,Chennai,present` : `Id,Action\n1,update`; }

@@ -398,3 +398,26 @@ do $$ begin
   update staff_roster set designation = 'Hub Lead' where email = 'arun@startuptn.in';
   raise notice 'PASS 18c only Tech changes test accounts; HR edits still work';
 end $$;
+
+-- 19. Bulk upload: Tech only; bad rows reported, good rows saved
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000a1');
+do $$ begin begin perform bulk_upsert_staff('[]'::jsonb); raise exception 'FAIL HR bulk upload'; exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
+  raise notice 'PASS 19 only Tech can bulk upload'; end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000f1');
+do $$ declare r jsonb; begin
+  r := bulk_upsert_staff('[{"full_name":"Bulk One","email":"Bulk1@StartupTN.in","hub":"chennai","employee_code":"B001","joined_on":"2026-11-03"},
+    {"full_name":"Bad Hub","email":"b2@startuptn.in","hub":"Atlantis"},
+    {"full_name":"Dup Code","email":"b3@startuptn.in","hub":"Salem","employee_code":"B001"},
+    {"full_name":"Role","email":"hr@startuptn.in","hub":"Salem"},
+    {"full_name":"Bad Date","email":"b5@startuptn.in","hub":"Salem","joined_on":"31/31/2026"},
+    {"full_name":"Kavya R","email":"kavya@startuptn.in","hub":"Salem"}]'::jsonb);
+  if r->0->>'result' <> 'added' or (select hub_name from staff_roster where email='bulk1@startuptn.in') <> 'Chennai' then raise exception 'FAIL good row %', r->0; end if;
+  if r->1->>'result' <> 'error' or r->2->>'result' <> 'error' or r->3->>'result' <> 'error' or r->4->>'result' <> 'error' then raise exception 'FAIL bad rows %', r; end if;
+  if r->5->>'result' <> 'skipped' then raise exception 'FAIL existing not skipped %', r->5; end if;
+  r := bulk_upsert_staff('[{"full_name":"Kavya R","email":"kavya@startuptn.in","hub":"Salem"}]'::jsonb, true);
+  if r->0->>'result' <> 'updated' or (select hub_name from staff_roster where email='kavya@startuptn.in') <> 'Salem' then raise exception 'FAIL update %', r; end if;
+  r := bulk_upsert_hubs('[{"name":"Tambaram","lat":"12.9249","lng":"80.1000","radius_m":"300"},{"name":"Chennai","radius_m":"200"},{"name":"NoPin"}]'::jsonb);
+  if r->0->>'result' <> 'added' or r->1->>'result' <> 'updated' or r->2->>'result' <> 'error' then raise exception 'FAIL hubs %', r; end if;
+  if (select radius_m from hubs where name='Chennai') <> 200 then raise exception 'FAIL hub radius'; end if;
+  raise notice 'PASS 19b bulk staff and hubs: good rows saved, bad rows explained';
+end $$;

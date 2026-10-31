@@ -510,3 +510,7 @@ b.nmf .rf{flex:none}
 .t .rf.gf,.rf.gf{background:#1FAA6B!important;color:#fff!important}
 .rbtn.spinning .ico{animation:spin .8s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
+.tbl{width:100%;border-collapse:collapse;font-size:12.5px;min-width:520px}
+.tbl th,.tbl td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--ph-line);white-space:nowrap;max-width:200px;overflow:hidden;text-overflow:ellipsis}
+.tbl th{font-weight:600;color:var(--ph-ink3);background:var(--ph-surface);position:sticky;top:0}
+.tbl tr.bad td{background:#FFF0F2;color:#B4182C}
