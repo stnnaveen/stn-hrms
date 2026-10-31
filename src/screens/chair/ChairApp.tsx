@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useApp } from '../../App';
 import { ApiError } from '../../lib/api';
-import { chair, istMin, isRed, type LeaveItem, type OdItem, type Snapshot, type Staff } from '../../lib/chair';
+import { chair, istMin, isRed, type Slot, type LeaveItem, type OdItem, type Snapshot, type Staff } from '../../lib/chair';
 import { hr, FLAG_LABEL, type Flag, type PersonDetail } from '../../lib/hr';
 import { placeLabel, googleMapsUrl, appleMapsUrl, fmtDistance } from '../../lib/geo';
 import { fmtDay, fmtShortDay, fmtTime, greeting } from '../../lib/time';
@@ -265,8 +265,52 @@ function Home({ snap, view, hub, setHub, ods, open, setSheet, setAway, goApprova
         <button key={h} className={`hubrow ${hub === h ? 'on' : ''}`} onClick={() => setHub(hub === h ? 'All' : h)}>
           <span>{h}</span><span className="bar" style={{ display: 'block' }}><i style={{ width: `${pct ?? 0}%`, background: pct == null ? '#E2E3E7' : pct >= 90 ? 'var(--ok)' : pct >= 80 ? 'var(--warn)' : 'var(--bad)' }} /></span><b>{pct == null ? '—' : `${pct}%`}</b>
         </button>))}</div>
+
+      <div className="sec">Your availability</div>
+      <Availability />
     </div>
   );
+}
+
+// Optional: times staff can meet the Chairman. Shown on staff home; nothing here is required.
+function Availability() {
+  const { toast } = useApp();
+  const [slots, setSlots] = useState<Slot[] | null>(null);
+  const [open, setOpen] = useState(false);
+  const todayIso = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+  const [f, setF] = useState({ day: todayIso, from: '15:00', to: '17:00', place: 'Office', note: '' });
+  const [busy, setBusy] = useState(false);
+  const load = () => chair.slots().then(setSlots).catch(() => setSlots([]));
+  useEffect(() => { load(); }, []);
+  const add = async () => {
+    const s = new Date(`${f.day}T${f.from}:00+05:30`), e = new Date(`${f.day}T${f.to}:00+05:30`);
+    if (e <= s) { toast('End must be after start'); return; }
+    setBusy(true);
+    try { await chair.addSlot({ starts_at: s.toISOString(), ends_at: e.toISOString(), place: f.place.trim() || null, note: f.note.trim() || null }); toast('Shared with staff'); setOpen(false); load(); }
+    catch { toast('Could not save'); }
+    setBusy(false);
+  };
+  return (<>
+    <div className="card" style={{ padding: '4px 16px' }}>
+      {(slots ?? []).map((x) => (
+        <div key={x.id} className="row" style={{ padding: '10px 0' }}><span className="ri c-ok"><Icon n="users" /></span>
+          <span className="t"><b>{fmtShortDay(new Date(x.starts_at))} · {fmtTime(x.starts_at)} – {fmtTime(x.ends_at)}</b><span>{x.place ?? 'Office'}{x.note ? ` · ${x.note}` : ''}</span></span>
+          <button className="chip c-pend" onClick={async () => { await chair.removeSlot(x.id); load(); toast('Removed'); }}>Remove</button></div>))}
+      <button className="row" style={{ width: '100%', padding: '12px 0', textAlign: 'left' }} onClick={() => setOpen(true)}>
+        <span className="ri c-od"><Icon n="plus" /></span><span className="t"><b>Share when you’re free</b><span>Optional · staff see it on their home</span></span></button>
+    </div>
+    {open && (<><div className="scrim" onClick={() => setOpen(false)} />
+      <div className="sheet" role="dialog" aria-label="Share availability"><div className="grab" />
+        <h3>When can staff meet you?</h3><p>Optional. Staff see it on that day.</p>
+        <label className="lab" htmlFor="av-d">Day</label><input className="inp" id="av-d" type="date" min={todayIso} value={f.day} onChange={(e) => setF({ ...f, day: e.target.value })} />
+        <div className="two"><div><label className="lab" htmlFor="av-f">From</label><input className="inp" id="av-f" type="time" value={f.from} onChange={(e) => setF({ ...f, from: e.target.value })} /></div>
+          <div><label className="lab" htmlFor="av-t">Until</label><input className="inp" id="av-t" type="time" value={f.to} onChange={(e) => setF({ ...f, to: e.target.value })} /></div></div>
+        <label className="lab" htmlFor="av-p">Where</label><input className="inp" id="av-p" value={f.place} onChange={(e) => setF({ ...f, place: e.target.value })} placeholder="Office or hub" />
+        <label className="lab" htmlFor="av-n">Note</label><input className="inp" id="av-n" maxLength={140} value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} placeholder="Optional, e.g. quick reviews" />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 18 }}>
+          <button className="btn dark" disabled={busy} onClick={add}>{busy ? 'Saving' : 'Share'}</button>
+          <button className="btn ghost" onClick={() => setOpen(false)}>Cancel</button></div></div></>)}
+  </>);
 }
 
 // ---------------- lists ----------------

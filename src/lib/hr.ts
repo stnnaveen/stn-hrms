@@ -11,6 +11,7 @@ export interface Person {
   invited?: boolean;               // on the roster, has not signed in yet
   today?: { in_time: string | null; out_time: string | null; band: string | null; status: string } | null;
   geo?: 'in' | 'out' | null;   // today's check-in inside / outside the radius (HR only)
+  test?: boolean;              // Tech admin's test staff (left out of HR numbers)
 }
 export interface LeaveReq { id: string; who: string; hub: string | null; leave_type: string; starts_on: string; ends_on: string; half_day: string | null; reason: string | null; status: string; created_at: string }
 export interface OdReq { id: string; who: string; hub: string | null; subject: string; note: string | null; venue_name: string; venue_place?: string | null; venue_url?: string | null; venue_lat?: number | null; venue_lng?: number | null; starts_at: string; ends_at: string; status: string; created_at: string }
@@ -69,12 +70,14 @@ const real = {
       const g = d?.in_punch ? geo.get(d.in_punch) : undefined;
       return { ...p, hub: p.hub?.name ?? null, today: d ?? null, geo: g == null ? null : g ? 'in' as const : 'out' as const };
     });
-    const roster = must(await sb!.from('staff_roster').select('email, full_name, role, designation, hub_name, phone, employee_code').in('role', ['staff', 'intern'])) as
-      { email: string; full_name: string; role: string; designation: string | null; hub_name: string | null; phone: string | null; employee_code: string | null }[];
+    const roster = must(await sb!.from('staff_roster').select('email, full_name, role, designation, hub_name, phone, employee_code, is_test').in('role', ['staff', 'intern'])) as
+      { email: string; full_name: string; role: string; designation: string | null; hub_name: string | null; phone: string | null; employee_code: string | null; is_test: boolean }[];
+    const tests = new Set(roster.filter((r) => r.is_test).map((r) => r.email));
+    people.forEach((p) => { (p as Person).test = tests.has(p.email); });
     const known = new Set(people.map((p) => p.email));
     const invited: Person[] = roster.filter((r) => !known.has(r.email)).map((r) => ({
       id: `invite:${r.email}`, full_name: r.full_name, email: r.email, role: r.role, designation: r.designation, hub: r.hub_name, phone: r.phone,
-      employee_code: r.employee_code, active: true, face_status: 'none', invited: true, today: null }));
+      employee_code: r.employee_code, active: true, face_status: 'none', invited: true, today: null, test: r.is_test }));
     return [...people, ...invited].sort((a, b) => a.full_name.localeCompare(b.full_name));
   },
   async leaves(): Promise<LeaveReq[]> {

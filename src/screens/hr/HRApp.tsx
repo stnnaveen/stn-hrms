@@ -162,7 +162,7 @@ function StaffList({ open }: { open: (s: Sub) => void }) {
       <label className="search" htmlFor="q"><Icon n="search" /><input id="q" placeholder="Search name or hub" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search staff" /></label>
       <div className="pillrow" role="group" aria-label="Filter">{['All', 'Late', 'Interns', 'Invited', 'Inactive'].map((k) => <button key={k} className={`pill ${f === k ? 'on' : ''}`} onClick={() => setF(k)}>{k}</button>)}</div>
       {!people ? <Spin /> : <div className="list">{list.map((p) => (
-        <button key={p.id} className="card row" onClick={() => open({ name: 'person', p })}><Av n={p.full_name} /><div className="t"><b className={p.geo ? 'nmf' : undefined}>{p.full_name}<GeoFlag geo={p.geo} /></b><span>{p.designation ?? cap(p.role)} · {p.hub ?? 'No hub'}</span></div>{p.active ? dayChip(p) : <span className="chip c-pend">Inactive</span>}</button>
+        <button key={p.id} className="card row" onClick={() => open({ name: 'person', p })}><Av n={p.full_name} /><div className="t"><b className={p.geo || p.test ? 'nmf' : undefined}>{p.full_name}<GeoFlag geo={p.geo} />{p.test && <span className="chip c-warn" style={{ marginLeft: 6, padding: '2px 8px', fontSize: 11 }}>Test</span>}</b><span>{p.designation ?? cap(p.role)} · {p.hub ?? 'No hub'}</span></div>{p.active ? dayChip(p) : <span className="chip c-pend">Inactive</span>}</button>
       ))}{list.length === 0 && <div className="empty"><b>No match</b>Try another name or hub.</div>}</div>}
     </div>
   );

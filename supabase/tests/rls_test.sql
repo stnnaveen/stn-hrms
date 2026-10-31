@@ -334,3 +334,41 @@ do $$ begin
   if (select full_name from profiles where email = 'leaver@startuptn.in') <> 'Leaver again' then raise exception 'FAIL re-add failed'; end if;
   raise notice 'PASS 16d same email added again starts fresh';
 end $$;
+
+-- 17. Chairman availability (RLS), test mode resets, leaving for OD
+select pg_temp.as_user('00000000-0000-0000-0000-000000000001');
+do $$ begin
+  begin insert into chairman_availability (starts_at, ends_at, created_by) values (now(), now() + interval '1 hour', '00000000-0000-0000-0000-000000000001');
+    raise exception 'FAIL staff posted availability'; exception when insufficient_privilege then null; end;
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000c1');
+insert into chairman_availability (starts_at, ends_at, place) values (now() + interval '1 hour', now() + interval '2 hours', 'Chennai hub');
+select pg_temp.as_user('00000000-0000-0000-0000-000000000001');
+do $$ begin
+  if jsonb_array_length(my_today()->'chairman_available') <> 1 then raise exception 'FAIL staff cannot see availability'; end if;
+  if (my_today()->>'test_mode')::boolean then raise exception 'FAIL real staff in test mode'; end if;
+  begin perform reset_my_test_day(); raise exception 'FAIL real staff reset their day'; exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
+  raise notice 'PASS 17 Chairman availability visible to staff; only Chairman posts; real staff cannot reset';
+end $$;
+select pg_temp.reset();
+insert into auth.users values ('00000000-0000-0000-0000-00000000f501','naveenflop+staff@gmail.com');
+update profiles set consent_at = now() where email = 'naveenflop+staff@gmail.com';
+insert into punches (user_id,kind,idempotency_key,client_time,lat,lng,target_type) values ('00000000-0000-0000-0000-00000000f501','in','ts1',now(),13,80,'hub');
+insert into attendance_days (user_id, day, in_time) values ('00000000-0000-0000-0000-00000000f501', (now() at time zone 'Asia/Kolkata')::date, now());
+select pg_temp.as_user('00000000-0000-0000-0000-00000000f501');
+do $$ begin
+  if not (my_today()->>'test_mode')::boolean then raise exception 'FAIL test staff not in test mode'; end if;
+  perform reset_my_test_day();
+  if exists (select 1 from attendance_days where user_id = '00000000-0000-0000-0000-00000000f501') then raise exception 'FAIL day not reset'; end if;
+  raise notice 'PASS 17b test staff can reset their day';
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000a1');
+do $$ begin
+  if (hr_today()->>'staff')::int <> (select count(*) from profiles where role in ('staff','intern') and active and email <> 'naveenflop+staff@gmail.com') then raise exception 'FAIL test staff counted'; end if;
+  begin perform set_test_mode('naveenflop+staff@gmail.com', false); raise exception 'FAIL HR changed test mode'; exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
+  raise notice 'PASS 17c test staff left out of HR numbers; only Tech switches test mode';
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000f1');
+select set_test_mode('naveenflop+staff@gmail.com', false);
+select pg_temp.as_user('00000000-0000-0000-0000-00000000f501');
+do $$ begin if (my_today()->>'test_mode')::boolean then raise exception 'FAIL test mode not off'; end if; raise notice 'PASS 17d Tech switches test mode off'; end $$;

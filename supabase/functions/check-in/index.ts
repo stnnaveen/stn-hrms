@@ -31,8 +31,8 @@ const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
 
 interface Body {
-  action: 'start' | 'complete' | 'punch' | 'ping' | 'timing' | 'health' | 'selfie_urls' | 'resolve_venue' | 'radius_test' | 'purge' | 'delete_person' | 'remove_selfie';
-  timings?: Record<string, number>; total_ms?: number; keys?: string[];
+  action: 'start' | 'complete' | 'punch' | 'ping' | 'timing' | 'reset_test_day' | 'health' | 'selfie_urls' | 'resolve_venue' | 'radius_test' | 'purge' | 'delete_person' | 'remove_selfie';
+  timings?: Record<string, number>; total_ms?: number; keys?: string[]; leave_for_od?: string | null;
   kind: 'in' | 'out' | 'visit';
   url?: string;
   // radius_test (Tech): a point to test against a hub, or against a pin + radius
@@ -77,6 +77,14 @@ Deno.serve(async (req) => {
   if (!user) return json({ error: 'not_signed_in' }, 401);
   const db = createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'));
   const tAuth = Date.now() - T0;
+
+  // ---- test staff (test mode on): clear today's check-ins to try again
+  if (body.action === 'reset_test_day') {
+    const { data: res, error } = await asUser.rpc('reset_my_test_day');
+    if (error) return json({ error: (error.message || 'reset_failed').replace(/^.*?:\s*/, '') }, 400);
+    await removeSelfies(db, res?.selfie_keys ?? []);
+    return json({ ok: true });
+  }
 
   // ---- the phone reports how long the whole save took; very slow saves are reported to Tech
   if (body.action === 'timing') {
@@ -213,7 +221,7 @@ Deno.serve(async (req) => {
   const now = new Date();
   const today = istDay(now);
   // everything this save needs, fetched at the same time
-  const [{ data: existing }, { data: day }, settings, { data: od }, { data: hubRow }, { data: history }] = await Promise.all([
+  const [{ data: existing }, { data: dayRow }, settings, { data: od }, { data: hubRow }, { data: history }, { data: testMode }, { data: leaveOd }] = await Promise.all([
     db.from('punches').select('server_time, kind, band, early_out, place_name, lat, lng').eq('idempotency_key', body.idempotency_key).maybeSingle(),
     db.from('attendance_days').select('in_time, out_time').eq('user_id', user.id).eq('day', today).maybeSingle(),
     loadSettings(db),
@@ -223,9 +231,22 @@ Deno.serve(async (req) => {
       .lte('starts_at', new Date(now.getTime() + 30 * 60000).toISOString()).gte('ends_at', now.toISOString())
       .not('venue_lat', 'is', null).limit(1).maybeSingle(),
     profile.hub_id ? db.from('hubs').select('id, lat, lng, radius_m').eq('id', profile.hub_id).single() : Promise.resolve({ data: null }),
-    db.from('punches').select('kind, lat, lng, accuracy_m, server_time').eq('user_id', user.id).order('server_time', { ascending: false }).limit(20)
+    db.from('punches').select('kind, lat, lng, accuracy_m, server_time').eq('user_id', user.id).order('server_time', { ascending: false }).limit(20),
+    db.rpc('is_test_mode', { p_uid: user.id }),
+    // check-out to go to one of today's ODs (approved or waiting): not an early leave
+    body.kind === 'out' && body.leave_for_od
+      ? db.from('od_requests').select('id').eq('id', body.leave_for_od).eq('user_id', user.id).in('status', ['approved', 'pending'])
+          .lt('starts_at', new Date(`${today}T23:59:59+05:30`).toISOString()).gt('ends_at', now.toISOString()).maybeSingle()
+      : Promise.resolve({ data: null })
   ]);
   if (existing) return json(reply(existing));
+  let day = dayRow as { in_time: string | null; out_time: string | null } | null;
+  // test staff: a new check-in clears today's earlier ones, and check-out can be repeated
+  if (testMode === true && body.kind === 'in' && day?.in_time) {
+    const { data: res } = await asUser.rpc('reset_my_test_day');
+    await removeSelfies(db, res?.selfie_keys ?? []);
+    day = null;
+  }
   // the selfie upload starts now and runs while the rules are checked
   const tUp0 = Date.now();
   const uploadP: Promise<boolean> = body.action !== 'punch' ? Promise.resolve(true) : (async () => {
@@ -240,7 +261,7 @@ Deno.serve(async (req) => {
   uploadP.then(() => { uploadMs = Date.now() - tUp0; });
   if (body.kind === 'in' && day?.in_time) return json({ error: 'already_checked_in' }, 409);
   if (body.kind === 'out' && !day?.in_time) return json({ error: 'not_checked_in' }, 409);
-  if (body.kind === 'out' && day?.out_time) return json({ error: 'already_checked_out' }, 409);
+  if (body.kind === 'out' && day?.out_time && testMode !== true) return json({ error: 'already_checked_out' }, 409);
   if (body.kind === 'visit' && !day?.in_time) return json({ error: 'check_in_first' }, 409);
 
   if (body.kind === 'visit') {
@@ -287,7 +308,7 @@ Deno.serve(async (req) => {
     kind: body.kind, serverTime: now, clientTime: new Date(body.client_time),
     fix: { lat: loc.lat, lng: loc.lng, accuracy: loc.accuracy, altitude: loc.altitude, speed: loc.speed, mocked: loc.mocked },
     target, faceSimilarity, liveness: body.liveness ?? null, recentDays, lastPunch,
-    integrityOk: null, settings
+    integrityOk: null, settings, odLeave: !!leaveOd
   });
 
   // place name: instant from the cache; otherwise filled in right after the reply so the save never waits on a map service
@@ -311,7 +332,7 @@ Deno.serve(async (req) => {
     ev.flags.length ? db.from('flags').insert(ev.flags.map((f) => ({ punch_id: punch.id, user_id: user.id, kind: f.kind, rule: f.rule, details: f.details }))) : Promise.resolve(),
     body.kind === 'visit' ? Promise.resolve()   // venue proof only; the day's check-in and check-out stay as they are
       : body.kind === 'in' ? db.from('attendance_days').insert({ user_id: user.id, day: today, in_punch: punch.id, in_time: now.toISOString(), band: ev.band, status: target.type === 'od' ? 'od' : 'present' })
-      : db.from('attendance_days').update({ out_punch: punch.id, out_time: now.toISOString(), early_out: ev.earlyOut }).eq('user_id', user.id).eq('day', today)
+      : db.from('attendance_days').update({ out_punch: punch.id, out_time: now.toISOString(), early_out: ev.earlyOut, leave_od_id: leaveOd?.id ?? null }).eq('user_id', user.id).eq('day', today)
   ]);
 
   if (!placeName) {

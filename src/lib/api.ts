@@ -10,6 +10,9 @@ export interface Today {
   month: { on_time: number; late: number; early: number };
   requests: { type: 'od' | 'leave'; id: string; title: string; starts: string; status: string }[];
   /** Today's approved OD, if any. visited_at = venue check-in time (never whether it matched). */
+  test_mode?: boolean;
+  ods_today?: { id: string; subject: string; venue_name: string; starts_at: string; ends_at: string; status: string }[];
+  chairman_available?: { starts_at: string; ends_at: string; place: string | null; note: string | null }[];
   od_today?: { id: string; subject: string; venue_name: string; venue_place: string | null; venue_url: string | null; starts_at: string; ends_at: string; visited_at: string | null } | null;
 }
 export interface Venue { lat: number; lng: number; name: string | null; place: string | null; url: string }
@@ -49,7 +52,7 @@ async function sendPunch(p: QueuedPunch): Promise<PunchResult> {
   const device_key = await deviceKey();
   const t0 = performance.now();
   const fd = new FormData();
-  fd.append('data', JSON.stringify({ kind: p.kind, idempotency_key: p.idempotency_key, device_key, platform, client_time: p.client_time, location: p.location, liveness: p.liveness, timings: p.timings ?? {} }));
+  fd.append('data', JSON.stringify({ kind: p.kind, idempotency_key: p.idempotency_key, device_key, platform, client_time: p.client_time, location: p.location, liveness: p.liveness, timings: p.timings ?? {}, leave_for_od: p.leave_for_od ?? null }));
   fd.append('selfie', p.selfie, 'selfie.jpg');
   const res = await withTimeout(invoke<PunchResult>(fd as unknown as Record<string, unknown>), SAVE_TIMEOUT_MS);
   const total = Math.round((p.timings?.before_send_ms ?? 0) + (performance.now() - t0));
@@ -93,6 +96,8 @@ const real = {
   async signOut() { await sb!.auth.signOut(); },
   async today(): Promise<Today> { const { data, error } = await sb!.rpc('my_today'); if (error) throw new ApiError('load_failed'); return data as Today; },
   async consent() { const { error } = await sb!.rpc('give_consent'); if (error) throw new ApiError('save_failed'); },
+  /** Test staff: clear today's check-ins to try again. */
+  async resetTestDay() { await invoke({ action: 'reset_test_day' }); },
   /** Wake the server when the camera opens, so the save itself is quick. */
   warm() { void invoke({ action: 'ping' }).catch(() => undefined); },
   async punch(input: PunchInput): Promise<PunchResult> {
@@ -165,11 +170,14 @@ const demo = {
         : demoState.email.startsWith('chairman') ? { full_name: 'Chairman', employee_code: null, role: 'chairman', hub: null, face_status: 'none', consented: true }
         : demoState.email.startsWith('ai@') ? { full_name: 'Tech admin', employee_code: null, role: 'tech', hub: null, face_status: 'none', consented: true }
         : { full_name: 'Kavya R', employee_code: 'STN0142', role: 'staff', hub: 'Chennai', face_status: 'approved', consented: demoState.consented },
-      today: demoState.today, month: { on_time: 18, late: 2, early: 1 }, requests: demoState.requests, od_today: demoState.odToday
+      today: demoState.today, month: { on_time: 18, late: 2, early: 1 }, requests: demoState.requests, od_today: demoState.odToday,
+      test_mode: true, ods_today: demoState.odToday ? [{ id: demoState.odToday.id, subject: demoState.odToday.subject, venue_name: demoState.odToday.venue_name, starts_at: demoState.odToday.starts_at, ends_at: demoState.odToday.ends_at, status: 'approved' }] : [],
+      chairman_available: [{ starts_at: new Date(Date.now() + 36e5).toISOString(), ends_at: new Date(Date.now() + 3 * 36e5).toISOString(), place: 'Chennai hub', note: 'Walk in for quick reviews' }]
     };
   },
   async consent() { await wait(200); demoState.consented = true; },
   warm() { /* demo */ },
+  async resetTestDay() { await wait(300); demoState.today = null; if (demoState.odToday) demoState.odToday.visited_at = null; },
   async punch(p: PunchInput): Promise<PunchResult> {
     await wait(900);
     const now = new Date();
@@ -177,8 +185,8 @@ const demo = {
     const band = p.kind === 'in' ? (m <= 600 ? 'ok' : m <= 615 ? 'warn' : 'bad') : null;
     if (p.kind === 'visit') { if (demoState.odToday) demoState.odToday.visited_at = now.toISOString(); }
     else if (p.kind === 'in') demoState.today = { in_time: now.toISOString(), out_time: null, band, early_out: false, status: 'present' };
-    else if (demoState.today) demoState.today = { ...demoState.today, out_time: now.toISOString(), early_out: m < 1080 };
-    return { kind: p.kind, server_time: now.toISOString(), band, early_out: p.kind === 'out' && m < 1080, place_name: 'Guindy, Chennai', lat: p.location.lat, lng: p.location.lng };
+    else if (demoState.today) demoState.today = { ...demoState.today, out_time: now.toISOString(), early_out: m < 1080 && !p.leave_for_od };
+    return { kind: p.kind, server_time: now.toISOString(), band, early_out: p.kind === 'out' && m < 1080 && !p.leave_for_od, place_name: 'Guindy, Chennai', lat: p.location.lat, lng: p.location.lng };
   },
   async flushQueue() { return 0; },
   async notifications() { return demoState.notifs; },

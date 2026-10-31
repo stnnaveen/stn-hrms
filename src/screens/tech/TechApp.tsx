@@ -415,9 +415,12 @@ function RolesView({ onBack, setSheet }: { onBack: () => void; setSheet: (s: She
             {r.logins.filter((l) => l.role === role).length === 0 && <p className="more" style={{ textAlign: 'left' }}>No login.</p>}</div></div>))}
       {r && r.logins.some((l) => l.temp) && <div className="note-hr" style={{ marginTop: 12 }}><Icon n="alert" size={16} />Remove test logins before the pilot.</div>}
       <div className="sec">Test staff <button onClick={() => setSheet({ t: 'addtest' })}>Add</button></div>
+      <p className="to" style={{ textAlign: 'left', margin: '0 0 8px' }}>Test = check in and out as often as you like (each check-in starts the day fresh), left out of HR and Chairman numbers. Off = behaves like normal staff.</p>
       <div className="card" style={{ padding: '4px 16px' }}>
         {(r?.tests ?? []).length === 0 ? <p className="more" style={{ textAlign: 'left' }}>None yet. Add one to try the staff app on a phone.</p>
-          : r!.tests!.map((t) => <div key={t.email} className="setrow"><span className="ab" style={{ background: '#7A5A2E' }}>TS</span><span className="t"><b>{t.name}</b><span>{t.email} · {t.hub ?? 'No hub'}</span></span><span className="v">{t.signedIn ? <span className="chip c-ok">Signed in</span> : <span className="chip c-pend">Not yet in</span>}</span></div>)}
+          : r!.tests!.map((t) => <div key={t.email} className="setrow"><span className="ab" style={{ background: '#7A5A2E' }}>TS</span><span className="t"><b>{t.name}</b><span>{t.email} · {t.hub ?? 'No hub'} · {t.signedIn ? 'signed in' : 'not yet in'}</span></span>
+            <div className="mseg" role="group" aria-label={`Test mode for ${t.name}`}><button className={t.testMode ? 'on' : ''} aria-pressed={t.testMode} onClick={async () => { await tech.setTestMode(t.email, true); setR((x) => x && { ...x, tests: x.tests?.map((y) => (y.email === t.email ? { ...y, testMode: true } : y)) }); }}>Test</button>
+              <button className={t.testMode ? '' : 'on'} aria-pressed={!t.testMode} onClick={async () => { await tech.setTestMode(t.email, false); setR((x) => x && { ...x, tests: x.tests?.map((y) => (y.email === t.email ? { ...y, testMode: false } : y)) }); }}>Off</button></div></div>)}
       </div>
       <div className="sec">Everyone else</div>
       <div className="card" style={{ padding: '4px 16px' }}>

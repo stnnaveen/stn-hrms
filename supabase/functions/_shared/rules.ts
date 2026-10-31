@@ -86,8 +86,9 @@ export function evaluate(input: {
   lastPunch: PrevPunch | null;       // the person's previous punch of any kind (jump check)
   integrityOk: boolean | null;       // null = not available on this platform (PWA)
   settings: Settings;
+  odLeave?: boolean;                 // check-out to go to an OD today: not an early leave
 }): Evaluation {
-  const { kind, serverTime, clientTime, fix, target, faceSimilarity, liveness, recentDays, lastPunch, integrityOk, settings: s } = input;
+  const { kind, serverTime, clientTime, fix, target, faceSimilarity, liveness, recentDays, lastPunch, integrityOk, settings: s, odLeave } = input;
   const flags: Evaluation['flags'] = [];
   let quality = 100;
 
@@ -101,7 +102,7 @@ export function evaluate(input: {
     band = bandFor(serverTime, s);
     if (band === 'bad') flags.push({ kind: 'late', rule: `R-01 check-in after ${s.lateUntil}`, details: { ist_minutes: istMinutes(serverTime) } });
   } else if (kind === 'out') {
-    earlyOut = istMinutes(serverTime) < toMin(s.officeEnd);
+    earlyOut = !odLeave && istMinutes(serverTime) < toMin(s.officeEnd);
     if (earlyOut) flags.push({ kind: 'early_out', rule: `R-07 check-out before ${s.officeEnd}`, details: { ist_minutes: istMinutes(serverTime) } });
   }
 

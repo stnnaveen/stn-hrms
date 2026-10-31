@@ -24,6 +24,7 @@ interface Ctx {
   camMode: 'in' | 'out' | 'visit'; setCamMode: (m: 'in' | 'out' | 'visit') => void;
   result: { punch: PunchResult; photo: string } | null; setResult: (r: { punch: PunchResult; photo: string } | null) => void;
   odPrefill: { urgent: boolean } | null; setOdPrefill: (p: { urgent: boolean } | null) => void;
+  leaveOd: string | null; setLeaveOd: (id: string | null) => void;   // check-out to go to this OD (not early leave)
 }
 const AppCtx = createContext<Ctx>(null as unknown as Ctx);
 export const useApp = () => useContext(AppCtx);
@@ -39,6 +40,7 @@ export default function App() {
   const [camMode, setCamMode] = useState<'in' | 'out' | 'visit'>('in');
   const [result, setResult] = useState<{ punch: PunchResult; photo: string } | null>(null);
   const [odPrefill, setOdPrefill] = useState<{ urgent: boolean } | null>(null);
+  const [leaveOd, setLeaveOd] = useState<string | null>(null);
   const toastTimer = useRef<number>();
 
   const go = useCallback((s: Screen) => {
@@ -96,7 +98,7 @@ export default function App() {
     return () => removeEventListener('online', flush);
   }, [toast, reload]);
 
-  const ctx: Ctx = { screen, go, back, toast, email, setEmail, today, reload, camMode, setCamMode, result, setResult, odPrefill, setOdPrefill };
+  const ctx: Ctx = { screen, go, back, toast, email, setEmail, today, reload, camMode, setCamMode, result, setResult, odPrefill, setOdPrefill, leaveOd, setLeaveOd };
   const view = {
     splash: <Splash />, signin: <SignIn />, code: <Code />, consent: <Consent />, perms: <Permissions />, welcome: <Welcome />,
     home: <Home />, camera: <Camera />, result: <Result />, od: <ODForm />, leave: <LeaveForm />,

@@ -12,7 +12,7 @@ type Phase = 'starting' | 'align' | 'challenge' | 'count' | 'saving' | 'error';
 const CHALLENGE_TEXT = { blink: 'Blink once', turn: 'Turn your head a little' };
 
 export function Camera() {
-  const { camMode, go, setResult, today, reload } = useApp();
+  const { camMode, go, setResult, today, reload, leaveOd, setLeaveOd } = useApp();
   const video = useRef<HTMLVideoElement>(null);
   const [phase, setPhase] = useState<Phase>('starting');
   const [count, setCount] = useState(3);
@@ -97,11 +97,12 @@ export function Camera() {
       }
       try {
         const punch = await api.punch({
-          kind: camMode, selfie: photo,
+          kind: camMode, selfie: photo, leave_for_od: camMode === 'out' ? leaveOd : null,
           location: { lat: f.lat, lng: f.lng, accuracy: f.accuracy, altitude: f.altitude, speed: f.speed, mocked: f.mocked },
           liveness: { challenge: livenessKind, passed: livenessPassed },
           timings: { capture_ms: Math.round(tShot - tOpen), gps_wait_ms: Math.round(performance.now() - tShot), before_send_ms: Math.round(performance.now() - tShot) }
         });
+        setLeaveOd(null);
         setResult({ punch, photo: URL.createObjectURL(photo) });
         await reload();
         go('result');
@@ -176,6 +177,8 @@ export function Result() {
     col = 'var(--ph-navy)'; icon = 'wifiOff'; title = 'Saved offline'; msg = 'It will send when you’re back online.';
   } else if (visit) {
     col = 'var(--od, #2F62D9)'; icon = 'pin'; title = 'Venue check-in done'; msg = 'Saved for your OD.';
+  } else if (out && !punch.early_out && (new Date(punch.server_time).getUTCHours() * 60 + new Date(punch.server_time).getUTCMinutes() + 330) % 1440 < 1080) {
+    col = 'var(--od, #2F62D9)'; icon = 'brief'; title = 'Off to your OD'; msg = 'Check in at the venue when you reach.';
   } else if (!out) {
     const k = punch.band ?? 'ok';
     col = k === 'ok' ? 'var(--ok)' : k === 'warn' ? 'var(--warn)' : 'var(--bad)';

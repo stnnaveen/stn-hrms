@@ -79,4 +79,6 @@ const rc = radiusCheck({ lat: 13.0318, lng: 80.2433, accuracy: 13 }, { lat: 13.0
 ok(!rc.inside && Math.round(rc.distanceM / 100) === 64, 'old placeholder Chennai pin is 6.4 km away (the bug HR saw)');
 ok(radiusCheck({ lat: 13.0318, lng: 80.2433, accuracy: 13 }, { lat: 13.0321, lng: 80.2436, radiusM: 200 }).inside, 'same building, 200 m radius: inside');
 ok(radiusCheck({ lat: 13.0, lng: 80.0, accuracy: 300 }, { lat: 13.0063, lng: 80.0, radiusM: 500 }).creditM === 100, 'accuracy credit capped at 100 m');
+ok(!evaluate({ ...base, kind: 'out' as const, serverTime: ist(14, 0), clientTime: ist(14, 0), odLeave: true }).earlyOut, 'leaving at 2 PM for an OD is not early out');
+ok(evaluate({ ...base, kind: 'out' as const, serverTime: ist(14, 0), clientTime: ist(14, 0) }).earlyOut, 'leaving at 2 PM without OD is early out');
 process.exit(fails ? 1 : 0);

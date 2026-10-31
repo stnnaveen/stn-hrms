@@ -14,9 +14,9 @@ const BAND_CHIP = {
 const STATUS_CHIP: Record<string, string> = { approved: 'c-ok', pending: 'c-pend', returned: 'c-bad', cancelled: 'c-pend' };
 
 export function Home() {
-  const { today, reload, go, setCamMode, setOdPrefill } = useApp();
+  const { today, reload, go, setCamMode, setOdPrefill, setLeaveOd, toast } = useApp();
   const [fab, setFab] = useState(false);
-  const [sheet, setSheet] = useState<null | 'early' | 'early1h'>(null);
+  const [sheet, setSheet] = useState<null | 'early' | 'early1h' | 'out'>(null);
   const [notifs, setNotifs] = useState<Notif[]>([]);
   const [account, setAccount] = useState(false);
   const [now, setNow] = useState(istMinutesNow());
@@ -34,6 +34,9 @@ export function Home() {
   const od = today.od_today ?? null;
   const odFrom = od ? new Date(od.starts_at).getTime() - 30 * 60000 : 0;
   const odOpen = !!od && Date.now() >= odFrom && Date.now() <= new Date(od.ends_at).getTime();
+  const odsLeft = (today.ods_today ?? []).filter((o) => new Date(o.ends_at).getTime() > Date.now());
+  const avail = today.chairman_available ?? [];
+  const resetDay = async () => { try { await api.resetTestDay(); await reload(); toast('Test day cleared'); } catch { toast('Could not reset'); } };
 
   let topChip = <span className="chip c-mute"><i />Not checked in</span>;
   if (checkedIn && !checkedOut && d?.band) topChip = BAND_CHIP[d.band];
@@ -41,7 +44,10 @@ export function Home() {
 
   const startCheckout = () => {
     const left = 1080 - now;
-    if (left > 60) setSheet('early1h'); else if (left > 0) setSheet('early'); else { setCamMode('out'); go('camera'); }
+    setLeaveOd(null);
+    // before 6 PM: going to an OD today is not an early leave
+    if (left > 0 && odsLeft.length) setSheet('out');
+    else if (left > 60) setSheet('early1h'); else if (left > 0) setSheet('early'); else { setCamMode('out'); go('camera'); }
   };
 
   return (
@@ -66,6 +72,16 @@ export function Home() {
             <div><small>Hours</small><b>{hoursBetween(d?.in_time, d?.out_time)}</b><em>{p.hub ? `${p.hub} hub` : 'No hub'}</em></div>
           </div>
         </div>
+        {today.test_mode && (
+          <div className="card row" style={{ marginTop: 12, background: '#FFF4E0' }}><span className="ri c-warn"><Icon n="alert" /></span>
+            <span className="t"><b>Test account</b><span>Each check-in starts the day fresh.</span></span>
+            <button className="chip c-warn" onClick={resetDay}>Reset today</button></div>)}
+        {avail.length > 0 && (<>
+          <div className="sec">Chairman available</div>
+          <div className="card">{avail.map((a, i) => (
+            <div className="row" key={i}><div className="ri c-ok"><Icon n="users" /></div>
+              <div className="t"><b>{fmtTime(a.starts_at)} – {fmtTime(a.ends_at)}{a.place ? ` · ${a.place}` : ''}</b><span>{a.note ?? 'Open for a quick word'}</span></div></div>))}</div>
+        </>)}
         {od && (<>
           <div className="sec">OD today</div>
           <div className="card">
@@ -125,12 +141,24 @@ export function Home() {
             <button className="btn ghost" onClick={() => setSheet(null)}>Stay</button>
           </div></div>
       )}
+      {sheet === 'out' && (
+        <div className="sheet" role="dialog" aria-label="Check out"><div className="grab" />
+          <h3>Heading out?</h3><p>{Math.floor((1080 - now) / 60)}h {(1080 - now) % 60}m before 6:00 PM.</p>
+          <div className="opts">
+            {odsLeft.map((o) => (
+              <button key={o.id} className="opt" onClick={() => { setSheet(null); setLeaveOd(o.id); setCamMode('out'); go('camera'); }}>
+                <div className="ri c-od"><Icon n="brief" /></div><div><b>Going to OD</b><span>{o.subject} · {fmtTime(o.starts_at)}{o.status === 'pending' ? ' · awaiting approval' : ''}</span></div><Icon n="chevR" className="c" /></button>))}
+            <button className="opt" onClick={() => { setSheet(null); setCamMode('out'); go('camera'); }}><div className="ri c-warn"><Icon n="leaf" /></div><div><b>Early leave</b><span>Logged for HR</span></div><Icon n="chevR" className="c" /></button>
+            <button className="opt" onClick={() => { setSheet(null); setOdPrefill({ urgent: true }); go('od'); }}><div className="ri c-pend"><Icon n="plus" /></div><div><b>Different work</b><span>Raise an OD first</span></div><Icon n="chevR" className="c" /></button>
+          </div>
+          <button className="btn ghost" style={{ marginTop: 8 }} onClick={() => setSheet(null)}>Cancel</button></div>
+      )}
       {sheet === 'early1h' && (
         <div className="sheet" role="dialog" aria-label="Leaving early"><div className="grab" />
           <h3>Leaving early?</h3><p>{Math.floor((1080 - now) / 60)}h {(1080 - now) % 60}m before 6:00 PM.</p>
           <div className="opts">
             <button className="opt" onClick={() => { setSheet(null); setCamMode('out'); go('camera'); }}><div className="ri c-warn"><Icon n="leaf" /></div><div><b>Early leave</b><span>Logged for HR</span></div><Icon n="chevR" className="c" /></button>
-            <button className="opt" onClick={() => { setSheet(null); setOdPrefill({ urgent: true }); go('od'); }}><div className="ri c-od"><Icon n="brief" /></div><div><b>Urgent work</b><span>Raise an OD</span></div><Icon n="chevR" className="c" /></button>
+            <button className="opt" onClick={() => { setSheet(null); setOdPrefill({ urgent: true }); go('od'); }}><div className="ri c-od"><Icon n="brief" /></div><div><b>Urgent work</b><span>Raise an OD, then check out</span></div><Icon n="chevR" className="c" /></button>
           </div>
           <button className="btn ghost" style={{ marginTop: 8 }} onClick={() => setSheet(null)}>Cancel</button></div>
       )}

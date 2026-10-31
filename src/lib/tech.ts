@@ -11,7 +11,7 @@ export interface Overview {
 }
 export interface AuditRow { id: number; at: string; actor: string; who?: string | null; actorRole: string; action: string; entity: string; entityId: string | null; before: Record<string, unknown> | null; after: Record<string, unknown> | null; hash: string; prev: string | null }
 export interface RoleLogin { email: string; name: string; role: 'hr' | 'chairman' | 'tech'; signedIn: boolean; active: boolean; temp: boolean }
-export interface TestStaff { email: string; name: string; hub: string | null; signedIn: boolean }
+export interface TestStaff { email: string; name: string; hub: string | null; signedIn: boolean; testMode: boolean }
 export interface Roles { logins: RoleLogin[]; staff: number; interns: number; tests?: TestStaff[] }
 export interface Device { id: string; userId: string; who: string; hub: string | null; platform: string; ua: string | null; status: 'active' | 'pending' | 'revoked'; created_at: string; approved_at: string | null }
 export interface Devices { pending: Device[]; active: Device[]; flagged: { userId: string; who: string; hub: string | null; kind: string; at: string }[] }
@@ -114,7 +114,7 @@ const real = {
       sb!.from('profiles').select('email, active').in('role', ['hr', 'chairman', 'tech']),
       sb!.from('profiles').select('id', { count: 'exact', head: true }).eq('role', 'staff').eq('active', true),
       sb!.from('profiles').select('id', { count: 'exact', head: true }).eq('role', 'intern').eq('active', true),
-      sb!.from('staff_roster').select('email, full_name, hub_name').eq('is_test', true).order('full_name'),
+      sb!.from('staff_roster').select('email, full_name, hub_name, test_mode').eq('is_test', true).order('full_name'),
       sb!.from('profiles').select('email').eq('role', 'staff')
     ]);
     const signed = new Set(((tp.data ?? []) as { email: string }[]).map((x) => x.email));
@@ -122,7 +122,7 @@ const real = {
     return {
       logins: (must(ro) as { email: string; full_name: string; role: RoleLogin['role'] }[]).map((r) => ({ email: r.email, name: r.full_name, role: r.role, signedIn: pm.has(r.email), active: pm.get(r.email) ?? true, temp: TEMP_LOGINS.includes(r.email) })),
       staff: st.count ?? 0, interns: it.count ?? 0,
-      tests: ((ts.data ?? []) as { email: string; full_name: string; hub_name: string | null }[]).map((t) => ({ email: t.email, name: t.full_name, hub: t.hub_name, signedIn: signed.has(t.email) }))
+      tests: ((ts.data ?? []) as { email: string; full_name: string; hub_name: string | null; test_mode: boolean }[]).map((t) => ({ email: t.email, name: t.full_name, hub: t.hub_name, signedIn: signed.has(t.email), testMode: t.test_mode }))
     };
   },
   async addLogin(email: string, name: string, role: RoleLogin['role']) { const { error } = await sb!.rpc('add_role_login', { p_email: email, p_name: name, p_role: role }); rpcErr(error); },
@@ -191,6 +191,7 @@ const real = {
     const { error } = await sb!.functions.invoke('check-in', { body: { action: 'remove_selfie', punch_id: punchId, reason } });
     if (error) throw new ApiError('remove_failed');
   },
+  async setTestMode(email: string, on: boolean) { const { error } = await sb!.rpc('set_test_mode', { p_email: email, p_on: on }); rpcErr(error); },
   async addTestStaff(email: string, name: string, hub: string) { const { error } = await sb!.rpc('add_test_staff', { p_email: email, p_name: name, p_hub: hub }); rpcErr(error); },
   async exportCsv(kind: 'attendance' | 'audit', month: string): Promise<string> {
     const start = `${month}-01`, end = new Date(new Date(`${start}T00:00:00Z`).getTime() + 32 * 864e5).toISOString().slice(0, 7) + '-01';
@@ -232,7 +233,7 @@ const DS = {
   ] as Device[],
   falseIds: new Set<string>(),
   selfies: Array.from({ length: 8 }, (_, i) => ({ id: `ps${i}`, kind: i % 2 ? 'out' : 'in', at: ago(60 + i * 720), place: 'Anna Salai, Nandanam, Chennai', key: `selfies/s1/${i}.jpg` })) as SelfieRow[],
-  tests: [{ email: 'test1@startuptn.in', name: 'Test', hub: 'Chennai', signedIn: true }] as TestStaff[],
+  tests: [{ email: 'naveenflop+staff@gmail.com', name: 'Test Staff', hub: 'Chennai', signedIn: true, testMode: true }] as TestStaff[],
   audit: [] as AuditRow[]
 };
 (() => {
@@ -293,7 +294,8 @@ const demo: typeof real = {
   async selfieStats() { await wait(); return { total: DS.selfies.length + 160, people: [{ id: 's1', name: 'Kavya R', hub: 'Chennai', count: DS.selfies.length, last: ago(60) }, { id: 's2', name: 'Arun K', hub: 'Chennai', count: 44, last: ago(90) }, { id: 's3', name: 'Ravi S', hub: 'Madurai', count: 38, last: ago(120) }, { id: 'st', name: 'Test', hub: 'Chennai', count: 78, last: ago(20) }] }; },
   async personSelfies() { await wait(); return DS.selfies; },
   async removeSelfie(id) { await wait(); DS.selfies = DS.selfies.filter((x) => x.id !== id); },
-  async addTestStaff(email, name, hub) { await wait(); DS.tests = [...DS.tests, { email: email.trim().toLowerCase(), name: name || 'Test staff', hub, signedIn: false }]; },
+  async setTestMode(email, on) { await wait(); DS.tests = DS.tests.map((t) => (t.email === email ? { ...t, testMode: on } : t)); },
+  async addTestStaff(email, name, hub) { await wait(); DS.tests = [...DS.tests, { email: email.trim().toLowerCase(), name: name || 'Test staff', hub, signedIn: false, testMode: true }]; },
   async exportCsv(kind, month) { await wait(); return kind === 'attendance' ? `Date,Name,Hub,Status\n${month}-01,Kavya R,Chennai,present` : `Id,Action\n1,update`; }
 };
 

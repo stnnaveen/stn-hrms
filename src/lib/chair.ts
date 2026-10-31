@@ -22,6 +22,7 @@ export interface OdItem {
   starts_at: string; ends_at: string; created_at: string; status: string;
   decided_role: string | null; decided_at: string | null; return_reason: string | null;
 }
+export interface Slot { id: string; starts_at: string; ends_at: string; place: string | null; note: string | null }
 export interface LeaveItem { id: string; who: string; hub: string; leave_type: string; starts_on: string; ends_on: string; reason: string | null; status: string; assigned_by_hr: boolean }
 
 const istToday = () => new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
@@ -35,8 +36,9 @@ const real = {
     const today = istToday();
     const startIso = new Date(`${today}T00:00:00+05:30`).toISOString(), endIso = new Date(`${today}T23:59:59+05:30`).toISOString();
     const since = new Date(Date.now() - 30 * 864e5 + 330 * 60000).toISOString().slice(0, 10);
-    const [ps, days, ods, lvs, hubs, away, hist, rad, vis] = await Promise.all([
+    const [ps, tests, days, ods, lvs, hubs, away, hist, rad, vis] = await Promise.all([
       sb!.from('profiles').select('id, full_name, email, designation, hub:hubs(name)').in('role', ['staff', 'intern']).eq('active', true),
+      sb!.from('staff_roster').select('email').eq('is_test', true),
       sb!.from('attendance_days').select('user_id, in_time, out_time, band, early_out, status, in_punch').eq('day', today),
       sb!.from('od_requests').select('id, user_id, subject, venue_name, venue_place, venue_url, starts_at, ends_at').eq('status', 'approved').lte('starts_at', endIso).gte('ends_at', startIso),
       sb!.from('leave_requests').select('user_id, leave_type').eq('status', 'approved').lte('starts_on', today).gte('ends_on', today),
@@ -55,7 +57,8 @@ const real = {
     const dmap = new Map((must(days) as { user_id: string }[]).map((d) => [d.user_id, d as unknown as { in_time: string | null; out_time: string | null; band: Staff['band']; early_out: boolean; status: string; in_punch: string | null }]));
     const omap = new Map((must(ods) as { id: string; user_id: string; subject: string; venue_name: string; venue_place: string | null; venue_url: string | null; starts_at: string; ends_at: string }[]).map((o) => [o.user_id, o]));
     const lmap = new Map((must(lvs) as { user_id: string; leave_type: string }[]).map((l) => [l.user_id, l.leave_type]));
-    const staff: Staff[] = (must(ps) as unknown as { id: string; full_name: string; email: string; designation: string | null; hub: { name: string } | null }[]).map((p) => {
+    const testEmails = new Set(((tests.data ?? []) as { email: string }[]).map((t) => t.email));
+    const staff: Staff[] = (must(ps) as unknown as { id: string; full_name: string; email: string; designation: string | null; hub: { name: string } | null }[]).filter((p) => !testEmails.has(p.email)).map((p) => {
       const d = dmap.get(p.id), o = omap.get(p.id), lv = lmap.get(p.id);
       const cat: Cat = lv ? 'lv' : d?.in_time ? 'in' : o ? 'od' : 'notin';
       return { id: p.id, name: p.full_name, email: p.email, hub: p.hub?.name ?? 'No hub', designation: p.designation, cat,
@@ -82,6 +85,10 @@ const real = {
       .gte('created_at', since).order('created_at', { ascending: false }).limit(60)) as unknown as (Omit<LeaveItem, 'who' | 'hub'> & { p: P })[];
     return r.map((x) => ({ ...x, who: x.p.full_name, hub: x.p.hub?.name ?? 'No hub' }));
   },
+  /** Optional times staff can meet the Chairman (shown on staff home). */
+  async slots(): Promise<Slot[]> { return must(await sb!.from('chairman_availability').select('id, starts_at, ends_at, place, note').gt('ends_at', new Date().toISOString()).order('starts_at')) as Slot[]; },
+  async addSlot(x: Omit<Slot, 'id'>) { const { error } = await sb!.from('chairman_availability').insert(x); if (error) throw new ApiError('save_failed'); },
+  async removeSlot(id: string) { const { error } = await sb!.from('chairman_availability').delete().eq('id', id); if (error) throw new ApiError('save_failed'); },
   async setAway(away: boolean) { const { error } = await sb!.rpc('set_chairman_away', { p_away: away }); if (error) throw new ApiError('save_failed'); },
   async decideOd(id: string, d: 'approved' | 'returned', reason?: string) { const { error } = await sb!.rpc('decide_od', { p_id: id, p_decision: d, p_reason: reason ?? null }); if (error) throw new ApiError(error.message); },
   async alerts(): Promise<Flag[]> {
@@ -135,11 +142,15 @@ const D = (() => {
   ];
   return { staff, trend, pending, decided, leaves, away: false };
 })();
+const SL: Slot[] = [];
 const wait = (ms = 250) => new Promise((r) => setTimeout(r, ms));
 const demo: typeof real = {
   async snapshot() { await wait(); return { staff: D.staff, hubs: HUBS, away: D.away, trend: D.trend }; },
   async ods() { await wait(); return { pending: [...D.pending], decided: [...D.decided] }; },
   async leaves() { await wait(); return D.leaves; },
+  async slots() { await wait(); return [...SL]; },
+  async addSlot(x) { await wait(); SL.push({ ...x, id: crypto.randomUUID() }); SL.sort((a, b) => a.starts_at.localeCompare(b.starts_at)); },
+  async removeSlot(id) { await wait(); const i = SL.findIndex((s) => s.id === id); if (i >= 0) SL.splice(i, 1); },
   async setAway(a) { await wait(150); D.away = a; },
   async decideOd(id, d, reason) {
     await wait(); const o = D.pending.find((x) => x.id === id)!; D.pending = D.pending.filter((x) => x.id !== id);
