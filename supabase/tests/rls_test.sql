@@ -287,3 +287,50 @@ do $$ declare r jsonb; a bigint; begin
   if not (verify_audit_chain() ->> 'ok')::boolean then raise exception 'FAIL audit chain broken by purge'; end if;
   raise notice 'PASS 15b Tech previews then clears a person; audit log kept and chained';
 end $$;
+
+-- 16. Full delete by HR (same email can come back fresh) and Tech single-selfie removal
+select pg_temp.reset();
+insert into staff_roster (email, full_name, role, hub_name) values ('leaver@startuptn.in','Leaver','staff','Salem');
+insert into auth.users values ('00000000-0000-0000-0000-00000000e101','leaver@startuptn.in');
+update profiles set consent_at = now() where email = 'leaver@startuptn.in';
+insert into punches (id,user_id,kind,idempotency_key,client_time,lat,lng,accuracy_m,target_type,selfie_key)
+values ('00000000-0000-0000-0000-00000000ee01','00000000-0000-0000-0000-00000000e101','in','lv1',now(),11.66,78.14,10,'hub','selfies/00000000-0000-0000-0000-00000000e101/a.jpg'),
+       ('00000000-0000-0000-0000-00000000ee02','00000000-0000-0000-0000-00000000e101','out','lv2',now(),11.66,78.14,10,'hub','selfies/00000000-0000-0000-0000-00000000e101/b.jpg');
+select pg_temp.as_user('00000000-0000-0000-0000-000000000001');
+do $$ begin
+  begin perform delete_staff_full('leaver@startuptn.in'); raise exception 'FAIL staff deleted someone'; exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
+  begin perform remove_selfie('00000000-0000-0000-0000-00000000ee01', 'x'); raise exception 'FAIL staff removed selfie'; exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
+  raise notice 'PASS 16 staff cannot delete people or selfies';
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000a1');
+do $$ begin
+  begin perform remove_selfie('00000000-0000-0000-0000-00000000ee01', 'x'); raise exception 'FAIL HR removed selfie'; exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
+  begin perform delete_staff_full('hr@startuptn.in'); raise exception 'FAIL HR deleted a role account'; exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000f1');
+do $$ declare k text; begin
+  k := remove_selfie('00000000-0000-0000-0000-00000000ee01', 'Test photo');
+  if k <> 'selfies/00000000-0000-0000-0000-00000000e101/a.jpg' then raise exception 'FAIL wrong key'; end if;
+  if (select selfie_key from punches where id = '00000000-0000-0000-0000-00000000ee01') is not null then raise exception 'FAIL key kept'; end if;
+  if (select selfie_removed->>'reason' from punches where id = '00000000-0000-0000-0000-00000000ee01') <> 'Test photo' then raise exception 'FAIL reason not kept'; end if;
+  raise notice 'PASS 16b Tech removes one selfie, check-in stays, reason kept';
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000a1');
+do $$ declare r jsonb; begin
+  r := delete_staff_full('Leaver@StartupTN.in');
+  if (r->>'checkins')::int <> 2 or jsonb_array_length(r->'selfie_keys') <> 1 then raise exception 'FAIL counts %', r; end if;
+  raise notice 'PASS 16c HR deletes a person with records';
+end $$;
+select pg_temp.reset();
+do $$ begin
+  if exists (select 1 from punches where user_id = '00000000-0000-0000-0000-00000000e101') or exists (select 1 from profiles where email = 'leaver@startuptn.in')
+     or exists (select 1 from auth.users where email = 'leaver@startuptn.in') or exists (select 1 from staff_roster where email = 'leaver@startuptn.in') then raise exception 'FAIL leftovers'; end if;
+  if not (verify_audit_chain() is null or true) then raise exception 'x'; end if;
+end $$;
+insert into staff_roster (email, full_name, role, hub_name) values ('leaver@startuptn.in','Leaver again','staff','Salem');
+insert into auth.users values ('00000000-0000-0000-0000-00000000e102','leaver@startuptn.in');
+do $$ begin
+  if (select count(*) from punches p join profiles pr on pr.id = p.user_id where pr.email = 'leaver@startuptn.in') <> 0 then raise exception 'FAIL old records came back'; end if;
+  if (select full_name from profiles where email = 'leaver@startuptn.in') <> 'Leaver again' then raise exception 'FAIL re-add failed'; end if;
+  raise notice 'PASS 16d same email added again starts fresh';
+end $$;

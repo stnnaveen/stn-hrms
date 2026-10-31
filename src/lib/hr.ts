@@ -102,9 +102,10 @@ const real = {
     const { error } = await sb!.from('staff_roster').update({ hub_name: f.hub_name, designation: f.designation.trim() || null, phone: f.phone.trim() || null, employee_code: f.employee_code.trim() || null }).eq('email', email);
     if (error) throw new ApiError('save_failed');
   },
+  /** Deletes the person completely (account, records, selfies). The same email can be added again afterwards. */
   async deleteStaff(email: string) {
-    const { error } = await sb!.rpc('delete_staff', { p_email: email });
-    if (error) throw new ApiError(/has_records/.test(error.message) ? 'has_records' : /role accounts/.test(error.message) ? 'role_account' : 'save_failed');
+    const { error } = await sb!.functions.invoke('check-in', { body: { action: 'delete_person', email } });
+    if (error) { let code = 'save_failed'; try { code = (await (error as { context?: Response }).context?.json())?.error ?? code; } catch { /* keep */ } throw new ApiError(/role/.test(code) ? 'role_account' : code); }
   },
   async personDetail(userId: string): Promise<PersonDetail> {
     const ist = new Date(Date.now() + 330 * 60000);
@@ -166,7 +167,7 @@ const demo: typeof real = {
   async saveHub(h) { await wait(); const i = D.hubs.findIndex((x) => x.id === h.id); if (i >= 0) D.hubs[i] = { ...D.hubs[i], ...h }; else D.hubs.push({ ...h, id: crypto.randomUUID(), active: true, maps_url: h.maps_url ?? null, staff: 0 }); },
   async addStaff(s) { await wait(); const dup = D.people.find((x) => x.email === s.email.trim().toLowerCase()); if (dup) throw new ApiError(`already_added:${dup.full_name}`); D.people.push({ id: crypto.randomUUID(), full_name: s.full_name, email: s.email, role: s.role, designation: s.designation, hub: s.hub_name, phone: s.phone ?? null, employee_code: s.employee_code ?? null, active: true, face_status: 'none', invited: true, today: null }); },
   async updateStaff(email, f) { await wait(); const p = D.people.find((x) => x.email === email); if (p) Object.assign(p, { hub: f.hub_name, designation: f.designation || null, phone: f.phone || null, employee_code: f.employee_code || null }); },
-  async deleteStaff(email) { await wait(); const p = D.people.find((x) => x.email === email); if (p?.today?.in_time) throw new ApiError('has_records'); D.people = D.people.filter((x) => x.email !== email); },
+  async deleteStaff(email) { await wait(); D.people = D.people.filter((x) => x.email !== email); },
   async personDetail(uid) {
     await wait();
     const p = D.people.find((x) => x.id === uid);

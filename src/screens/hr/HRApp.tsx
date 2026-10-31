@@ -216,6 +216,7 @@ function MonthCalendar({ d }: { d: PersonDetail }) {
 function PersonView({ p: p0, onBack, open }: { p: Person; onBack: () => void; open: (s: Sub) => void }) {
   const { toast } = useApp();
   const [p, setP] = useState<Person>(p0);
+  const [delTyped, setDelTyped] = useState(''); const [delBusy, setDelBusy] = useState(false);
   const [d, setD] = useState<PersonDetail | null>(null);
   const [pins, setPins] = useState<Pin[] | null>(null);
   const [photos, setPhotos] = useState<Record<string, string | null>>({});
@@ -234,8 +235,8 @@ function PersonView({ p: p0, onBack, open }: { p: Person; onBack: () => void; op
   const pat = pins ? pattern(pins) : null;
   const first = p.full_name.split(' ')[0];
   const del = async () => {
-    try { await hr.deleteStaff(p.email); toast(`${first} deleted`); onBack(); }
-    catch (e) { setSheet(null); toast(e instanceof ApiError && e.code === 'has_records' ? 'Has attendance records. Deactivate instead.' : e instanceof ApiError && e.code === 'role_account' ? 'Role accounts are managed by Tech admin.' : 'Could not delete. Try again.'); }
+    try { await hr.deleteStaff(p.email); toast(`${first} deleted · can be added again`); onBack(); }
+    catch (e) { setSheet(null); toast(e instanceof ApiError && e.code === 'role_account' ? 'Role accounts are managed by Tech admin.' : 'Could not delete. Try again.'); }
   };
   const punch = (k: 'in' | 'out') => d?.punches.find((x) => x.kind === k);
   // place for each punch: the name saved at check-in, else looked up now (older punches saved without one)
@@ -313,9 +314,12 @@ function PersonView({ p: p0, onBack, open }: { p: Person; onBack: () => void; op
             <button className="btn danger" onClick={async () => { await hr.setActive(p.id, false); setActive(false); setSheet(null); toast('Deactivated'); }}>Deactivate</button>
             <button className="btn ghost" onClick={() => setSheet(null)}>Cancel</button></div></div></>)}
       {sheet === 'delete' && (<><div className="scrim" onClick={() => setSheet(null)} />
-        <div className="sheet" role="dialog" aria-label="Delete"><div className="grab" /><h3>Delete {first}?</h3><p>For entries added by mistake. Anyone with attendance records can only be deactivated.</p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 20 }}>
-            <button className="btn danger" onClick={del}>Delete</button>
+        <div className="sheet" role="dialog" aria-label="Delete"><div className="grab" /><h3>Delete {first} completely?</h3>
+          <p>Removes the account and every record: check-ins, selfies, OD, leave and disputes. Can’t be undone. The same email can be added again and starts fresh.</p>
+          <p className="to" style={{ textAlign: 'left', margin: '8px 0 0' }}>Someone who left? Deactivate instead to keep their history.</p>
+          <label className="lab" htmlFor="del-c">Type DELETE</label><input className="inp" id="del-c" value={delTyped} onChange={(e) => setDelTyped(e.target.value)} autoCapitalize="characters" />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 16 }}>
+            <button className="btn danger" disabled={delTyped.trim() !== 'DELETE' || delBusy} onClick={async () => { setDelBusy(true); await del(); setDelBusy(false); }}>{delBusy ? 'Deleting' : 'Delete'}</button>
             <button className="btn ghost" onClick={() => setSheet(null)}>Cancel</button></div></div></>)}
     </>
   );

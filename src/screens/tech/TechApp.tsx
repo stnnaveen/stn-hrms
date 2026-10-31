@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useApp } from '../../App';
 import { ApiError } from '../../lib/api';
-import { tech, phoneName, type HubPunch, type PurgeArgs, type PurgeResult, type PurgeWhat, type RadiusResult, type Accuracy, type AuditRow, type Devices, type Device, type Health, type Overview, type RoleLogin, type Roles, type Settings } from '../../lib/tech';
+import { tech, phoneName, type HubPunch, type SelfieRow, type SelfieStats, type PurgeArgs, type PurgeResult, type PurgeWhat, type RadiusResult, type Accuracy, type AuditRow, type Devices, type Device, type Health, type Overview, type RoleLogin, type Roles, type Settings } from '../../lib/tech';
 import { hr, FLAG_LABEL, type Flag } from '../../lib/hr';
 import { placeLabel, googleMapsUrl, appleMapsUrl, fmtDistance } from '../../lib/geo';
 import { fmtDay, fmtShortDay, fmtTime, greeting } from '../../lib/time';
@@ -13,7 +13,7 @@ import { hr as hrApi, type Hub, type Person } from '../../lib/hr';
 const MapView = lazy(() => import('../../ui/MapView'));
 
 type Tab = 'home' | 'audit' | 'alerts' | 'accuracy' | 'setup';
-type Sub = { name: 'roles' } | { name: 'devices' } | { name: 'rules' } | { name: 'integrations' } | { name: 'radius' } | { name: 'purge' } | { name: 'alert'; f: Flag } | { name: 'notifs' };
+type Sub = { name: 'roles' } | { name: 'devices' } | { name: 'rules' } | { name: 'integrations' } | { name: 'radius' } | { name: 'purge' } | { name: 'selfies' } | { name: 'alert'; f: Flag } | { name: 'notifs' };
 type Sheet = null | { t: 'account' } | { t: 'entry'; e: AuditRow } | { t: 'addlogin' } | { t: 'login'; l: RoleLogin } | { t: 'rule'; k: string; v: string }
   | { t: 'device'; d: Device } | { t: 'exports' } | { t: 'privacy' } | { t: 'addtest' };
 
@@ -114,7 +114,7 @@ function services(h: Health | null, chain: { ok: boolean; rows: number } | null)
     { n: 'Database', s: `Supabase · Mumbai`, v: h.db_ok ? `${h.db_ms} ms` : 'Down', c: h.db_ok ? '' : 'bad' },
     { n: 'Selfie storage', s: h.storage === 's3' ? 'AWS S3 · Mumbai' : 'Supabase Storage · until AWS keys', v: 'On', c: h.storage === 's3' ? '' : 'p' },
     { n: 'Face match', s: h.face_match ? 'AWS Rekognition' : 'Off · needs AWS keys', v: h.face_match ? 'On' : 'Off', c: h.face_match ? '' : 'off' },
-    { n: 'Place names', s: h.geocode === 'google' ? 'Google Maps' : 'OpenStreetMap · free', v: 'On', c: h.geocode === 'google' ? '' : 'p' },
+    { n: 'Place names', s: h.geocode === 'google' ? 'Google Maps' : h.geocode === 'ola' ? 'Ola Maps · India' : 'OpenStreetMap · free', v: 'On', c: h.geocode === 'osm' ? 'p' : '' },
     { n: 'Sign-in codes', s: 'Resend · hr.startuptn.in', v: 'On', c: '' },
     { n: 'Audit chain', s: chain ? `${chain.rows.toLocaleString('en-IN')} rows` : 'Checking…', v: chain ? (chain.ok ? 'Verified' : 'Broken') : '…', c: chain && !chain.ok ? 'bad' : chain ? '' : 'off' }
   ];
@@ -155,6 +155,7 @@ export function TechApp() {
     if (sub.name === 'devices') body = <DevicesView key={tick} onBack={back} setSheet={setSheet} onChanged={refresh} />;
     if (sub.name === 'rules') body = <RulesView key={tick} onBack={back} setSheet={setSheet} />;
     if (sub.name === 'radius') body = <RadiusTest onBack={back} />;
+    if (sub.name === 'selfies') body = <Selfies onBack={back} />;
     if (sub.name === 'purge') body = <Purge onBack={back} onDone={refresh} />;
     if (sub.name === 'integrations') body = <Integrations svc={svc} health={health} onBack={back} />;
     if (sub.name === 'alert') body = <AlertView f={sub.f} onBack={back} />;
@@ -376,6 +377,7 @@ function Setup({ roles, ov, health, open, setSheet }: { roles: Roles | null; ov:
       <div className="card" style={{ padding: '4px 16px' }}>
         {row(() => open({ name: 'radius' }), 'target', 'c-od', 'Radius test', 'Hub pin, circle and your live GPS')}
         {row(() => open({ name: 'roles' }), 'users', 'c-lv', 'Test staff', 'Logins for trying the staff app')}
+        {row(() => open({ name: 'selfies' }), 'cam', 'c-pend', 'Selfies', 'Count, browse, remove one photo')}
         {row(() => open({ name: 'purge' }), 'x', 'c-bad', 'Clear test data', 'By person, hub, test staff or everyone')}
       </div>
       <div className="card" style={{ padding: '4px 16px', marginTop: 12 }}>
@@ -475,11 +477,11 @@ function Integrations({ svc, health, onBack }: { svc: ReturnType<typeof services
     <div className="scr fade" style={{ paddingBottom: 40 }}>
       <Top small="Setup" big="Integrations" onBack={onBack} />
       <div className="card" style={{ padding: '6px 16px' }}>{svc.length ? svc.map((s) => <div className="svc" key={s.n}><span className={`dot ${s.c}`} /><span className="t">{s.n}<span>{s.s}</span></span><span className="ms">{s.v}</span></div>) : <Spin />}</div>
-      {health && (!health.face_match || health.geocode !== 'google') && <>
+      {health && (!health.face_match || health.geocode === 'osm') && <>
         <div className="sec">To switch on</div>
         <div className="card"><ul className="tline">
           {!health.face_match && <li className="k"><b>AWS keys · S3 + Rekognition</b><span>Moves selfies to StartupTN’s AWS (Mumbai) and turns on face match. Keys go in Supabase function secrets.</span></li>}
-          {health.geocode !== 'google' && <li><b>Google Maps key</b><span>Place names exactly as Google Maps shows them. Optional; OpenStreetMap works meanwhile.</span></li>}
+          {health.geocode === 'osm' && <li><b>Ola Maps or Google Maps key</b><span>Indian place names. Ola Maps is free up to 100,000 a month (OLA_MAPS_KEY); Google matches Google Maps exactly (GOOGLE_GEOCODING_KEY).</span></li>}
         </ul></div></>}
       <p className="to">Keys are never shown here. Region {health?.region || 'ap-south-1'}.</p>
     </div>
@@ -720,5 +722,68 @@ function Purge({ onBack, onDone }: { onBack: () => void; onDone: () => void }) {
             <button className="btn danger" disabled={typed.trim() !== 'DELETE' || busy} onClick={run}>{busy ? 'Deleting' : 'Delete'}</button>
             <button className="btn ghost" onClick={() => setConfirm(false)}>Cancel</button></div></div></>)}
     </>
+  );
+}
+
+// ---------------- testing: selfies ----------------
+// How many photos are stored, per person; remove one photo (the check-in itself stays, with who removed it and why).
+const REASONS = ['Wrong person', 'Privacy request', 'Test photo', 'Blurry or dark', 'Other'];
+function Selfies({ onBack }: { onBack: () => void }) {
+  const { toast } = useApp();
+  const [st, setSt] = useState<SelfieStats | null>(null);
+  const [q, setQ] = useState('');
+  const [who, setWho] = useState<SelfieStats['people'][number] | null>(null);
+  const [rows, setRows] = useState<SelfieRow[] | null>(null);
+  const [urls, setUrls] = useState<Record<string, string | null>>({});
+  const [sel, setSel] = useState<SelfieRow | null>(null);
+  const [reason, setReason] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const load = () => tech.selfieStats().then(setSt).catch(() => setSt({ total: 0, people: [] }));
+  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    if (!who) { setRows(null); return; }
+    tech.personSelfies(who.id).then(async (r) => { setRows(r); const u: Record<string, string | null> = {}; for (const x of r.slice(0, 60)) u[x.id] = await hrApi.selfieUrl(x.key); setUrls(u); }).catch(() => setRows([]));
+  }, [who]);
+  const remove = async () => {
+    if (!sel || !reason) return; setBusy(true);
+    try { await tech.removeSelfie(sel.id, reason); toast('Photo removed · logged'); setRows((r) => r?.filter((x) => x.id !== sel.id) ?? null); setSel(null); setReason(null); load(); }
+    catch { toast('Could not remove. Try again.'); }
+    setBusy(false);
+  };
+  if (who) return (
+    <><div className="scr fade" style={{ paddingBottom: 40 }}>
+      <Top small={`${rows?.length ?? who.count} photos`} big={who.name} onBack={() => setWho(null)} />
+      {!rows ? <Spin /> : rows.length === 0 ? <div className="empty"><b>No photos</b>Nothing stored for {who.name.split(' ')[0]}.</div> :
+        <div className="sgrid">{rows.map((x) => (
+          <button key={x.id} className="sph" onClick={() => { setSel(x); setReason(null); }} aria-label={`${x.kind === 'out' ? 'Check-out' : x.kind === 'visit' ? 'Venue' : 'Check-in'} photo ${fmtShortDay(new Date(x.at))} ${fmtTime(x.at)}`}>
+            {urls[x.id] ? <img src={urls[x.id]!} alt="" /> : <span className="center" style={{ height: '100%', color: 'var(--ph-ink3)', fontSize: 11 }}>Photo</span>}
+            <span className="cap">{x.kind === 'out' ? 'Out' : x.kind === 'visit' ? 'Venue' : 'In'} · {fmtShortDay(new Date(x.at))}<br />{fmtTime(x.at)}</span>
+          </button>))}</div>}
+      <p className="to">Removing a photo keeps the check-in time and place.</p>
+    </div>
+      {sel && (<><div className="scrim" onClick={() => setSel(null)} />
+        <div className="sheet" role="dialog" aria-label="Remove photo"><div className="grab" />
+          <div className="scrollable">
+            <div className="shot" style={{ maxHeight: 300 }}>{urls[sel.id] ? <img src={urls[sel.id]!} alt={`${who.name} selfie`} /> : <div className="center" style={{ background: '#D9DCE3', height: 200 }}>Photo</div>}
+              <div className="stamp">{who.name} · {sel.kind === 'out' ? 'Check out' : sel.kind === 'visit' ? 'Venue' : 'Check in'}<br />{fmtShortDay(new Date(sel.at))} · {fmtTime(sel.at)} IST<br />{sel.place ?? ''}</div></div>
+            <div className="sec">Why remove it?</div>
+            <div className="rchips">{REASONS.map((r) => <button key={r} className={reason === r ? 'on' : ''} onClick={() => setReason(r)}>{r}</button>)}</div>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 16 }}>
+            <button className="btn danger" disabled={!reason || busy} onClick={remove}>{busy ? 'Removing' : 'Remove photo'}</button>
+            <button className="btn ghost" onClick={() => setSel(null)}>Cancel</button></div></div></>)}
+    </>
+  );
+  const list = (st?.people ?? []).filter((p) => !q || p.name.toLowerCase().includes(q.toLowerCase()));
+  return (
+    <div className="scr fade" style={{ paddingBottom: 40 }}>
+      <Top small="Testing" big="Selfies" onBack={onBack} />
+      {!st ? <Spin /> : <>
+        <div className="tiles" style={{ gridTemplateColumns: 'repeat(2,minmax(0,1fr))' }}><div className="tile"><b>{st.total.toLocaleString('en-IN')}</b><span>Photos stored</span></div><div className="tile"><b>{st.people.length}</b><span>People</span></div></div>
+        <label className="search" htmlFor="sq" style={{ marginTop: 14 }}><Icon n="search" /><input id="sq" placeholder="Search name" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search person" /></label>
+        {list.map((p) => <button key={p.id} className="lrow" onClick={() => setWho(p)}><Av n={p.name} /><span className="t"><b>{p.name}</b><span>{p.hub ?? 'No hub'} · last {fmtShortDay(new Date(p.last))}</span></span><span className="v"><span className="chip c-pend">{p.count}</span></span></button>)}
+        {list.length === 0 && <div className="empty"><b>No photos</b>Nothing stored yet.</div>}
+      </>}
+    </div>
   );
 }

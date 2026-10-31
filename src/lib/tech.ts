@@ -3,7 +3,7 @@
 import { sb, DEMO, ApiError } from './api';
 import type { Flag } from './hr';
 
-export interface Health { db_ok: boolean; db_ms: number; storage: 's3' | 'supabase'; face_match: boolean; geocode: 'google' | 'osm'; region: string }
+export interface Health { db_ok: boolean; db_ms: number; storage: 's3' | 'supabase'; face_match: boolean; geocode: 'google' | 'ola' | 'osm'; region: string }
 export interface Overview {
   staff: number; checkins: number; openAlerts: number; quality: number | null;
   newPhones: number; flaggedPhones: number; falseFlags: number;
@@ -24,6 +24,8 @@ export interface Accuracy {
 export type Settings = Record<string, string | number>;
 export interface RadiusResult { distance_m: number; credit_m: number; inside: boolean; radius_m: number; place: string | null }
 export interface HubPunch { lat: number; lng: number; acc: number | null; inside: boolean | null; at: string; who: string; kind: string }
+export interface SelfieStats { total: number; people: { id: string; name: string; hub: string | null; count: number; last: string }[] }
+export interface SelfieRow { id: string; kind: string; at: string; place: string | null; key: string }
 export type PurgeWhat = 'checkins' | 'flags' | 'od' | 'leave' | 'notifications' | 'devices';
 export interface PurgeArgs { scope: 'person' | 'hub' | 'test' | 'everyone'; user?: string | null; hub?: string | null; from?: string | null; to?: string | null; what: PurgeWhat[]; dry: boolean }
 export interface PurgeResult { people: number; checkins: number; days: number; flags: number; od: number; leave: number; notifications: number; devices: number; photos_removed?: number }
@@ -161,6 +163,22 @@ const real = {
     if (error) { let code = 'purge_failed'; try { code = (await (error as { context?: Response }).context?.json())?.error ?? code; } catch { /* keep */ } throw new ApiError(code); }
     return data as PurgeResult;
   },
+  async selfieStats(): Promise<SelfieStats> {
+    const r = must(await sb!.from('punches').select('user_id, server_time, p:profiles!punches_user_id_fkey(full_name, hub:hubs(name))').not('selfie_key', 'is', null).order('server_time', { ascending: false }).limit(20000)) as unknown as
+      { user_id: string; server_time: string; p: PN }[];
+    const m = new Map<string, SelfieStats['people'][number]>();
+    for (const x of r) { const e = m.get(x.user_id); if (e) e.count++; else m.set(x.user_id, { id: x.user_id, name: x.p?.full_name ?? 'Unknown', hub: x.p?.hub?.name ?? null, count: 1, last: x.server_time }); }
+    return { total: r.length, people: [...m.values()].sort((a, b) => a.name.localeCompare(b.name)) };
+  },
+  async personSelfies(userId: string): Promise<SelfieRow[]> {
+    const r = must(await sb!.from('punches').select('id, kind, server_time, place_name, selfie_key').eq('user_id', userId).not('selfie_key', 'is', null).order('server_time', { ascending: false }).limit(200)) as
+      { id: string; kind: string; server_time: string; place_name: string | null; selfie_key: string }[];
+    return r.map((x) => ({ id: x.id, kind: x.kind, at: x.server_time, place: x.place_name, key: x.selfie_key }));
+  },
+  async removeSelfie(punchId: string, reason: string) {
+    const { error } = await sb!.functions.invoke('check-in', { body: { action: 'remove_selfie', punch_id: punchId, reason } });
+    if (error) throw new ApiError('remove_failed');
+  },
   async addTestStaff(email: string, name: string, hub: string) { const { error } = await sb!.rpc('add_test_staff', { p_email: email, p_name: name, p_hub: hub }); rpcErr(error); },
   async exportCsv(kind: 'attendance' | 'audit', month: string): Promise<string> {
     const start = `${month}-01`, end = new Date(new Date(`${start}T00:00:00Z`).getTime() + 32 * 864e5).toISOString().slice(0, 7) + '-01';
@@ -201,6 +219,7 @@ const DS = {
     { id: 'd4', userId: 's4', who: 'Lakshmi N', hub: 'Salem', platform: 'web', ua: 'Mozilla/5.0 (Linux; Android 14; V2250) Chrome/129', status: 'active', created_at: ago(7000), approved_at: null }
   ] as Device[],
   falseIds: new Set<string>(),
+  selfies: Array.from({ length: 8 }, (_, i) => ({ id: `ps${i}`, kind: i % 2 ? 'out' : 'in', at: ago(60 + i * 720), place: 'Anna Salai, Nandanam, Chennai', key: `selfies/s1/${i}.jpg` })) as SelfieRow[],
   tests: [{ email: 'test1@startuptn.in', name: 'Test', hub: 'Chennai', signedIn: true }] as TestStaff[],
   audit: [] as AuditRow[]
 };
@@ -257,6 +276,9 @@ const demo: typeof real = {
   },
   async hubPunches() { await wait(); return [{ lat: 13.0319, lng: 80.2434, acc: 12, inside: true, at: ago(300), who: 'Kavya R', kind: 'in' }, { lat: 13.0326, lng: 80.2441, acc: 20, inside: true, at: ago(320), who: 'Arun K', kind: 'in' }, { lat: 13.0412, lng: 80.2338, acc: 15, inside: false, at: ago(900), who: 'Ravi S', kind: 'in' }]; },
   async purge(a) { await wait(500); const n = a.scope === 'person' ? 1 : a.scope === 'test' ? 2 : a.scope === 'hub' ? 28 : 96; return { people: n, checkins: n * 6, days: n * 3, flags: Math.ceil(n / 2), od: a.what.includes('od') ? n : 0, leave: a.what.includes('leave') ? Math.ceil(n / 3) : 0, notifications: a.what.includes('notifications') ? n * 4 : 0, devices: a.what.includes('devices') ? n : 0, photos_removed: a.dry ? undefined : n * 6 }; },
+  async selfieStats() { await wait(); return { total: DS.selfies.length + 160, people: [{ id: 's1', name: 'Kavya R', hub: 'Chennai', count: DS.selfies.length, last: ago(60) }, { id: 's2', name: 'Arun K', hub: 'Chennai', count: 44, last: ago(90) }, { id: 's3', name: 'Ravi S', hub: 'Madurai', count: 38, last: ago(120) }, { id: 'st', name: 'Test', hub: 'Chennai', count: 78, last: ago(20) }] }; },
+  async personSelfies() { await wait(); return DS.selfies; },
+  async removeSelfie(id) { await wait(); DS.selfies = DS.selfies.filter((x) => x.id !== id); },
   async addTestStaff(email, name, hub) { await wait(); DS.tests = [...DS.tests, { email: email.trim().toLowerCase(), name: name || 'Test staff', hub, signedIn: false }]; },
   async exportCsv(kind, month) { await wait(); return kind === 'attendance' ? `Date,Name,Hub,Status\n${month}-01,Kavya R,Chennai,present` : `Id,Action\n1,update`; }
 };

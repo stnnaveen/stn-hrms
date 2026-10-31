@@ -30,12 +30,13 @@ const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
 
 interface Body {
-  action: 'start' | 'complete' | 'health' | 'resolve_venue' | 'radius_test' | 'purge';
+  action: 'start' | 'complete' | 'health' | 'resolve_venue' | 'radius_test' | 'purge' | 'delete_person' | 'remove_selfie';
   kind: 'in' | 'out' | 'visit';
   url?: string;
   // radius_test (Tech): a point to test against a hub, or against a pin + radius
   hub_id?: string; point?: { lat: number; lng: number; accuracy: number | null }; target?: { lat: number; lng: number; radius_m: number };
   // purge (Tech, testing phase)
+  email?: string; punch_id?: string; reason?: string;
   scope?: string; user?: string | null; hub?: string | null; from?: string | null; to?: string | null; what?: string[]; dry?: boolean;
   idempotency_key: string;
   device_key: string;
@@ -65,8 +66,21 @@ Deno.serve(async (req) => {
     const { data: me } = await db.from('profiles').select('role, active').eq('id', user.id).single();
     if (me?.role !== 'tech' || !me.active) return json({ error: 'not_allowed' }, 403);
     const t0 = Date.now(); const { error } = await db.from('settings').select('key').limit(1);
-    return json({ ok: true, db_ms: Date.now() - t0, db_ok: !error, storage: USE_S3 ? 's3' : 'supabase', face_match: USE_S3, geocode: env('GOOGLE_GEOCODING_KEY') ? 'google' : 'osm', region: REGION });
+    return json({ ok: true, db_ms: Date.now() - t0, db_ok: !error, storage: USE_S3 ? 's3' : 'supabase', face_match: USE_S3, geocode: env('GOOGLE_GEOCODING_KEY') ? 'google' : env('OLA_MAPS_KEY') ? 'ola' : 'osm', region: REGION });
   }
+  // ---- HR/Tech: delete a person completely; Tech: remove one selfie. The database decides who may; photos go here.
+  if (body.action === 'delete_person' || body.action === 'remove_selfie') {
+    if (body.action === 'delete_person') {
+      const { data: res, error } = await asUser.rpc('delete_staff_full', { p_email: String(body.email ?? '') });
+      if (error) return json({ error: (error.message || 'delete_failed').replace(/^.*?:\s*/, '') }, 400);
+      const photos = await removeSelfies(db, res?.selfie_keys ?? []);
+      return json({ ok: true, ...res, selfie_keys: undefined, photos_removed: photos });
+    }
+    const { data: key, error } = await asUser.rpc('remove_selfie', { p_punch: String(body.punch_id ?? ''), p_reason: String(body.reason ?? '') });
+    if (error) return json({ error: (error.message || 'remove_failed').replace(/^.*?:\s*/, '') }, 400);
+    return json({ ok: true, photos_removed: await removeSelfies(db, [key]) });
+  }
+
   // ---- Tech admin tools: radius test (same decision as check-in) and clearing test records
   if (body.action === 'radius_test' || body.action === 'purge') {
     const { data: me } = await db.from('profiles').select('role, active').eq('id', user.id).single();
@@ -83,14 +97,7 @@ Deno.serve(async (req) => {
     const { data: res, error } = await asUser.rpc('purge_records', { p_scope: body.scope, p_user: body.user ?? null, p_hub: body.hub ?? null,
       p_from: body.from ?? null, p_to: body.to ?? null, p_what: body.what ?? ['checkins', 'flags', 'od', 'leave', 'notifications'], p_dry: body.dry !== false });
     if (error) return json({ error: (error.message || 'purge_failed').replace(/^.*?:\s*/, '') }, 400);
-    let photos = 0;
-    const keys: string[] = res?.selfie_keys ?? [];
-    for (let i = 0; i < keys.length; i += 100) {
-      const chunk = keys.slice(i, i + 100);
-      if (USE_S3) { try { await s3.send(new DeleteObjectsCommand({ Bucket: BUCKET, Delete: { Objects: chunk.map((Key) => ({ Key })) } })); photos += chunk.length; } catch { /* keep going */ } }
-      const { data: gone } = await db.storage.from('selfies').remove(chunk.map((k) => k.replace(/^selfies\//, '')));
-      if (!USE_S3) photos += gone?.length ?? 0;
-    }
+    const photos = await removeSelfies(db, res?.selfie_keys ?? []);
     return json({ ok: true, ...res, selfie_keys: undefined, photos_removed: photos });
   }
 
@@ -247,6 +254,20 @@ async function loadSettings(db: any): Promise<Settings> {
   };
 }
 
+// Delete selfie files from S3 (when set up) and Supabase Storage. Returns how many were removed.
+// deno-lint-ignore no-explicit-any
+async function removeSelfies(db: any, keys: string[]): Promise<number> {
+  let n = 0;
+  for (let i = 0; i < keys.length; i += 100) {
+    const chunk = keys.slice(i, i + 100).filter(Boolean);
+    if (!chunk.length) continue;
+    if (USE_S3) { try { await s3.send(new DeleteObjectsCommand({ Bucket: BUCKET, Delete: { Objects: chunk.map((Key) => ({ Key })) } })); n += chunk.length; } catch { /* keep going */ } }
+    const { data: gone } = await db.storage.from('selfies').remove(chunk.map((k) => k.replace(/^selfies\//, '')));
+    if (!USE_S3) n += gone?.length ?? 0;
+  }
+  return n;
+}
+
 // OD venue from a Google or Apple Maps link. Follows short-link redirects only through Maps hosts (no open fetches).
 // deno-lint-ignore no-explicit-any
 async function resolveVenue(db: any, text: string): Promise<{ lat: number; lng: number; name: string | null; place: string | null; url: string } | { error: string }> {
@@ -299,6 +320,22 @@ async function placeFor(db: any, lat: number, lng: number): Promise<string | nul
       const comps = j.results?.[0]?.address_components ?? [];
       const pick = (t: string) => comps.find((c: { types: string[] }) => c.types.includes(t))?.long_name;
       name = [pick('route'), pick('sublocality_level_1') ?? pick('sublocality') ?? pick('neighborhood'), pick('locality')].filter(Boolean).join(', ') || j.results?.[0]?.formatted_address || null;
+    } catch { /* fall back */ }
+  }
+  const okey = env('OLA_MAPS_KEY');
+  if (!name && okey) {
+    // Ola Maps (India): free up to 100,000 calls a month, Indian place names
+    try {
+      const r = await fetch(`https://api.olamaps.io/places/v1/reverse-geocode?latlng=${lat},${lng}&api_key=${okey}`,
+        { headers: { 'X-Request-Id': crypto.randomUUID() }, signal: AbortSignal.timeout(5000) });
+      if (r.ok) {
+        const j = await r.json();
+        const res0 = j?.results?.[0];
+        const comps = res0?.address_components ?? [];
+        const pick = (t: string) => comps.find((c: { types: string[] }) => c.types?.includes(t))?.long_name;
+        name = [pick('route'), pick('sublocality') ?? pick('sublocality_level_1') ?? pick('neighborhood'), pick('locality')].filter(Boolean).join(', ')
+          || (res0?.formatted_address ? String(res0.formatted_address).split(',').slice(0, 3).join(',').trim() : null);
+      }
     } catch { /* fall back */ }
   }
   if (!name) {
