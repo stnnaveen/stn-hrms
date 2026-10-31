@@ -1,6 +1,7 @@
 // Chairman data layer. Chairman reads everything (RLS: sees_all), decides OD, sets In / Away.
 // Numbers are computed here from today's rows: about 100 people, so one round of queries is enough.
 import { sb, DEMO, ApiError } from './api';
+import { fetchAll } from './fetchAll';
 import type { Flag } from './hr';
 
 export type Cat = 'in' | 'notin' | 'od' | 'lv';
@@ -44,7 +45,7 @@ const real = {
       sb!.from('leave_requests').select('user_id, leave_type').eq('status', 'approved').lte('starts_on', today).gte('ends_on', today),
       sb!.from('hubs').select('name').eq('active', true).order('name'),
       sb!.from('settings').select('value').eq('key', 'chairman_away').maybeSingle(),
-      sb!.from('attendance_days').select('day, band').gte('day', since).not('in_time', 'is', null),
+      fetchAll<{ day: string; band: string | null }>(() => sb!.from('attendance_days').select('day, band').gte('day', since).not('in_time', 'is', null).order('day').order('user_id')).then((data) => ({ data, error: null })),
       sb!.from('flags').select('id, user_id, status, created_at, punch:punches(distance_m, place_name, lat, lng)').eq('kind', 'radius').gte('created_at', startIso).order('created_at'),
       sb!.from('punches').select('id, user_id, target_id, target_type, server_time, inside').gte('server_time', startIso).order('server_time')
     ]);

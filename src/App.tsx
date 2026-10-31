@@ -92,10 +92,18 @@ export default function App() {
 
   // Send any offline check-ins when the phone is back online
   useEffect(() => {
-    const flush = async () => { const n = await api.flushQueue(); if (n) { toast(`${n} saved check-in${n > 1 ? 's' : ''} sent`); reload(); } };
-    addEventListener('online', flush);
+    // also every minute and when the app comes back to the front, so a save that timed out on a weak network goes through
+    let busy = false;
+    const flush = async () => {
+      if (busy || !navigator.onLine || !(await api.session())) return;
+      busy = true;
+      try { const n = await api.flushQueue(); if (n) { toast(`${n} saved check-in${n > 1 ? 's' : ''} sent`); reload(); } } finally { busy = false; }
+    };
+    const vis = () => { if (document.visibilityState === 'visible') flush(); };
+    addEventListener('online', flush); document.addEventListener('visibilitychange', vis);
+    const t = setInterval(flush, 60000);
     flush();
-    return () => removeEventListener('online', flush);
+    return () => { removeEventListener('online', flush); document.removeEventListener('visibilitychange', vis); clearInterval(t); };
   }, [toast, reload]);
 
   const ctx: Ctx = { screen, go, back, toast, email, setEmail, today, reload, camMode, setCamMode, result, setResult, odPrefill, setOdPrefill, leaveOd, setLeaveOd };

@@ -44,6 +44,9 @@ async function invoke<T>(body: Record<string, unknown> | FormData): Promise<T> {
   return data as T;
 }
 
+// Codes that mean "this check-in will never be accepted" (drop it from the phone's queue) vs "try again later" (keep it).
+const FINAL_REFUSALS = new Set(['already_checked_in', 'already_checked_out', 'not_checked_in', 'check_in_first', 'no_od_now', 'already_visited', 'bad_selfie', 'bad_location', 'bad_time', 'bad_request', 'bad_selfie_key', 'not_active', 'device_revoked']);
+const RETRYABLE = new Set(['network', 'upload_failed', 'save_failed', 'not_signed_in', 'upload_unavailable']);
 const SAVE_TIMEOUT_MS = 40000;   // after this the phone keeps the check-in and sends it later; staff are never stuck
 const withTimeout = <T,>(pr: Promise<T>, ms: number) => Promise.race([pr, new Promise<T>((_, rej) => setTimeout(() => rej(new ApiError('network')), ms))]);
 
@@ -105,7 +108,8 @@ const real = {
     if (!navigator.onLine) { await enqueue(p); return offlineResult(p); }
     try { return await sendPunch(p); }
     catch (e) {
-      if (e instanceof ApiError && e.code !== 'network' && e.code !== 'upload_failed') throw e;
+      if (e instanceof ApiError && FINAL_REFUSALS.has(e.code)) throw e;   // e.g. already checked in: tell the person
+      if (e instanceof ApiError && !RETRYABLE.has(e.code)) throw e;
       await enqueue(p); return offlineResult(p);
     }
   },
@@ -113,7 +117,10 @@ const real = {
     let sent = 0;
     for (const p of await pending()) {
       try { await sendPunch(p); await remove(p.idempotency_key); sent++; }
-      catch (e) { if (e instanceof ApiError && e.code !== 'network' && e.code !== 'upload_failed') await remove(p.idempotency_key); else break; }
+      catch (e) {
+        // keep it and try later unless the server clearly refused this check-in for good
+        if (e instanceof ApiError && FINAL_REFUSALS.has(e.code)) await remove(p.idempotency_key); else break;
+      }
     }
     return sent;
   },
@@ -226,6 +233,9 @@ export function errorText(code: string): string {
     not_maps_link: 'Paste a Google Maps or Apple Maps link.',
     no_pin: 'Couldn’t find the place in this link. Copy it again from Maps.',
     venue_pin_needed: 'Paste the venue’s map link.',
+    bad_location: 'Could not read your location. Try again.',
+    bad_time: 'Your phone’s date looks wrong. Fix it and try again.',
+    bad_selfie: 'The photo didn’t come through. Try again.',
     location_denied: 'Turn on location to check in.',
     no_fix: 'Could not find your location. Step outside and retry.',
     no_camera: 'Camera not available on this browser.',

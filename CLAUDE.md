@@ -18,6 +18,7 @@ Specs: PRD and TRD (Claude Docs). UI spec: the four HTML prototypes (Staff, HR, 
 6. **Audit.** Changes to people, hubs, roles, settings, devices, requests and flags are logged by trigger. Never update or delete `audit_log`.
 7. **Only the Tech admin changes roles or role logins** (enforced by `guard_profile_role`).
 8. Copy: one line per message, one- or two-word buttons, no filler. Match the prototypes.
+9. **New database functions are not callable by default** (security review, 31 Oct). Every new RPC needs `grant execute on function … to authenticated;` in its migration. Internal helpers stay revoked. Anonymous (signed-out) callers get nothing.
 
 ## Layout
 - `src/screens/*` screens · `src/device/*` phone layer · `src/lib/api.ts` all backend calls (demo mode when no env)

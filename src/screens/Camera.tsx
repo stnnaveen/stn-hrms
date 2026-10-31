@@ -53,7 +53,7 @@ export function Camera() {
       // face model loads on demand so the first screen stays light
       const face = await import('../device/face').catch(() => null);
       let lm = null;
-      try { if (!noCamRef() && face) lm = await Promise.race([face.loadFaceModel(), new Promise<null>((r) => setTimeout(() => r(null), 6000))]); } catch { lm = null; }
+      try { if (!noCamRef() && face) lm = await Promise.race([face.loadFaceModel(), new Promise<null>((r) => setTimeout(() => r(null), 4000))]); } catch { lm = null; }
       if (lm && face && video.current && !cancelled) {
         let steady = 0;
         const tracker = new face.ChallengeTracker(challenge);
@@ -65,10 +65,10 @@ export function Camera() {
             const el = performance.now() - t0;
             if (phaseRef.current === 'align') {
               steady = f.centred ? steady + 1 : 0;
-              if (steady > 8 || el > 5000) setPhaseBoth('challenge');
+              if (steady > 8 || el > 3000) setPhaseBoth('challenge');   // snappy: at most 3 s to line up
             } else if (phaseRef.current === 'challenge') {
               if (tracker.feed(f)) { livenessPassed = true; return resolve(); }
-              if (el > 13000) return resolve();
+              if (el > 10000) return resolve();   // never stuck: liveness gives up after ~7 s and the punch goes to review
             }
             raf = requestAnimationFrame(loop);
           };
@@ -104,9 +104,14 @@ export function Camera() {
         });
         setLeaveOd(null);
         setResult({ punch, photo: URL.createObjectURL(photo) });
-        await reload();
-        go('result');
-      } catch (e) { setErr(e instanceof ApiError ? e.code : 'save_failed'); setPhase('error'); }
+        go('result');          // show the result at once; refresh the home numbers behind it
+        void reload();
+      } catch (e) {
+        const code = e instanceof ApiError ? e.code : 'save_failed';
+        // a retry after a slow save that actually went through: just show home
+        if (code === 'already_checked_in' || code === 'already_checked_out' || code === 'already_visited') { await reload(); go('home'); return; }
+        setErr(code); setPhase('error');
+      }
     };
 
     // refs so the async loop reads the latest values

@@ -171,7 +171,7 @@ select pg_temp.as_user('00000000-0000-0000-0000-0000000000c7');
 do $$ begin
   if (select count(*) from profiles) < 5 or (select count(*) from punches) < 1 or (select count(*) from hubs) <> 10 then raise exception 'FAIL chairman cannot see all'; end if;
   perform set_chairman_away(true);
-  if not (setting('chairman_away'))::boolean then raise exception 'FAIL away not set'; end if;
+  if not ((select value from settings where key='chairman_away'))::boolean then raise exception 'FAIL away not set'; end if;
   perform set_chairman_away(false);
   begin perform decide_leave((select id from leave_requests limit 1),'approved'); raise exception 'FAIL chairman decided leave';
     exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
@@ -211,7 +211,7 @@ select set_setting('office_start', '"09:30"');
 select decide_device('00000000-0000-0000-0000-00000000de02', true);
 do $$ begin
   if (select role from staff_roster where email = 'newhr@startuptn.in') <> 'hr' then raise exception 'FAIL role login not added'; end if;
-  if (setting('face_threshold'))::int <> 85 or setting('office_start') #>> '{}' <> '09:30' then raise exception 'FAIL setting not saved'; end if;
+  if ((select value from settings where key='face_threshold'))::int <> 85 or (select value from settings where key='office_start') #>> '{}' <> '09:30' then raise exception 'FAIL setting not saved'; end if;
   begin perform set_setting('face_threshold', '10'); raise exception 'FAIL bad value saved'; exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
   begin perform set_setting('chairman_away', 'true'); raise exception 'FAIL tech set chairman away'; exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
   if (select status from devices where device_key = 'new-phone') <> 'active' or (select status from devices where device_key = 'old-phone') <> 'revoked' then raise exception 'FAIL phone switch'; end if;
@@ -372,3 +372,29 @@ select pg_temp.as_user('00000000-0000-0000-0000-0000000000f1');
 select set_test_mode('naveenflop+staff@gmail.com', false);
 select pg_temp.as_user('00000000-0000-0000-0000-00000000f501');
 do $$ begin if (my_today()->>'test_mode')::boolean then raise exception 'FAIL test mode not off'; end if; raise notice 'PASS 17d Tech switches test mode off'; end $$;
+
+-- 18. Security review: signed-out callers get nothing; staff can't read rule settings; HR can't create test accounts
+select pg_temp.reset();
+set role anon;
+do $$ begin
+  begin perform my_today(); raise exception 'FAIL anon called my_today'; exception when insufficient_privilege then null; end;
+  begin perform count(*) from staff_roster; raise exception 'FAIL anon read roster'; exception when insufficient_privilege then null; end;
+  raise notice 'PASS 18 signed-out callers can use no function or table';
+end $$;
+reset role;
+select pg_temp.as_user('00000000-0000-0000-0000-000000000001');
+do $$ begin
+  begin perform setting('face_threshold'); raise exception 'FAIL staff read a rule setting'; exception when insufficient_privilege then null; end;
+  begin perform is_test_mode('00000000-0000-0000-0000-000000000001'); raise exception 'FAIL staff called test helper'; exception when insufficient_privilege then null; end;
+  if (my_today()->'profile'->>'hub') is null then raise exception 'FAIL my_today broke'; end if;
+  raise notice 'PASS 18b staff cannot read rule settings; my_today still works';
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000a1');
+do $$ begin
+  begin update staff_roster set is_test = true where email = 'arun@startuptn.in'; raise exception 'FAIL HR made a real person test';
+    exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
+  begin insert into staff_roster (email, full_name, role, hub_name, is_test) values ('fake@startuptn.in','F','staff','Salem',true); raise exception 'FAIL HR added test staff';
+    exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
+  update staff_roster set designation = 'Hub Lead' where email = 'arun@startuptn.in';
+  raise notice 'PASS 18c only Tech changes test accounts; HR edits still work';
+end $$;

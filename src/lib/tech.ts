@@ -2,6 +2,7 @@
 // only through Tech-only RPCs. Health comes from the check-in function and names services, never keys.
 import { sb, DEMO, ApiError } from './api';
 import type { Flag } from './hr';
+import { fetchAll } from './fetchAll';
 
 export interface Health { db_ok: boolean; db_ms: number; s3_ok?: boolean | null; s3_error?: string | null; bucket?: string | null; storage: 's3' | 'supabase'; face_match: boolean; geocode: 'google' | 'ola' | 'osm'; region: string }
 export interface Overview {
@@ -54,11 +55,11 @@ const real = {
       sb!.from('profiles').select('id', { count: 'exact', head: true }).in('role', ['staff', 'intern']).eq('active', true),
       sb!.from('attendance_days').select('user_id', { count: 'exact', head: true }).eq('day', today).not('in_time', 'is', null),
       sb!.from('flags').select('id', { count: 'exact', head: true }).in('status', ['open', 'reason_asked']).neq('kind', 'late'),
-      sb!.from('punches').select('quality_score').gte('server_time', new Date(Date.now() - 7 * 864e5).toISOString()).not('quality_score', 'is', null).limit(2000),
+      fetchAll<{ quality_score: number }>(() => sb!.from('punches').select('quality_score').gte('server_time', new Date(Date.now() - 7 * 864e5).toISOString()).not('quality_score', 'is', null).order('id')).then((data) => ({ data, error: null })),
       sb!.from('devices').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
       sb!.from('flags').select('user_id').in('kind', ['mock_location', 'device']).gte('created_at', since30),
       sb!.from('flags').select('id', { count: 'exact', head: true }).not('details->>false_flag_at', 'is', null).gte('created_at', since30),
-      sb!.from('punches').select('accuracy_m, face_similarity, selfie_key').gte('server_time', since24).limit(2000),
+      fetchAll<{ accuracy_m: number | null; face_similarity: number | null; selfie_key: string | null }>(() => sb!.from('punches').select('accuracy_m, face_similarity, selfie_key').gte('server_time', since24).order('id')).then((data) => ({ data, error: null })),
       sb!.from('settings').select('value').eq('key', 'face_threshold').maybeSingle()
     ]);
     const qs = (must(q) as { quality_score: number }[]).map((x) => x.quality_score);
@@ -91,8 +92,8 @@ const real = {
   async accuracy(): Promise<Accuracy> {
     const since7 = new Date(Date.now() - 7 * 864e5).toISOString(), since30 = new Date(Date.now() - 30 * 864e5).toISOString();
     const [pu, fl, thr] = await Promise.all([
-      sb!.from('punches').select('accuracy_m, face_similarity').gte('server_time', since7).limit(3000),
-      sb!.from('flags').select('id, kind, status, details, created_at, p:profiles!flags_user_id_fkey(full_name)').gte('created_at', since30).limit(2000),
+      fetchAll<{ accuracy_m: number | null; face_similarity: number | null }>(() => sb!.from('punches').select('accuracy_m, face_similarity').gte('server_time', since7).order('id')).then((data) => ({ data, error: null })),
+      fetchAll(() => sb!.from('flags').select('id, kind, status, details, created_at, p:profiles!flags_user_id_fkey(full_name)').gte('created_at', since30).order('id')).then((data) => ({ data, error: null })),
       sb!.from('settings').select('value').eq('key', 'face_threshold').maybeSingle()
     ]);
     const ps = must(pu) as { accuracy_m: number | null; face_similarity: number | null }[];
@@ -168,7 +169,7 @@ const real = {
   /** How long check-ins took to save (last 7 days), from timings the phone and server record. */
   async speed(): Promise<Speed> {
     const since = new Date(Date.now() - 7 * 864e5).toISOString();
-    const r = must(await sb!.from('punches').select('server_time, kind, timings, p:profiles!punches_user_id_fkey(full_name)').gte('server_time', since).not('timings', 'is', null).order('server_time', { ascending: false }).limit(3000)) as unknown as
+    const r = (await fetchAll(() => sb!.from('punches').select('server_time, kind, timings, p:profiles!punches_user_id_fkey(full_name)').gte('server_time', since).not('timings', 'is', null).order('server_time', { ascending: false }).order('id'))) as unknown as
       { server_time: string; kind: string; timings: Record<string, number | boolean>; p: { full_name: string } | null }[];
     const rows: SpeedRow[] = r.map((x) => { const t = x.timings ?? {}; const n = (k: string) => (typeof t[k] === 'number' ? (t[k] as number) : null);
       return { who: x.p?.full_name ?? '', at: x.server_time, kind: x.kind, total: n('total_ms') ?? n('server_ms'), gps: n('gps_wait_ms'), upload: n('upload_ms'), server: n('server_ms'), oneShot: !!t.one_shot }; });
@@ -176,7 +177,7 @@ const real = {
     return { n: rows.length, median: median(tot), p95: pct(tot, 0.95), over60: tot.filter((x) => x > 60000).length, slowest: [...rows].sort((a, b) => (b.total ?? 0) - (a.total ?? 0)).slice(0, 12) };
   },
   async selfieStats(): Promise<SelfieStats> {
-    const r = must(await sb!.from('punches').select('user_id, server_time, p:profiles!punches_user_id_fkey(full_name, hub:hubs(name))').not('selfie_key', 'is', null).order('server_time', { ascending: false }).limit(20000)) as unknown as
+    const r = (await fetchAll(() => sb!.from('punches').select('user_id, server_time, p:profiles!punches_user_id_fkey(full_name, hub:hubs(name))').not('selfie_key', 'is', null).order('server_time', { ascending: false }).order('id'))) as unknown as
       { user_id: string; server_time: string; p: PN }[];
     const m = new Map<string, SelfieStats['people'][number]>();
     for (const x of r) { const e = m.get(x.user_id); if (e) e.count++; else m.set(x.user_id, { id: x.user_id, name: x.p?.full_name ?? 'Unknown', hub: x.p?.hub?.name ?? null, count: 1, last: x.server_time }); }

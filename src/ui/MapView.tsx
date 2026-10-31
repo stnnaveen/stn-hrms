@@ -4,6 +4,8 @@ import { useEffect, useRef } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
+const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+
 export interface MapPoint { lat: number; lng: number; acc?: number | null; color: string; label?: string }
 export interface MapProps {
   circle?: { lat: number; lng: number; radius: number } | null;
@@ -43,7 +45,7 @@ export default function MapView({ circle, points = [], onTap, height = 280 }: Ma
     for (const p of points) {
       if (p.acc) L.circle([p.lat, p.lng], { radius: Math.min(p.acc, 300), color: p.color, weight: 1, fillColor: p.color, fillOpacity: 0.1, dashArray: '4 4' }).addTo(g);
       const mk = L.circleMarker([p.lat, p.lng], { radius: 7, color: '#fff', weight: 2, fillColor: p.color, fillOpacity: 1 }).addTo(g);
-      if (p.label) mk.bindTooltip(p.label);
+      if (p.label) mk.bindTooltip(esc(p.label));   // Leaflet treats strings as HTML: names and places are escaped
       bounds.push([p.lat, p.lng]);
     }
     if (bounds.length) m.fitBounds(L.latLngBounds(bounds), { padding: [28, 28], maxZoom: 17 });

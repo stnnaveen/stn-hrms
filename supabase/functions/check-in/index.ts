@@ -174,6 +174,7 @@ Deno.serve(async (req) => {
     return 'error' in r ? json(r, 422) : json(r);
   }
   if (!['in', 'out', 'visit'].includes(body.kind) || !body.idempotency_key || !body.device_key) return json({ error: 'bad_request' }, 400);
+  if (String(body.idempotency_key).length > 80 || String(body.device_key).length > 100) return json({ error: 'bad_request' }, 400);
 
   const [{ data: profile }, { data: devices }] = await Promise.all([
     db.from('profiles').select('id, full_name, hub_id, active, consent_at, face_status, reference_photo_key').eq('id', user.id).single(),
@@ -212,10 +213,20 @@ Deno.serve(async (req) => {
 
   // ---- punch (one request: selfie + details) or complete (after a separate upload; used by offline-queued saves)
   if (body.action === 'punch') {
-    if (!selfie || selfie.size < 1000 || selfie.size > 4_000_000) return json({ error: 'bad_selfie' }, 400);
+    // a real JPEG from the camera (starts with FF D8 FF), within the storage limit
+    if (!selfie || selfie.size < 1000 || selfie.size > 3_000_000) return json({ error: 'bad_selfie' }, 400);
+    const head = new Uint8Array(await selfie.slice(0, 3).arrayBuffer());
+    if (head[0] !== 0xff || head[1] !== 0xd8 || head[2] !== 0xff) return json({ error: 'bad_selfie' }, 400);
     body.selfie_key = `selfies/${user.id}/${istDay(new Date())}/${body.idempotency_key}.jpg`;
   } else if (body.action !== 'complete') return json({ error: 'bad_request' }, 400);
   if (!body.location || !body.selfie_key || !body.client_time) return json({ error: 'bad_request' }, 400);
+  {
+    const l = body.location, ct = Date.parse(body.client_time);
+    const num = (v: unknown) => typeof v === 'number' && Number.isFinite(v);
+    if (!num(l.lat) || !num(l.lng) || Math.abs(l.lat) > 90 || Math.abs(l.lng) > 180) return json({ error: 'bad_location' }, 400);
+    if (l.accuracy != null && (!num(l.accuracy) || l.accuracy < 0)) return json({ error: 'bad_location' }, 400);
+    if (!Number.isFinite(ct) || ct > Date.now() + 24 * 3600e3 || ct < Date.now() - 7 * 24 * 3600e3) return json({ error: 'bad_time' }, 400);
+  }
   if (!body.selfie_key.startsWith(`selfies/${user.id}/`)) return json({ error: 'bad_selfie_key' }, 400);
 
   const now = new Date();
