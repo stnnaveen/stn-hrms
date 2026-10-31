@@ -32,7 +32,7 @@ export function SignIn() {
         <div className="fp" style={{ left: 92, top: 136, animationDelay: '.16s' }}><Icon n="brief" />OD and leave</div>
         <div className="fp" style={{ left: 150, top: 200, animationDelay: '.24s' }}><Icon n="cal" />Monthly log</div>
       </div>
-      <span className="tag"><i />StartupTN HR</span>
+      <div className="brandrow"><Logo size={44} /><span className="tag"><i />StartupTN HR</span></div>
       <h1 className="h1" style={{ marginTop: 14 }}>Attendance, made <span className="grad">simple</span>.</h1>
       <p className="sub">Check in with a selfie. Done in seconds.</p>
       <form style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 24 }} onSubmit={(e) => { e.preventDefault(); if (valid && !busy) send(); }}>

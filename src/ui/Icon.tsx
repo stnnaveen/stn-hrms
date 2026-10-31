@@ -48,14 +48,8 @@ export function Icon({ n, size, style, className }: { n: keyof typeof P | string
   );
 }
 
+/** StartupTN HR logo (rocket with the team, orange ring). Same file as the app icon. */
 export function Logo({ size = 76 }: { size?: number }) {
-  const id = `lg${size}`;
-  return (
-    <svg width={size} height={size} viewBox="0 0 48 48" aria-hidden="true">
-      <defs><linearGradient id={id} x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#FFA24A" /><stop offset="1" stopColor="#FF4D5E" /></linearGradient></defs>
-      <rect width="48" height="48" rx="14" fill="#0B1220" />
-      <circle cx="24" cy="24" r="11" fill="none" stroke={`url(#${id})`} strokeWidth="4.2" strokeDasharray="52 70" strokeLinecap="round" transform="rotate(-40 24 24)" />
-      <circle cx="24" cy="24" r="3.6" fill="#fff" />
-    </svg>
-  );
+  return <img className="logo-img" src="/icons/logo.png" width={size} height={size} alt="" aria-hidden="true" draggable={false}
+    style={{ width: size, height: size, borderRadius: Math.round(size * 0.29), display: 'block' }} />;
 }
