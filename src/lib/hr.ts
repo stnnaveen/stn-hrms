@@ -12,7 +12,7 @@ export interface Person {
   today?: { in_time: string | null; out_time: string | null; band: string | null; status: string } | null;
 }
 export interface LeaveReq { id: string; who: string; hub: string | null; leave_type: string; starts_on: string; ends_on: string; half_day: string | null; reason: string | null; status: string; created_at: string }
-export interface OdReq { id: string; who: string; hub: string | null; subject: string; note: string | null; venue_name: string; starts_at: string; ends_at: string; status: string; created_at: string }
+export interface OdReq { id: string; who: string; hub: string | null; subject: string; note: string | null; venue_name: string; venue_place?: string | null; venue_url?: string | null; venue_lat?: number | null; venue_lng?: number | null; starts_at: string; ends_at: string; status: string; created_at: string }
 export interface Flag {
   id: string; kind: string; rule: string; details: Record<string, unknown>; status: string; staff_reason: string | null; created_at: string;
   user_id: string; who: string; hub: string | null;
@@ -53,7 +53,7 @@ const real = {
     return (r as unknown as (LeaveReq & { p: { full_name: string; hub: { name: string } | null } })[]).map((x) => ({ ...x, who: x.p.full_name, hub: x.p.hub?.name ?? null }));
   },
   async ods(): Promise<OdReq[]> {
-    const r = must(await sb!.from('od_requests').select('id, subject, note, venue_name, starts_at, ends_at, status, created_at, p:profiles!od_requests_user_id_fkey(full_name, hub:hubs(name))').eq('status', 'pending').order('starts_at'));
+    const r = must(await sb!.from('od_requests').select('id, subject, note, venue_name, venue_place, venue_url, venue_lat, venue_lng, starts_at, ends_at, status, created_at, p:profiles!od_requests_user_id_fkey(full_name, hub:hubs(name))').eq('status', 'pending').order('starts_at'));
     return (r as unknown as (OdReq & { p: { full_name: string; hub: { name: string } | null } })[]).map((x) => ({ ...x, who: x.p.full_name, hub: x.p.hub?.name ?? null }));
   },
   async flags(): Promise<Flag[]> {
@@ -93,6 +93,15 @@ const real = {
     const { error } = await sb!.from('staff_roster').insert({ ...s, email, employee_code: s.employee_code || null, phone: s.phone || null });
     if (error) throw new ApiError(error.code === '23505' ? 'already_added:' : 'save_failed');
   },
+  /** Edit details or move to another hub. The profile follows by trigger and the person is told about a hub move. */
+  async updateStaff(email: string, f: { hub_name: string; designation: string; phone: string; employee_code: string }) {
+    if (f.employee_code) {
+      const { data: dupc } = await sb!.from('staff_roster').select('full_name, email').eq('employee_code', f.employee_code).neq('email', email).maybeSingle();
+      if (dupc) throw new ApiError(`code_taken:${dupc.full_name}`);
+    }
+    const { error } = await sb!.from('staff_roster').update({ hub_name: f.hub_name, designation: f.designation.trim() || null, phone: f.phone.trim() || null, employee_code: f.employee_code.trim() || null }).eq('email', email);
+    if (error) throw new ApiError('save_failed');
+  },
   async deleteStaff(email: string) {
     const { error } = await sb!.rpc('delete_staff', { p_email: email });
     if (error) throw new ApiError(/has_records/.test(error.message) ? 'has_records' : /role accounts/.test(error.message) ? 'role_account' : 'save_failed');
@@ -128,7 +137,7 @@ const D = {
     { id: 'p5', full_name: 'Sneha P', designation: 'Intern', email: 'sneha.p@gmail.com', role: 'intern', hub: 'Erode', phone: null, employee_code: 'STNI021', active: true, face_status: 'pending', today: null }
   ] as Person[],
   leaves: [{ id: 'l1', who: 'Anitha R', hub: 'Salem', leave_type: 'casual', starts_on: '2026-11-12', ends_on: '2026-11-13', half_day: null, reason: 'Sister’s wedding', status: 'pending', created_at: iso(120) }] as LeaveReq[],
-  ods: [{ id: 'o1', who: 'Gokul M', hub: 'Coimbatore', subject: 'Investor demo day', note: null, venue_name: 'Codissia, Coimbatore', starts_at: iso(-180), ends_at: iso(-360), status: 'pending', created_at: iso(60) }] as OdReq[],
+  ods: [{ id: 'o1', who: 'Gokul M', hub: 'Coimbatore', subject: 'Investor demo day', note: null, venue_name: 'Codissia Trade Fair Complex', venue_place: 'Avinashi Road, Peelamedu, Coimbatore', venue_url: 'https://maps.app.goo.gl/demo', venue_lat: 11.0301, venue_lng: 77.0322, starts_at: iso(-180), ends_at: iso(-360), status: 'pending', created_at: iso(60) }] as OdReq[],
   flags: [
     { id: 'f1', kind: 'location_changer', rule: 'R-04 same point 5+ days, spread < 1 m', details: { spread_m: 0 }, status: 'open', staff_reason: null, created_at: iso(290), user_id: 'p3', who: 'Deepa V', hub: 'Villupuram',
       punch: { server_time: iso(295), lat: 11.93941, lng: 79.48623, accuracy_m: 5, place_name: 'Villupuram', distance_m: 40, quality_score: 18, face_similarity: 95, selfie_key: null, mocked: null } },
@@ -156,6 +165,7 @@ const demo: typeof real = {
   async hubs() { await wait(); return D.hubs; },
   async saveHub(h) { await wait(); const i = D.hubs.findIndex((x) => x.id === h.id); if (i >= 0) D.hubs[i] = { ...D.hubs[i], ...h }; else D.hubs.push({ ...h, id: crypto.randomUUID(), active: true, maps_url: h.maps_url ?? null, staff: 0 }); },
   async addStaff(s) { await wait(); const dup = D.people.find((x) => x.email === s.email.trim().toLowerCase()); if (dup) throw new ApiError(`already_added:${dup.full_name}`); D.people.push({ id: crypto.randomUUID(), full_name: s.full_name, email: s.email, role: s.role, designation: s.designation, hub: s.hub_name, phone: s.phone ?? null, employee_code: s.employee_code ?? null, active: true, face_status: 'none', invited: true, today: null }); },
+  async updateStaff(email, f) { await wait(); const p = D.people.find((x) => x.email === email); if (p) Object.assign(p, { hub: f.hub_name, designation: f.designation || null, phone: f.phone || null, employee_code: f.employee_code || null }); },
   async deleteStaff(email) { await wait(); const p = D.people.find((x) => x.email === email); if (p?.today?.in_time) throw new ApiError('has_records'); D.people = D.people.filter((x) => x.email !== email); },
   async personDetail(uid) {
     await wait();

@@ -1,8 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useApp } from '../App';
-import { api } from '../lib/api';
+import { api, ApiError, errorText, type Venue } from '../lib/api';
+import { readClipboard } from '../device';
 import { Icon } from '../ui/Icon';
 
+const MAPS_RE = /^https?:\/\/(maps\.app\.goo\.gl|goo\.gl|(www\.|maps\.)?google\.[a-z.]+|maps\.apple\.com|maps\.apple)(\/|$|\?)/i;
 const todayISO = () => new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
 const istToUtc = (date: string, time: string) => new Date(`${date}T${time}:00+05:30`).toISOString();
 
@@ -23,6 +25,25 @@ export function ODForm() {
   const [f, setF] = useState({ subject: '', venue: '', shape: urgent ? 'hours' : 'hours', date: todayISO(), to: todayISO(), from: urgent ? nowHHMM() : '11:00', until: '18:00', note: '' });
   const [errs, setErrs] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState(false);
+  // venue = a Google or Apple Maps link, read on the server into a pin + place name (no typed places)
+  const [venue, setVenue] = useState<Venue | null>(null);
+  const [vState, setVState] = useState<'idle' | 'checking' | 'ok' | 'error'>('idle');
+  const [vErr, setVErr] = useState('');
+  const [vName, setVName] = useState('');
+  const seq = useRef(0);
+  useEffect(() => {
+    const text = f.venue.trim();
+    setVenue(null); setVErr('');
+    if (!text) { setVState('idle'); return; }
+    if (!MAPS_RE.test(text.match(/https?:\/\/\S+/)?.[0] ?? '')) { setVState('error'); setVErr(errorText('not_maps_link')); return; }
+    setVState('checking');
+    const my = ++seq.current;
+    const t = setTimeout(async () => {
+      try { const v = await api.resolveVenue(text); if (my !== seq.current) return; setVenue(v); setVName(v.name ?? v.place?.split(',')[0] ?? ''); setVState('ok'); }
+      catch (e) { if (my !== seq.current) return; setVState('error'); setVErr(e instanceof ApiError && e.code !== 'network' ? errorText(e.code) : 'Couldn’t check the link. Try again.'); }
+    }, 450);
+    return () => clearTimeout(t);
+  }, [f.venue]);
   const set = (k: string, v: string) => setF((x) => ({ ...x, [k]: v }));
   const startsAt = f.shape === 'hours' ? istToUtc(f.date, f.from) : istToUtc(f.date, '10:00');
   const endsAt = f.shape === 'hours' ? istToUtc(f.date, f.until) : istToUtc(f.shape === 'days' ? f.to : f.date, '18:00');
@@ -31,16 +52,17 @@ export function ODForm() {
   const submit = async () => {
     const e: Record<string, boolean> = {};
     if (f.subject.trim().length < 2) e.subject = true;
-    if (!f.venue.trim()) e.venue = true;
+    if (!venue) e.venue = true;
+    if (venue && !vName.trim()) e.vname = true;
     if (new Date(endsAt) <= new Date(startsAt)) e.time = true;
     setErrs(e);
     if (Object.keys(e).length) return;
     setBusy(true);
     try {
-      const c = parseVenue(f.venue);
-      await api.createOD({ subject: f.subject.trim(), note: f.note.trim() || undefined, venue_name: f.venue.trim(), venue_lat: c?.lat ?? null, venue_lng: c?.lng ?? null, starts_at: startsAt, ends_at: endsAt });
+      await api.createOD({ subject: f.subject.trim(), note: f.note.trim() || undefined, venue_name: vName.trim(), venue_lat: venue!.lat, venue_lng: venue!.lng,
+        venue_url: venue!.url, venue_place: venue!.place, starts_at: startsAt, ends_at: endsAt });
       await reload(); toast('OD sent for approval'); back();
-    } catch { toast('Could not send. Try again.'); } finally { setBusy(false); }
+    } catch (e) { toast(e instanceof ApiError ? errorText(e.code) : 'Could not send. Try again.'); } finally { setBusy(false); }
   };
 
   return (
@@ -49,9 +71,17 @@ export function ODForm() {
       <label className="lab" htmlFor="f-subject">Subject</label>
       <input className="inp" id="f-subject" placeholder="Meeting at TIDCO" value={f.subject} onChange={(e) => set('subject', e.target.value)} />
       {errs.subject && <div className="err">Add a subject.</div>}
-      <label className="lab" htmlFor="f-venue">Venue</label>
-      <input className="inp" id="f-venue" placeholder="Paste map link or place" value={f.venue} onChange={(e) => set('venue', e.target.value)} />
-      {errs.venue && <div className="err">Add the venue.</div>}
+      <label className="lab" htmlFor="f-venue">Venue map link</label>
+      <div className="inrow">
+        <input className="inp" id="f-venue" inputMode="url" autoCapitalize="none" autoCorrect="off" placeholder="Google Maps or Apple Maps link" value={f.venue} onChange={(e) => set('venue', e.target.value)} />
+        <button className="btn light" type="button" onClick={async () => { const t = await readClipboard(); if (t) set('venue', t); }}>Paste</button>
+      </div>
+      {vState === 'idle' && <div className="hintl">In Maps, open the place → Share → Copy link.</div>}
+      {vState === 'checking' && <div className="hintl"><span className="spin dark" style={{ width: 12, height: 12, verticalAlign: -1, marginRight: 6 }} />Finding the place…</div>}
+      {vState === 'error' && <div className="err">{vErr}</div>}
+      {venue && <div className="venue"><span className="ri c-od"><Icon n="pin" /></span><span className="t"><b>{venue.name ?? 'Pinned place'}</b><span>{venue.place ?? `${venue.lat.toFixed(5)}, ${venue.lng.toFixed(5)}`}</span></span><a href={venue.url} target="_blank" rel="noreferrer">Open</a></div>}
+      {venue && <><label className="lab" htmlFor="f-vname">Venue name</label><input className="inp" id="f-vname" value={vName} onChange={(e) => setVName(e.target.value)} placeholder="TIDCO office" />{errs.vname && <div className="err">Add the venue name.</div>}</>}
+      {errs.venue && !venue && vState !== 'error' && vState !== 'checking' && <div className="err">Paste the venue’s map link.</div>}
       <label className="lab">Duration</label>
       <div className="seg" role="group" aria-label="Duration">
         {[['hours', 'Hours'], ['day', 'Full day'], ['days', 'Days']].map(([k, l]) => (
@@ -72,7 +102,7 @@ export function ODForm() {
       <label className="lab" htmlFor="f-note">Note</label>
       <textarea className="inp" id="f-note" placeholder="Optional" value={f.note} onChange={(e) => set('note', e.target.value)} />
       {hoursAhead < 12 && <div className="note"><Icon n="clock" size={16} />Under 12 hours’ notice. Sent as quick.</div>}
-      <button className="btn dark" style={{ marginTop: 22 }} disabled={busy} onClick={submit}>{busy ? 'Sending' : 'Send'}</button>
+      <button className="btn dark" style={{ marginTop: 22 }} disabled={busy || vState === 'checking'} onClick={submit}>{busy ? 'Sending' : 'Send'}</button>
     </div>
   );
 }

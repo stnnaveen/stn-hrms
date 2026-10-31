@@ -7,7 +7,7 @@ export type Cat = 'in' | 'notin' | 'od' | 'lv';
 export interface Staff {
   id: string; name: string; email: string; hub: string; designation: string | null;
   cat: Cat; inTime: string | null; outTime: string | null; band: 'ok' | 'warn' | 'bad' | null; early: boolean;
-  od?: { subject: string; venue: string; starts_at: string; ends_at: string } | null; leaveType?: string | null;
+  od?: { subject: string; venue: string; starts_at: string; ends_at: string; place?: string | null; url?: string | null; visit?: { at: string; inside: boolean | null } | null } | null; leaveType?: string | null;
   /** Today's check-in landed outside the hub/venue radius (Chairman and HR only; never shown to staff). */
   outside?: Outside | null;
 }
@@ -17,6 +17,7 @@ export const isRed = (s: Staff) => !!s.outside && s.outside.status !== 'valid';
 export interface Snapshot { staff: Staff[]; hubs: string[]; away: boolean; trend: { day: string; pct: number }[] }
 export interface OdItem {
   id: string; who: string; userId: string; hub: string; subject: string; note: string | null; venue: string;
+  venuePlace?: string | null; venueUrl?: string | null; lat?: number | null; lng?: number | null;
   starts_at: string; ends_at: string; created_at: string; status: string;
   decided_role: string | null; decided_at: string | null; return_reason: string | null;
 }
@@ -33,27 +34,30 @@ const real = {
     const today = istToday();
     const startIso = new Date(`${today}T00:00:00+05:30`).toISOString(), endIso = new Date(`${today}T23:59:59+05:30`).toISOString();
     const since = new Date(Date.now() - 30 * 864e5 + 330 * 60000).toISOString().slice(0, 10);
-    const [ps, days, ods, lvs, hubs, away, hist, rad] = await Promise.all([
+    const [ps, days, ods, lvs, hubs, away, hist, rad, vis] = await Promise.all([
       sb!.from('profiles').select('id, full_name, email, designation, hub:hubs(name)').in('role', ['staff', 'intern']).eq('active', true),
       sb!.from('attendance_days').select('user_id, in_time, out_time, band, early_out, status').eq('day', today),
-      sb!.from('od_requests').select('user_id, subject, venue_name, starts_at, ends_at').eq('status', 'approved').lte('starts_at', endIso).gte('ends_at', startIso),
+      sb!.from('od_requests').select('id, user_id, subject, venue_name, venue_place, venue_url, starts_at, ends_at').eq('status', 'approved').lte('starts_at', endIso).gte('ends_at', startIso),
       sb!.from('leave_requests').select('user_id, leave_type').eq('status', 'approved').lte('starts_on', today).gte('ends_on', today),
       sb!.from('hubs').select('name').eq('active', true).order('name'),
       sb!.from('settings').select('value').eq('key', 'chairman_away').maybeSingle(),
       sb!.from('attendance_days').select('day, band').gte('day', since).not('in_time', 'is', null),
-      sb!.from('flags').select('id, user_id, status, created_at, punch:punches(distance_m, place_name, lat, lng)').eq('kind', 'radius').gte('created_at', startIso).order('created_at')
+      sb!.from('flags').select('id, user_id, status, created_at, punch:punches(distance_m, place_name, lat, lng)').eq('kind', 'radius').gte('created_at', startIso).order('created_at'),
+      sb!.from('punches').select('user_id, target_id, server_time, inside').eq('target_type', 'od').gte('server_time', startIso).order('server_time')
     ]);
+    const vmap = new Map<string, { at: string; inside: boolean | null }>();
+    for (const v of must(vis) as { user_id: string; target_id: string; server_time: string; inside: boolean | null }[]) if (!vmap.has(v.target_id)) vmap.set(v.target_id, { at: v.server_time, inside: v.inside });
     type R = { id: string; user_id: string; status: string; punch: { distance_m: number | null; place_name: string | null; lat: number; lng: number } | null };
     const rmap = new Map((must(rad) as unknown as R[]).map((f) => [f.user_id, { flagId: f.id, status: f.status, distance: f.punch?.distance_m ?? null, place: f.punch?.place_name ?? null, lat: f.punch?.lat ?? null, lng: f.punch?.lng ?? null } as Outside]));
     const dmap = new Map((must(days) as { user_id: string }[]).map((d) => [d.user_id, d as unknown as { in_time: string | null; out_time: string | null; band: Staff['band']; early_out: boolean; status: string }]));
-    const omap = new Map((must(ods) as { user_id: string; subject: string; venue_name: string; starts_at: string; ends_at: string }[]).map((o) => [o.user_id, o]));
+    const omap = new Map((must(ods) as { id: string; user_id: string; subject: string; venue_name: string; venue_place: string | null; venue_url: string | null; starts_at: string; ends_at: string }[]).map((o) => [o.user_id, o]));
     const lmap = new Map((must(lvs) as { user_id: string; leave_type: string }[]).map((l) => [l.user_id, l.leave_type]));
     const staff: Staff[] = (must(ps) as unknown as { id: string; full_name: string; email: string; designation: string | null; hub: { name: string } | null }[]).map((p) => {
       const d = dmap.get(p.id), o = omap.get(p.id), lv = lmap.get(p.id);
       const cat: Cat = lv ? 'lv' : d?.in_time ? 'in' : o ? 'od' : 'notin';
       return { id: p.id, name: p.full_name, email: p.email, hub: p.hub?.name ?? 'No hub', designation: p.designation, cat,
         inTime: d?.in_time ?? null, outTime: d?.out_time ?? null, band: d?.band ?? null, early: !!d?.early_out,
-        od: o ? { subject: o.subject, venue: o.venue_name, starts_at: o.starts_at, ends_at: o.ends_at } : null, leaveType: lv ?? null, outside: rmap.get(p.id) ?? null };
+        od: o ? { subject: o.subject, venue: o.venue_name, starts_at: o.starts_at, ends_at: o.ends_at, place: o.venue_place, url: o.venue_url, visit: vmap.get(o.id) ?? null } : null, leaveType: lv ?? null, outside: rmap.get(p.id) ?? null };
     });
     const byDay = new Map<string, { n: number; ok: number }>();
     for (const r of must(hist) as { day: string; band: string | null }[]) { const x = byDay.get(r.day) ?? { n: 0, ok: 0 }; x.n++; if (r.band === 'ok') x.ok++; byDay.set(r.day, x); }
@@ -63,9 +67,9 @@ const real = {
   async ods(): Promise<{ pending: OdItem[]; decided: OdItem[] }> {
     const since = new Date(Date.now() - 30 * 864e5).toISOString();
     const r = must(await sb!.from('od_requests')
-      .select('id, user_id, subject, note, venue_name, starts_at, ends_at, created_at, status, decided_role, decided_at, return_reason, p:profiles!od_requests_user_id_fkey(full_name, hub:hubs(name))')
-      .or(`status.eq.pending,decided_at.gte.${since}`).order('created_at', { ascending: false }).limit(100)) as unknown as (Omit<OdItem, 'who' | 'hub' | 'venue' | 'userId'> & { user_id: string; venue_name: string; p: P })[];
-    const all: OdItem[] = r.map((x) => ({ ...x, userId: x.user_id, venue: x.venue_name, who: x.p.full_name, hub: x.p.hub?.name ?? 'No hub' }));
+      .select('id, user_id, subject, note, venue_name, venue_place, venue_url, venue_lat, venue_lng, starts_at, ends_at, created_at, status, decided_role, decided_at, return_reason, p:profiles!od_requests_user_id_fkey(full_name, hub:hubs(name))')
+      .or(`status.eq.pending,decided_at.gte.${since}`).order('created_at', { ascending: false }).limit(100)) as unknown as (Omit<OdItem, 'who' | 'hub' | 'venue' | 'userId'> & { user_id: string; venue_name: string; venue_place: string | null; venue_url: string | null; venue_lat: number | null; venue_lng: number | null; p: P })[];
+    const all: OdItem[] = r.map((x) => ({ ...x, userId: x.user_id, venue: x.venue_name, venuePlace: x.venue_place, venueUrl: x.venue_url, lat: x.venue_lat, lng: x.venue_lng, who: x.p.full_name, hub: x.p.hub?.name ?? 'No hub' }));
     return { pending: all.filter((x) => x.status === 'pending').sort((a, b) => a.starts_at.localeCompare(b.starts_at)), decided: all.filter((x) => x.status === 'approved' || x.status === 'returned').sort((a, b) => (b.decided_at ?? '').localeCompare(a.decided_at ?? '')) };
   },
   async leaves(): Promise<LeaveItem[]> {
@@ -101,7 +105,7 @@ const D = (() => {
     staff.push({ id: `s${k}`, name, email: `${name.split(' ')[0].toLowerCase()}${k}@startuptn.in`, hub: h, designation: 'Project Associate', cat,
       inTime: cat === 'in' ? at(Math.floor(inM / 60), inM % 60) : null, outTime: cat === 'in' && outM ? at(Math.floor(outM / 60), outM % 60) : null,
       band: cat === 'in' ? (inM <= 600 ? 'ok' : inM <= 615 ? 'warn' : 'bad') : null, early: !!(outM && outM < 1080),
-      od: cat === 'od' ? { subject: 'Collector review', venue: `Collectorate, ${h}`, starts_at: at(11, 0), ends_at: at(17, 0) } : null, leaveType: cat === 'lv' ? 'Casual' : null });
+      od: cat === 'od' ? { subject: 'Collector review', venue: `Collectorate, ${h}`, place: `Collectorate, ${h}`, url: 'https://maps.app.goo.gl/demo', starts_at: at(11, 0), ends_at: at(17, 0), visit: rnd() < 0.7 ? { at: at(11, 5 + Math.floor(rnd() * 40)), inside: rnd() < 0.85 } : null } : null, leaveType: cat === 'lv' ? 'Casual' : null });
     void late;
   } });
   const PLACES: Record<string, [number, string, number, number, string]> = { Trichy: [1400, 'Cantonment, Trichy', 10.8064, 78.6851, 'open'], Coimbatore: [8800, 'Ukkadam, Coimbatore', 10.9872, 76.9617, 'reason_asked'], Madurai: [2300, 'Anna Nagar, Madurai', 9.9312, 78.1404, 'open'] };
@@ -110,9 +114,9 @@ const D = (() => {
   const trend = Array.from({ length: 22 }, (_, i) => ({ day: new Date(Date.now() - (22 - i) * 864e5).toISOString().slice(0, 10), pct: 86 + Math.round(rnd() * 10) }));
   const iso = (minAgo: number) => new Date(Date.now() - minAgo * 60000).toISOString();
   const pending: OdItem[] = [
-    { id: 'o1', who: 'Kavya R', userId: 's1', hub: 'Chennai', subject: 'TIDCO policy meet', note: 'Policy inputs for the startup fund scheme.', venue: 'Guindy, Chennai', starts_at: iso(-4 * 1440 - 60), ends_at: iso(-4 * 1440 - 210), created_at: iso(1500), status: 'pending', decided_role: null, decided_at: null, return_reason: null },
+    { id: 'o1', who: 'Kavya R', userId: 's1', hub: 'Chennai', subject: 'TIDCO policy meet', note: 'Policy inputs for the startup fund scheme.', venue: 'TIDCO Office', venuePlace: 'Mount Road, Guindy, Chennai', venueUrl: 'https://maps.app.goo.gl/demo', lat: 13.0109, lng: 80.2117, starts_at: iso(-4 * 1440 - 60), ends_at: iso(-4 * 1440 - 210), created_at: iso(1500), status: 'pending', decided_role: null, decided_at: null, return_reason: null },
     { id: 'o2', who: 'Bharathi L', userId: 's30', hub: 'Madurai', subject: 'District collector review', note: 'Quarterly review with the district collector.', venue: 'Collectorate, Madurai', starts_at: iso(-3 * 1440), ends_at: iso(-3 * 1440 - 480), created_at: iso(900), status: 'pending', decided_role: null, decided_at: null, return_reason: null },
-    { id: 'o3', who: 'Gokul M', userId: 's31', hub: 'Coimbatore', subject: 'Investor demo day', note: 'Pitching 4 hub startups to angel investors.', venue: 'Codissia, Coimbatore', starts_at: iso(-180), ends_at: iso(-360), created_at: iso(240), status: 'pending', decided_role: null, decided_at: null, return_reason: null }
+    { id: 'o3', who: 'Gokul M', userId: 's31', hub: 'Coimbatore', subject: 'Investor demo day', note: 'Pitching 4 hub startups to angel investors.', venue: 'Codissia Trade Fair Complex', venuePlace: 'Avinashi Road, Peelamedu, Coimbatore', venueUrl: 'https://maps.app.goo.gl/demo', lat: 11.0301, lng: 77.0322, starts_at: iso(-180), ends_at: iso(-360), created_at: iso(240), status: 'pending', decided_role: null, decided_at: null, return_reason: null }
   ];
   const decided: OdItem[] = [
     { id: 'o4', who: 'Priya S', userId: 's6', hub: 'Coimbatore', subject: 'College outreach', note: 'Startup awareness talk.', venue: 'PSG Tech, Coimbatore', starts_at: iso(2880), ends_at: iso(2760), created_at: iso(5000), status: 'approved', decided_role: 'chairman', decided_at: iso(2900), return_reason: null },

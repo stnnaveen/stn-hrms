@@ -8,6 +8,7 @@ import { parseVenue } from '../Forms';
 import { Icon } from '../../ui/Icon';
 import { Notifications } from '../Notifications';
 import { AccountSheet } from '../../ui/AccountSheet';
+import { VenueLink } from '../../ui/VenueLink';
 
 type Tab = 'home' | 'staff' | 'approvals' | 'disputes';
 type Sub = { name: 'today' } | { name: 'person'; p: Person } | { name: 'dispute'; f: Flag } | { name: 'hubs' } | { name: 'hub'; h: Hub | null }
@@ -212,12 +213,13 @@ function MonthCalendar({ d }: { d: PersonDetail }) {
   );
 }
 
-function PersonView({ p, onBack, open }: { p: Person; onBack: () => void; open: (s: Sub) => void }) {
+function PersonView({ p: p0, onBack, open }: { p: Person; onBack: () => void; open: (s: Sub) => void }) {
   const { toast } = useApp();
+  const [p, setP] = useState<Person>(p0);
   const [d, setD] = useState<PersonDetail | null>(null);
   const [pins, setPins] = useState<Pin[] | null>(null);
   const [photos, setPhotos] = useState<Record<string, string | null>>({});
-  const [sheet, setSheet] = useState<null | 'deact' | 'delete'>(null);
+  const [sheet, setSheet] = useState<null | 'deact' | 'delete' | 'edit'>(null);
   const [active, setActive] = useState(p.active);
   useEffect(() => {
     if (p.invited) return;
@@ -289,16 +291,18 @@ function PersonView({ p, onBack, open }: { p: Person; onBack: () => void; open: 
         )}
       </>)}
 
-      <div className="sec">Details</div>
+      <div className="sec">Details <button onClick={() => setSheet('edit')}>Edit</button></div>
       <div className="card"><dl className="kv" style={{ margin: 0 }}><dt>Designation</dt><dd>{p.designation ?? '—'}</dd><dt>Type</dt><dd>{cap(p.role)}</dd><dt>Email</dt><dd>{p.email}</dd><dt>Code</dt><dd>{p.employee_code ?? '—'}</dd><dt>Phone</dt><dd>{p.phone ?? '—'}</dd><dt>Status</dt><dd>{p.invited ? 'Invited' : active ? 'Active' : 'Inactive'}</dd></dl></div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 20 }}>
+        <button className="btn light" onClick={() => setSheet('edit')}><Icon n="building" />Move hub or edit</button>
         {!p.invited && <button className="btn light" onClick={() => open({ name: 'long', p })}><Icon n="leaf" />Assign long leave</button>}
         {!p.invited && (active ? <button className="btn light" onClick={() => setSheet('deact')}>Deactivate</button>
           : <button className="btn light" onClick={async () => { await hr.setActive(p.id, true); setActive(true); toast('Reactivated'); }}>Reactivate</button>)}
         <button className="btn danger" onClick={() => setSheet('delete')}>Delete</button>
       </div>
     </div>
+      {sheet === 'edit' && <EditStaff p={p} onClose={() => setSheet(null)} onSaved={(np, moved) => { setP(np); setSheet(null); toast(moved ? `${first} moved to ${np.hub} hub · told` : 'Saved'); }} />}
       {sheet === 'deact' && (<><div className="scrim" onClick={() => setSheet(null)} />
         <div className="sheet" role="dialog" aria-label="Deactivate"><div className="grab" /><h3>Deactivate {first}?</h3><p>Sign-in stops. Records stay.</p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 20 }}>
@@ -311,6 +315,45 @@ function PersonView({ p, onBack, open }: { p: Person; onBack: () => void; open: 
             <button className="btn ghost" onClick={() => setSheet(null)}>Cancel</button></div></div></>)}
     </>
   );
+}
+
+// HR moves a person to another hub or fixes their details (roster -> profile by trigger; a hub move notifies the person)
+function EditStaff({ p, onClose, onSaved }: { p: Person; onClose: () => void; onSaved: (p: Person, moved: boolean) => void }) {
+  const [hubs, setHubs] = useState<Hub[] | null>(null);
+  const [f, setF] = useState({ hub: p.hub ?? '', designation: p.designation ?? '', phone: p.phone ?? '', code: p.employee_code ?? '' });
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { hr.hubs().then((h) => setHubs(h.filter((x) => x.active))).catch(() => setHubs([])); }, []);
+  const set = (k: keyof typeof f, v: string) => setF((x) => ({ ...x, [k]: v }));
+  const save = async () => {
+    if (!f.hub) { setErr('Pick a hub.'); return; }
+    setBusy(true); setErr(null);
+    const moved = f.hub !== p.hub;
+    try {
+      await hr.updateStaff(p.email, { hub_name: f.hub, designation: f.designation, phone: f.phone, employee_code: f.code });
+      onSaved({ ...p, hub: f.hub, designation: f.designation.trim() || null, phone: f.phone.trim() || null, employee_code: f.code.trim() || null }, moved);
+    } catch (e) { setBusy(false); setErr(e instanceof ApiError && e.code.startsWith('code_taken:') ? `Code already used by ${e.code.slice(11)}.` : 'Could not save. Try again.'); }
+  };
+  return (<><div className="scrim" onClick={onClose} />
+    <div className="sheet" role="dialog" aria-label={`Edit ${p.full_name}`}><div className="grab" />
+      <div className="scrollable">
+        <h3>{p.full_name}</h3><p>Hub moves apply from the next check-in.</p>
+        <label className="lab" htmlFor="e-hub">Hub</label>
+        <select className="inp" id="e-hub" value={f.hub} onChange={(e) => set('hub', e.target.value)}>
+          <option value="" disabled>Pick a hub</option>{(hubs ?? []).map((h) => <option key={h.id} value={h.name}>{h.name}{h.name === p.hub ? ' · current' : ''}</option>)}</select>
+        {f.hub && f.hub !== p.hub && <div className="note" style={{ marginTop: 8 }}><Icon n="building" size={16} />{p.hub ?? 'No hub'} → {f.hub}. {p.full_name.split(' ')[0]} gets a notification.</div>}
+        <label className="lab" htmlFor="e-d">Designation</label>
+        <input className="inp" id="e-d" list="designations-e" value={f.designation} onChange={(e) => set('designation', e.target.value)} placeholder="Pick or type" />
+        <datalist id="designations-e">{DESIGNATIONS.map((d) => <option key={d} value={d} />)}</datalist>
+        <div className="two">
+          <div><label className="lab" htmlFor="e-p">Phone</label><input className="inp" id="e-p" inputMode="tel" value={f.phone} onChange={(e) => set('phone', e.target.value)} /></div>
+          <div><label className="lab" htmlFor="e-c">Code</label><input className="inp" id="e-c" value={f.code} onChange={(e) => set('code', e.target.value)} /></div>
+        </div>
+        {err && <div className="err">{err}</div>}
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 16 }}>
+        <button className="btn dark" disabled={busy} onClick={save}>{busy ? 'Saving' : 'Save'}</button>
+        <button className="btn ghost" onClick={onClose}>Cancel</button></div></div></>);
 }
 
 function ReturnSheet({ title, onClose, onReturn }: { title: string; onClose: () => void; onReturn: (reason: string) => Promise<void> }) {
@@ -364,7 +407,8 @@ function Approvals({ c, onChange }: { c: HrToday | null; onChange: () => void })
               <div className="req" key={r.id} style={{ marginTop: 10 }}>
                 <div className="hd"><Av n={r.who} /><div className="t"><b>{r.who}</b><span>{r.hub ?? 'No hub'} hub</span></div><span className={`chip ${quick ? 'c-warn' : 'c-od'}`}>{quick ? 'Quick' : 'OD'}</span></div>
                 <p className="bd">{r.subject}</p>
-                <div className="meta"><span className="chip c-od"><Icon n="pin" size={14} />{r.venue_name.slice(0, 40)}</span><span className="chip c-pend">{fmtShortDay(new Date(r.starts_at))} · {fmtTime(r.starts_at)} to {fmtTime(r.ends_at)}</span></div>
+                <div className="meta"><span className="chip c-pend">{fmtShortDay(new Date(r.starts_at))} · {fmtTime(r.starts_at)} to {fmtTime(r.ends_at)}</span></div>
+                <VenueLink name={r.venue_name} place={r.venue_place} url={r.venue_url} lat={r.venue_lat} lng={r.venue_lng} />
                 {away && <div className="acts"><button className="btn light" onClick={() => setRet({ type: 'od', id: r.id })}>Return</button><button className="btn dark" onClick={() => decide('od', r.id, 'approved')}><Icon n="check" />Approve</button></div>}
               </div>);
           })}

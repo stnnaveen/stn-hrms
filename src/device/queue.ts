@@ -4,7 +4,7 @@ import { get, set } from 'idb-keyval';
 
 export interface QueuedPunch {
   idempotency_key: string;
-  kind: 'in' | 'out';
+  kind: 'in' | 'out' | 'visit';
   client_time: string;
   selfie: Blob;
   location: { lat: number; lng: number; accuracy: number | null; altitude: number | null; speed: number | null; mocked: boolean | null };

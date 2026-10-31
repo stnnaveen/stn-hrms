@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useApp } from '../App';
 import { api, type Notif } from '../lib/api';
-import { fmtShortDay, greeting, hoursBetween, istMinutesNow, splitTime } from '../lib/time';
+import { fmtShortDay, fmtTime, greeting, hoursBetween, istMinutesNow, splitTime } from '../lib/time';
 import { Icon } from '../ui/Icon';
 import { AccountSheet } from '../ui/AccountSheet';
 
@@ -29,6 +29,10 @@ export function Home() {
   const [inT, inAp] = splitTime(d?.in_time);
   const [outT, outAp] = splitTime(d?.out_time);
   const unread = notifs.some((n) => !n.read_at);
+  // approved OD today: the venue check-in opens 30 min before the start (same window the server uses)
+  const od = today.od_today ?? null;
+  const odFrom = od ? new Date(od.starts_at).getTime() - 30 * 60000 : 0;
+  const odOpen = !!od && Date.now() >= odFrom && Date.now() <= new Date(od.ends_at).getTime();
 
   let topChip = <span className="chip c-mute"><i />Not checked in</span>;
   if (checkedIn && !checkedOut && d?.band) topChip = BAND_CHIP[d.band];
@@ -60,6 +64,19 @@ export function Home() {
             <div><small>Hours</small><b>{hoursBetween(d?.in_time, d?.out_time)}</b><em>{p.hub ? `${p.hub} hub` : 'No hub'}</em></div>
           </div>
         </div>
+        {od && (<>
+          <div className="sec">OD today</div>
+          <div className="card">
+            <div className="row"><div className="ri c-od"><Icon n="brief" /></div>
+              <div className="t"><b>{od.subject}</b><span>{od.venue_name} · {fmtTime(od.starts_at)} – {fmtTime(od.ends_at)}</span></div>
+              {od.visited_at ? <span className="chip c-ok">Done {fmtTime(od.visited_at)}</span> : <span className="chip c-od">Approved</span>}</div>
+            {!od.visited_at && (odOpen
+              ? (checkedIn ? <button className="btn dark" style={{ marginTop: 12 }} onClick={() => { setCamMode('visit'); go('camera'); }}><Icon n="pin" />Check in at venue</button>
+                : <p className="to" style={{ margin: '12px 0 0' }}>Check in from the venue today.</p>)
+              : <p className="to" style={{ margin: '12px 0 0' }}>{Date.now() < odFrom ? `Check in at the venue from ${fmtTime(new Date(odFrom).toISOString())}.` : 'OD time is over.'}</p>)}
+            {od.venue_url && <a className="btn light" style={{ marginTop: 8, height: 44, fontSize: 14, textDecoration: 'none' }} href={od.venue_url} target="_blank" rel="noreferrer">Open in Maps</a>}
+          </div>
+        </>)}
         <div className="sec">This month</div>
         <div className="tiles">
           <div className="tile"><b>{today.month.on_time}</b><span><i style={{ background: 'var(--ok)' }} />On time</span></div>

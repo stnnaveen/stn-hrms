@@ -3,6 +3,8 @@ import { useApp } from '../App';
 import { api, ApiError, errorText } from '../lib/api';
 import { fmtDay, greeting, istMinutesNow } from '../lib/time';
 import { Icon, Logo } from '../ui/Icon';
+import { PermHelp } from '../ui/PermHelp';
+import { askCamera, askLocation, permsDone, type Ask } from '../device';
 
 export function Splash() {
   return (
@@ -98,8 +100,42 @@ export function Consent() {
         <div className="row"><div className="ri c-pend"><Icon n="shield" /></div><div className="t"><b>Stored in India</b><span>Seen by HR and admins only.</span></div></div>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 22 }}>
-        <button className="btn dark" disabled={busy} onClick={async () => { setBusy(true); await api.consent(); await reload(); go('welcome'); }}>I agree</button>
+        <button className="btn dark" disabled={busy} onClick={async () => { setBusy(true); await api.consent(); await reload(); go(permsDone() ? 'welcome' : 'perms'); }}>I agree</button>
         <button className="btn ghost" onClick={() => api.signOut()}>Not now</button>
+      </div>
+    </div>
+  );
+}
+
+// Ask for location and camera from a tap, one after the other, so the phone shows both Allow prompts (PRD LC-01).
+// If either is blocked, show exactly how to switch it on. Never blocks the app itself.
+export function Permissions() {
+  const { go } = useApp();
+  const [loc, setLoc] = useState<Ask | null>(null);
+  const [cam, setCam] = useState<Ask | null>(null);
+  const [busy, setBusy] = useState(false);
+  const ask = async () => {
+    setBusy(true);
+    const l = await askLocation(); setLoc(l);
+    const c = await askCamera(); setCam(c);
+    setBusy(false);
+    if (l === 'granted' && c !== 'denied') { permsDone(true); go('welcome'); }
+  };
+  const chip = (a: Ask | null) => a === 'granted' ? <span className="chip c-ok st">Allowed</span> : a === 'denied' ? <span className="chip c-bad st">Blocked</span> : a === 'unavailable' ? <span className="chip c-warn st">Not found</span> : null;
+  const blocked = [...(loc === 'denied' || loc === 'unavailable' ? ['location' as const] : []), ...(cam === 'denied' ? ['camera' as const] : [])];
+  return (
+    <div className="scr fade" style={{ paddingBottom: 30 }}>
+      <span className="tag"><i />One last step</span>
+      <h1 className="h1" style={{ marginTop: 14 }}>Allow <span className="grad">location</span> and camera.</h1>
+      <p className="sub">Your phone will ask twice. Tap Allow both times.</p>
+      <div className="card" style={{ marginTop: 22 }}>
+        <div className="row permrow"><div className="ri c-ok"><Icon n="pin" /></div><div className="t"><b>Location</b><span>Saved with each check-in.</span></div>{chip(loc)}</div>
+        <div className="row permrow"><div className="ri c-od"><Icon n="cam" /></div><div className="t"><b>Camera</b><span>For your check-in selfie.</span></div>{chip(cam)}</div>
+      </div>
+      {blocked.length > 0 && <PermHelp what={blocked} />}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 22 }}>
+        <button className="btn dark" disabled={busy} onClick={ask}>{busy ? 'Waiting for your phone' : loc ? 'Try again' : 'Allow'}</button>
+        {loc && <button className="btn ghost" onClick={() => go('welcome')}>Later</button>}
       </div>
     </div>
   );

@@ -5,6 +5,7 @@ import { bestFix, captureJpeg, openFrontCamera, stopCamera, type Fix } from '../
 import type { Challenge } from '../device/face';
 import { fmtTime, stamp } from '../lib/time';
 import { Icon } from '../ui/Icon';
+import { PermHelp } from '../ui/PermHelp';
 
 type Phase = 'starting' | 'align' | 'challenge' | 'count' | 'saving' | 'error';
 const CHALLENGE_TEXT = { blink: 'Blink once', turn: 'Turn your head a little' };
@@ -19,22 +20,26 @@ export function Camera() {
   const [err, setErr] = useState<string | null>(null);
   const [challenge] = useState<Challenge>(() => (Math.random() < 0.5 ? 'blink' : 'turn'));
   const [noCam, setNoCam] = useState(false);
-  const out = camMode === 'out';
+  const out = camMode === 'out', visit = camMode === 'visit';
 
   useEffect(() => {
     let stream: MediaStream | null = null;
     let raf = 0, cancelled = false;
     let livenessPassed = false, livenessKind: string = challenge;
-    const fixP = bestFix(10000, 50).then((f) => { if (!cancelled) setFix(f); return f; });
+    let fixP: Promise<Fix> = Promise.reject(new Error('no_fix'));
+    fixP.catch(() => undefined);
 
     const run = async () => {
-      // 1. camera
+      // 1. camera first, then location: iPhone can drop a second prompt shown on top of the first
       try { stream = await openFrontCamera(video.current!); }
       catch (e) {
         const denied = (e as DOMException)?.name === 'NotAllowedError';
         if (DEMO && !denied) { noCamFlag.current = true; setNoCam(true); } // demo on a desktop without a camera
         else { setErr(denied ? 'camera_denied' : 'no_camera'); setPhase('error'); return; }
       }
+      if (cancelled) return;
+      fixP = bestFix(15000, 50).then((f) => { if (!cancelled) setFix(f); return f; });
+      fixP.catch(() => undefined);
       // 2. face guide + liveness (never blocks the person: falls through after a timeout)
       setPhaseBoth('align');
       // face model loads on demand so the first screen stays light
@@ -111,6 +116,7 @@ export function Camera() {
           <h2 style={{ fontSize: 24, fontWeight: 600, margin: '16px 0 6px' }}>Couldn’t {out ? 'check out' : 'check in'}</h2>
           <p className="sub">{errorText(err ?? 'save_failed')}</p>
         </div>
+        {(err === 'location_denied' || err === 'camera_denied') && <PermHelp what={[err === 'location_denied' ? 'location' : 'camera']} />}
         <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
           <button className="btn dark" onClick={() => { go('home'); setTimeout(() => go('camera'), 0); }}>Try again</button>
           <button className="btn ghost" onClick={() => go('home')}>Back</button>
@@ -135,7 +141,7 @@ export function Camera() {
       <div className="hint">{hint}</div>
       <div className="bar">
         <button className="x" onClick={() => go('home')} aria-label="Close"><Icon n="x" /></button>
-        <b>{out ? 'Check out' : 'Check in'}</b><span style={{ width: 42 }} />
+        <b>{visit ? 'Venue check-in' : out ? 'Check out' : 'Check in'}</b><span style={{ width: 42 }} />
       </div>
       <div className="wm">
         <div className="loc">{fix ? <><Icon n="pin" size={16} />Location tagged</> : <><span className="spin" />Locating you</>}</div>
@@ -151,12 +157,14 @@ export function Result() {
   const { result, go, today } = useApp();
   if (!result) { go('home'); return null; }
   const { punch, photo } = result;
-  const out = punch.kind === 'out';
+  const out = punch.kind === 'out', visit = punch.kind === 'visit';
   const first = today?.profile.full_name.split(' ')[0] ?? '';
   const place = punch.place_name ?? `${punch.lat.toFixed(4)}, ${punch.lng.toFixed(4)}`;
   let col: string, icon: string, title: string, msg: string;
   if (punch.queued) {
     col = 'var(--ph-navy)'; icon = 'wifiOff'; title = 'Saved offline'; msg = 'It will send when you’re back online.';
+  } else if (visit) {
+    col = 'var(--od, #2F62D9)'; icon = 'pin'; title = 'Venue check-in done'; msg = 'Saved for your OD.';
   } else if (!out) {
     const k = punch.band ?? 'ok';
     col = k === 'ok' ? 'var(--ok)' : k === 'warn' ? 'var(--warn)' : 'var(--bad)';
@@ -172,11 +180,11 @@ export function Result() {
     <div className="scr" style={{ paddingBottom: 30 }}>
       <div className="res fade">
         <div className="shot"><img src={photo} alt="Your check-in selfie" />
-          <div className="stamp">{today?.profile.full_name}{today?.profile.employee_code ? ` · ${today.profile.employee_code}` : ''} · {out ? 'Check out' : 'Check in'}<br />
+          <div className="stamp">{today?.profile.full_name}{today?.profile.employee_code ? ` · ${today.profile.employee_code}` : ''} · {visit ? 'Venue' : out ? 'Check out' : 'Check in'}<br />
             {stamp(new Date(punch.server_time))}<br />{place}</div></div>
         <div className="badge-r" style={{ background: col }}><Icon n={icon} /></div>
         <h2>{title}</h2>
-        <div className="big">{out ? 'Checked out' : 'Checked in'} at {fmtTime(punch.server_time)}</div>
+        <div className="big">{out ? 'Checked out' : visit ? 'At the venue' : 'Checked in'} at {fmtTime(punch.server_time)}</div>
         <p className="msg">{msg}</p>
         <div className="meta"><span className="chip c-pend"><Icon n="pin" size={14} />{place}</span></div>
         <div className="cta"><button className="btn dark" onClick={() => go('home')}>Done</button></div>

@@ -1,8 +1,8 @@
-import { firstViewToday } from './device';
+import { firstViewToday, permsDone, permState } from './device';
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { api, DEMO, type PunchResult, type Today } from './lib/api';
 import { Icon } from './ui/Icon';
-import { Splash, SignIn, Code, Consent, Welcome } from './screens/Auth';
+import { Splash, SignIn, Code, Consent, Permissions, Welcome } from './screens/Auth';
 import { Home } from './screens/Home';
 import { Camera, Result } from './screens/Camera';
 import { ODForm, LeaveForm } from './screens/Forms';
@@ -12,7 +12,7 @@ import { HRApp } from './screens/hr/HRApp';
 import { ChairApp } from './screens/chair/ChairApp';
 import { TechApp } from './screens/tech/TechApp';
 
-export type Screen = 'splash' | 'signin' | 'code' | 'consent' | 'welcome' | 'home' | 'camera' | 'result' | 'od' | 'leave' | 'notifs' | 'admin' | 'hr' | 'chair' | 'tech';
+export type Screen = 'splash' | 'signin' | 'code' | 'consent' | 'perms' | 'welcome' | 'home' | 'camera' | 'result' | 'od' | 'leave' | 'notifs' | 'admin' | 'hr' | 'chair' | 'tech';
 
 interface Ctx {
   screen: Screen;
@@ -21,7 +21,7 @@ interface Ctx {
   toast: (m: string) => void;
   email: string; setEmail: (e: string) => void;
   today: Today | null; reload: () => Promise<Today | null>;
-  camMode: 'in' | 'out'; setCamMode: (m: 'in' | 'out') => void;
+  camMode: 'in' | 'out' | 'visit'; setCamMode: (m: 'in' | 'out' | 'visit') => void;
   result: { punch: PunchResult; photo: string } | null; setResult: (r: { punch: PunchResult; photo: string } | null) => void;
   odPrefill: { urgent: boolean } | null; setOdPrefill: (p: { urgent: boolean } | null) => void;
 }
@@ -36,7 +36,7 @@ export default function App() {
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const [email, setEmail] = useState('');
   const [today, setToday] = useState<Today | null>(null);
-  const [camMode, setCamMode] = useState<'in' | 'out'>('in');
+  const [camMode, setCamMode] = useState<'in' | 'out' | 'visit'>('in');
   const [result, setResult] = useState<{ punch: PunchResult; photo: string } | null>(null);
   const [odPrefill, setOdPrefill] = useState<{ urgent: boolean } | null>(null);
   const toastTimer = useRef<number>();
@@ -74,6 +74,11 @@ export default function App() {
     if (t.profile.role === 'tech') { go('tech'); return; }
     if (ADMIN_ROLES.includes(t.profile.role)) { go('admin'); return; }
     if (!t.profile.consented) { go('consent'); return; }
+    // location + camera prompt once per phone (iPhone Safari and the home-screen app count separately)
+    if (!permsDone()) {
+      if ((await permState('geolocation')) === 'granted' && (await permState('camera')) === 'granted') permsDone(true);
+      else { go('perms'); return; }
+    }
     go(firstViewToday('greeted') ? 'welcome' : 'home');
   }, [go, reload]);
 
@@ -93,7 +98,7 @@ export default function App() {
 
   const ctx: Ctx = { screen, go, back, toast, email, setEmail, today, reload, camMode, setCamMode, result, setResult, odPrefill, setOdPrefill };
   const view = {
-    splash: <Splash />, signin: <SignIn />, code: <Code />, consent: <Consent />, welcome: <Welcome />,
+    splash: <Splash />, signin: <SignIn />, code: <Code />, consent: <Consent />, perms: <Permissions />, welcome: <Welcome />,
     home: <Home />, camera: <Camera />, result: <Result />, od: <ODForm />, leave: <LeaveForm />,
     notifs: <Notifications />, admin: <AdminSoon />, hr: <HRApp />, chair: <ChairApp />, tech: <TechApp />
   }[screen];

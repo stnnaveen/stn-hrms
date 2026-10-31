@@ -67,7 +67,7 @@ export function spreadM(points: { lat: number; lng: number }[]): number {
 }
 
 export function evaluate(input: {
-  kind: 'in' | 'out';
+  kind: 'in' | 'out' | 'visit';   // visit = OD venue check-in, never changes the day's in/out
   serverTime: Date;
   clientTime: Date;
   fix: Fix;
@@ -95,7 +95,7 @@ export function evaluate(input: {
   if (kind === 'in') {
     band = bandFor(serverTime, s);
     if (band === 'bad') flags.push({ kind: 'late', rule: `R-01 check-in after ${s.lateUntil}`, details: { ist_minutes: istMinutes(serverTime) } });
-  } else {
+  } else if (kind === 'out') {
     earlyOut = istMinutes(serverTime) < toMin(s.officeEnd);
     if (earlyOut) flags.push({ kind: 'early_out', rule: `R-07 check-out before ${s.officeEnd}`, details: { ist_minutes: istMinutes(serverTime) } });
   }
@@ -116,7 +116,7 @@ export function evaluate(input: {
     quality -= 45;
   }
   const window = [fix, ...recentDays].slice(0, s.samePointDays);
-  if (window.length >= s.samePointDays) {
+  if (kind !== 'visit' && window.length >= s.samePointDays) {
     const spread = spreadM(window);
     const accs = new Set(window.map((p) => p.accuracy));
     if (spread < 1 && accs.size === 1) {

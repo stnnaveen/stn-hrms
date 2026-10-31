@@ -38,9 +38,9 @@ do $$ begin if (select count(*) from my_punches) <> 0 then raise exception 'FAIL
 
 -- 2. staff raises OD -> Chairman notified
 select pg_temp.as_user('00000000-0000-0000-0000-000000000001');
-insert into od_requests (user_id,subject,venue_name,starts_at,ends_at) values ('00000000-0000-0000-0000-000000000001','TIDCO policy meet','Guindy',now()+interval '1 day',now()+interval '1 day 2 hours');
+insert into od_requests (user_id,subject,venue_name,venue_lat,venue_lng,venue_url,starts_at,ends_at) values ('00000000-0000-0000-0000-000000000001','TIDCO policy meet','Guindy',13.01,80.22,'https://maps.app.goo.gl/abc',now()+interval '1 day',now()+interval '1 day 2 hours');
 do $$ begin
-  begin insert into od_requests (user_id,subject,venue_name,starts_at,ends_at,status) values ('00000000-0000-0000-0000-000000000001','x2','v',now(),now()+interval '1 h','approved');
+  begin insert into od_requests (user_id,subject,venue_name,venue_lat,venue_lng,venue_url,starts_at,ends_at,status) values ('00000000-0000-0000-0000-000000000001','x2','v',13.01,80.22,'https://maps.app.goo.gl/abc',now(),now()+interval '1 h','approved');
     raise exception 'FAIL staff self-approved'; exception when insufficient_privilege then null; end;
   begin perform decide_od((select id from od_requests limit 1),'approved'); raise exception 'FAIL staff decided OD';
     exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
@@ -56,7 +56,7 @@ do $$ begin begin perform decide_od((select id from od_requests limit 1),'approv
 select pg_temp.as_user('00000000-0000-0000-0000-0000000000c1');
 select set_chairman_away(true);
 select pg_temp.as_user('00000000-0000-0000-0000-000000000001');
-insert into od_requests (user_id,subject,venue_name,starts_at,ends_at) values ('00000000-0000-0000-0000-000000000001','Expo','Codissia',now()+interval '3 hours',now()+interval '6 hours');
+insert into od_requests (user_id,subject,venue_name,venue_lat,venue_lng,venue_url,starts_at,ends_at) values ('00000000-0000-0000-0000-000000000001','Expo','Codissia',11.03,77.03,'https://www.google.com/maps/place/Codissia/@11.03,77.03,17z',now()+interval '3 hours',now()+interval '6 hours');
 select pg_temp.reset();
 do $$ begin if (select count(*) from notifications where user_id='00000000-0000-0000-0000-0000000000a1' and kind='od_new')<>1 then raise exception 'FAIL HR not notified while away'; end if; raise notice 'PASS 3b routed to HR while Away'; end $$;
 select pg_temp.as_user('00000000-0000-0000-0000-0000000000a1');
@@ -226,4 +226,35 @@ select pg_temp.as_user('00000000-0000-0000-0000-0000000000c7');
 do $$ begin
   if my_role() is not null or sees_all() then raise exception 'FAIL removed login still has access'; end if;
   raise notice 'PASS 13c removed login loses access at once';
+end $$;
+
+-- 14. OD needs a map pin; venue check-in shows on the staff home without distance; HR moves hubs
+select pg_temp.as_user('00000000-0000-0000-0000-000000000001');
+do $$ begin
+  begin insert into od_requests (user_id,subject,venue_name,starts_at,ends_at) values ('00000000-0000-0000-0000-000000000001','Typed only','Guindy',now()+interval '2 day',now()+interval '2 day 1 hour');
+    raise exception 'FAIL OD saved without a pin'; exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
+  begin insert into od_requests (user_id,subject,venue_name,venue_lat,venue_lng,venue_url,starts_at,ends_at) values ('00000000-0000-0000-0000-000000000001','Bad link','x',13,80,'https://evil.example.com/maps',now()+interval '2 day',now()+interval '2 day 1 hour');
+    raise exception 'FAIL OD saved with a non-maps link'; exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
+  raise notice 'PASS 14 OD needs a Google or Apple Maps pin';
+end $$;
+select pg_temp.reset();
+insert into od_requests (user_id,subject,venue_name,venue_lat,venue_lng,venue_url,venue_place,starts_at,ends_at,status)
+values ('00000000-0000-0000-0000-000000000001','Collector review','Collectorate',13.05,80.25,'https://maps.apple.com/?ll=13.05,80.25&q=Collectorate','Collectorate, Chennai',now()-interval '1 hour',now()+interval '3 hours','approved');
+select pg_temp.as_user('00000000-0000-0000-0000-000000000001');
+do $$ declare t jsonb := my_today(); begin
+  if t->'od_today'->>'subject' <> 'Collector review' then raise exception 'FAIL od_today missing'; end if;
+  if t::text ~* 'distance|inside|radius|flag' then raise exception 'FAIL my_today leaks location checks'; end if;
+  raise notice 'PASS 14b staff sees today''s OD, never the venue check result';
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000a1');
+update staff_roster set hub_name = 'Coimbatore' where email = 'arun@startuptn.in';
+do $$ begin
+  begin update staff_roster set hub_name = 'Atlantis' where email = 'arun@startuptn.in'; raise exception 'FAIL moved to unknown hub';
+    exception when foreign_key_violation then null; when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
+end $$;
+select pg_temp.reset();
+do $$ begin
+  if (select h.name from profiles p join hubs h on h.id = p.hub_id where p.email = 'arun@startuptn.in') <> 'Coimbatore' then raise exception 'FAIL hub not moved'; end if;
+  if not exists (select 1 from notifications where user_id = '00000000-0000-0000-0000-000000000002' and kind = 'hub_changed') then raise exception 'FAIL not told'; end if;
+  raise notice 'PASS 14c HR moves staff to another hub; staff told';
 end $$;

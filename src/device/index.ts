@@ -24,7 +24,7 @@ export async function deviceKey(): Promise<string> {
 }
 
 /** Best GPS reading within `ms`: stops early once accuracy reaches `goodM` (PRD LC-02). */
-export function bestFix(ms = 10000, goodM = 50): Promise<Fix> {
+export function bestFix(ms = 15000, goodM = 50): Promise<Fix> {
   return new Promise((resolve, reject) => {
     if (!('geolocation' in navigator)) return reject(new Error('no_geolocation'));
     let best: GeolocationPosition | null = null;
@@ -82,6 +82,50 @@ export async function permissionsGranted(): Promise<boolean> {
     ]);
     return cam.state === 'granted' && geo.state === 'granted';
   } catch { return false; } // Safari: unknown, ask in flow
+}
+
+export type Ask = 'granted' | 'denied' | 'unavailable';
+
+/** Ask for location once, from a tap, so the phone shows its Allow prompt (PRD LC-01). */
+export function askLocation(): Promise<Ask> {
+  return new Promise((resolve) => {
+    if (!('geolocation' in navigator)) return resolve('unavailable');
+    navigator.geolocation.getCurrentPosition(() => resolve('granted'),
+      (e) => resolve(e.code === e.PERMISSION_DENIED ? 'denied' : 'granted'),   // timeout/no fix still means allowed
+      { enableHighAccuracy: false, maximumAge: 600000, timeout: 20000 });
+  });
+}
+
+/** Ask for the front camera once, then release it. */
+export async function askCamera(): Promise<Ask> {
+  if (!navigator.mediaDevices?.getUserMedia) return 'unavailable';
+  try { const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false }); s.getTracks().forEach((t) => t.stop()); return 'granted'; }
+  catch (e) { return (e as DOMException)?.name === 'NotAllowedError' ? 'denied' : 'unavailable'; }
+}
+
+/** Current state without prompting, where the browser can tell (older iPhones can't: 'unknown'). */
+export async function permState(name: 'geolocation' | 'camera'): Promise<'granted' | 'denied' | 'prompt' | 'unknown'> {
+  try { return (await navigator.permissions.query({ name: name as PermissionName })).state; } catch { return 'unknown'; }
+}
+
+/** Which help steps to show when something is blocked. */
+export function phoneKind(): 'iphone' | 'android' | 'other' {
+  const ua = navigator.userAgent;
+  if (/iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)) return 'iphone';
+  return /Android/.test(ua) ? 'android' : 'other';
+}
+export function isHomeScreenApp(): boolean {
+  return window.matchMedia?.('(display-mode: standalone)').matches || (navigator as unknown as { standalone?: boolean }).standalone === true;
+}
+
+/** Paste from the clipboard (OD map link). */
+export async function readClipboard(): Promise<string | null> {
+  try { return await navigator.clipboard.readText(); } catch { return null; }
+}
+
+/** Set once location and camera were allowed on this phone, so the permission step shows only once. */
+export function permsDone(set?: boolean): boolean {
+  try { if (set) localStorage.setItem('stn-perms', '1'); return localStorage.getItem('stn-perms') === '1'; } catch { return false; }
 }
 
 // Small per-device flags (e.g. "greeting shown today"). v2 swaps this for Capacitor Preferences.

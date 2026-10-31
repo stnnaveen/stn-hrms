@@ -9,6 +9,7 @@ import { Icon, Logo } from '../../ui/Icon';
 import { AccountSheet } from '../../ui/AccountSheet';
 import { Notifications } from '../Notifications';
 import { firstViewToday } from '../../device';
+import { VenueLink } from '../../ui/VenueLink';
 
 type Tab = 'home' | 'people' | 'approvals';
 type ListKind = 'red' | 'in' | 'late' | 'notin' | 'out' | 'od' | 'lv' | 'early' | 'last';
@@ -48,6 +49,12 @@ function duration(o: { starts_at: string; ends_at: string }) {
 function notice(o: OdItem) {
   const h = (new Date(o.starts_at).getTime() - new Date(o.created_at).getTime()) / 3.6e6;
   return h >= 48 ? `${Math.round(h / 24)} days` : h >= 1 ? `${Math.round(h)} h` : 'Under 1 h';
+}
+/** Venue check-in during an approved OD: done at the venue, done but outside it (red flag), or not yet. */
+function venueChip(s: Staff) {
+  const v = s.od?.visit;
+  if (!v) return <span className="chip c-pend">{s.od && Date.now() > new Date(s.od.ends_at).getTime() ? 'Missed venue' : 'Not at venue yet'}</span>;
+  return v.inside === false ? <span className="chip c-bad"><Icon n="flag" size={12} />Outside venue {fmtTime(v.at)}</span> : <span className="chip c-ok">At venue {fmtTime(v.at)}</span>;
 }
 function statusChip(s: Staff) {
   if (s.cat === 'lv') return <span className="chip c-lv">{s.leaveType ? cap(s.leaveType) : 'Leave'}</span>;
@@ -176,7 +183,7 @@ function OdCard({ o, away, onOpen, onReturn, onApprove }: { o: OdItem; away: boo
     <div className="req" role="button" tabIndex={0} onClick={onOpen} style={{ cursor: 'pointer' }}>
       <div className="hd"><Av n={o.who} /><div className="t"><b>{o.who}</b><span>{o.hub} hub</span></div>{quick(o) ? <span className="chip c-warn">Quick</span> : <span className="chip c-od">OD</span>}</div>
       <p className="bd">{o.subject}</p>
-      <div className="meta"><span className="chip c-od"><Icon n="pin" size={14} />{o.venue.slice(0, 34)}</span><span className="chip c-pend">{when(o)}</span></div>
+      <div className="meta"><span className="chip c-od"><Icon n="pin" size={14} />{o.venue.slice(0, 34)}</span><span className="chip c-pend">{when(o)}</span>{o.lat == null && <span className="chip c-warn">No map pin</span>}</div>
       {away ? <div className="to" style={{ margin: '12px 0 0' }}>Routed to HR while you’re away</div>
         : <div className="acts" onClick={(e) => e.stopPropagation()}><button className="btn light" onClick={onReturn}>Return</button><button className="btn dark" onClick={onApprove}><Icon n="check" />Approve</button></div>}
     </div>
@@ -238,7 +245,7 @@ function Home({ snap, view, hub, setHub, ods, open, setSheet, setAway, goApprova
 
       <div className="sec">Today</div>
       <div className="grid2">
-        <button className="mt" onClick={() => open({ name: 'list', kind: 'od' })}><span className="lb"><i style={{ background: 'var(--od)' }} />On OD</span><b>{view.filter((s) => s.cat === 'od').length}</b><span className="s">Approved for today</span></button>
+        <button className="mt" onClick={() => open({ name: 'list', kind: 'od' })}><span className="lb"><i style={{ background: 'var(--od)' }} />On OD</span><b>{view.filter((s) => s.od).length}</b><span className="s">{view.filter((s) => s.od?.visit).length} checked in at venue</span></button>
         <button className="mt" onClick={() => open({ name: 'list', kind: 'lv' })}><span className="lb"><i style={{ background: 'var(--lv)' }} />On leave</span><b>{view.filter((s) => s.cat === 'lv').length}</b><span className="s">Approved by HR</span></button>
         <button className="mt" onClick={() => open({ name: 'list', kind: 'early' })}><span className="lb"><i style={{ background: 'var(--bad)' }} />Early out</span><b>{early.length}</b><span className="s">Before 6:00 PM</span></button>
         <button className="mt" onClick={() => open({ name: 'list', kind: 'last' })}><span className="lb"><i style={{ background: 'var(--ph-navy)' }} />Last out</span><b className="sm">{outs[0] ? fmtTime(outs[0].outTime) : '—'}</b><span className="s">{outs[0] ? `${outs[0].name} · ${still.length} still in` : 'No checkouts yet'}</span></button>
@@ -270,7 +277,7 @@ function ListView({ kind, staff, hub, onBack, onKind, onPerson }: { kind: ListKi
     case 'late': rows = inn.filter((s) => s.band !== 'ok').sort((a, b) => (b.inTime ?? '').localeCompare(a.inTime ?? '')).map((s) => row(s, `${s.hub} hub`, statusChip(s))); break;
     case 'notin': rows = staff.filter((s) => s.cat === 'notin').map((s) => row(s, `${s.hub} hub`, <span className="chip c-pend">Not in</span>)); break;
     case 'out': rows = staff.filter((s) => s.outTime).sort((a, b) => (b.outTime ?? '').localeCompare(a.outTime ?? '')).map((s) => row(s, `${s.hub} hub`, <span className={`chip ${s.early ? 'c-bad' : 'c-pend'}`}>{fmtTime(s.outTime)}</span>)); break;
-    case 'od': rows = staff.filter((s) => s.cat === 'od').map((s) => row(s, s.od ? `${s.od.subject} · ${s.od.venue}` : `${s.hub} hub`, <span className="chip c-od">{s.od ? fmtTime(s.od.starts_at) : 'OD'}</span>)); break;
+    case 'od': rows = staff.filter((s) => s.od).map((s) => row(s, `${s.od!.subject} · ${s.od!.venue}`, venueChip(s))); break;
     case 'lv': rows = staff.filter((s) => s.cat === 'lv').map((s) => row(s, `${s.hub} hub`, <span className="chip c-lv">{s.leaveType ? cap(s.leaveType) : 'Leave'}</span>)); break;
     case 'early': rows = staff.filter((s) => s.early).sort((a, b) => (a.outTime ?? '').localeCompare(b.outTime ?? '')).map((s) => row(s, `${s.hub} hub`, <span className="chip c-bad">{fmtTime(s.outTime)}</span>)); break;
     case 'last': rows = [...inn.filter((s) => !s.outTime).map((s) => row(s, `${s.hub} hub`, <span className="chip c-ok">Still in</span>)),
@@ -404,8 +411,9 @@ function ChairSheets({ sheet, setSheet, away, decide }: { sheet: Sheet; setSheet
       <div className="row"><Av n={o.who} /><div className="t"><b style={{ fontSize: 18 }}>{o.who}</b><span>{o.hub} hub</span></div>
         {pending ? (quick(o) ? <span className="chip c-warn">Quick</span> : <span className="chip c-od">OD</span>) : <span className={`chip ${o.status === 'approved' ? 'c-ok' : 'c-bad'}`}>{cap(o.status)}</span>}</div>
       <h3 style={{ marginTop: 16 }}>{o.subject}</h3>{o.note && <p>{o.note}</p>}
+      <VenueLink name={o.venue} place={o.venuePlace} url={o.venueUrl} lat={o.lat} lng={o.lng} />
       <div className="odk"><dl className="kv">
-        <dt>Venue</dt><dd>{o.venue}</dd><dt>When</dt><dd>{when(o)}</dd><dt>Duration</dt><dd>{duration(o)}</dd>
+<dt>When</dt><dd>{when(o)}</dd><dt>Duration</dt><dd>{duration(o)}</dd>
         <dt>Requested</dt><dd>{fmtShortDay(new Date(o.created_at))} · {fmtTime(o.created_at)}</dd><dt>Notice</dt><dd>{notice(o)}{quick(o) ? ' · quick' : ''}</dd>
         {!pending && <><dt>Decided</dt><dd>{o.decided_role === 'hr' ? 'HR · you were away' : 'You'} · {fmtShortDay(new Date(o.decided_at ?? o.created_at))}</dd>{o.return_reason && <><dt>Reason</dt><dd>{o.return_reason}</dd></>}</>}
       </dl></div>
@@ -442,7 +450,8 @@ function PersonSheet({ s, onClose }: { s: Staff; onClose: () => void }) {
           {s.outside.lat != null && s.outside.lng != null && <div className="two" style={{ marginTop: 12 }}>
             <a className="btn light" style={{ height: 40, fontSize: 14, textDecoration: 'none' }} href={googleMapsUrl(s.outside.lat, s.outside.lng)} target="_blank" rel="noreferrer">Google Maps</a>
             <a className="btn light" style={{ height: 40, fontSize: 14, textDecoration: 'none' }} href={appleMapsUrl(s.outside.lat, s.outside.lng)} target="_blank" rel="noreferrer">Apple Maps</a></div>}</div>}
-        {s.cat === 'od' && s.od && <div className="quote" style={{ marginTop: 12 }}><small>OD today</small>{s.od.subject} · {s.od.venue}</div>}
+        {s.od && <><div className="sec" style={{ margin: '16px 0 0' }}>OD today · {s.od.subject}</div><VenueLink name={s.od.venue} place={s.od.place} url={s.od.url} />
+          <div className="meta" style={{ display: 'flex', marginTop: 8 }}>{venueChip(s)}<span className="chip c-pend">{fmtTime(s.od.starts_at)} – {fmtTime(s.od.ends_at)}</span></div></>}
         {s.cat !== 'lv' && (!d ? <Spin /> : <div className="dayc" style={{ marginTop: 16 }}>{tile('in')}{tile('out')}</div>)}
         <p className="to" style={{ marginBottom: 0 }}><Icon n="eye" size={14} style={{ verticalAlign: -2 }} /> View only. Changes go through HR.</p>
       </div>

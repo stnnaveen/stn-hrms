@@ -58,4 +58,19 @@ ok(e.flags.some(f => f.kind === 'jump'), 'Madurai to Chennai in 55 min flags jum
 e = evaluate({ ...base, kind: 'out', serverTime: ist(16, 30), clientTime: ist(16, 30) });
 ok(e.earlyOut && e.band === null, '4:30 PM checkout is early out');
 
+
+// ---- OD venue map links
+import { firstUrl, isMapsHost, coordsFrom, nameFrom, coordsFromHtml } from '../functions/_shared/maplink.ts';
+ok(firstUrl('TIDCO Office\nhttps://maps.app.goo.gl/AbC123xyz') === 'https://maps.app.goo.gl/AbC123xyz', 'finds the link in shared text');
+ok(isMapsHost('https://maps.app.goo.gl/x') && isMapsHost('https://www.google.com/maps/place/x') && isMapsHost('https://maps.apple.com/?ll=1,2') && isMapsHost('https://maps.apple/p/abc'), 'Google and Apple Maps links accepted');
+ok(!isMapsHost('https://evil.com/maps') && !isMapsHost('https://www.google.com/search?x=1') && !isMapsHost('Guindy, Chennai'), 'other links and typed places rejected');
+const g = coordsFrom('https://www.google.com/maps/place/TIDCO/@13.0102,80.2101,17z/data=!3m1!4b1!4m6!3m5!1s0x0:0x0!8m2!3d13.0109!4d80.2117');
+ok(!!g && g.lat === 13.0109 && g.lng === 80.2117, 'Google pin (!3d/!4d) beats map centre');
+const a = coordsFrom('https://maps.apple.com/?address=Guindy,%20Chennai&ll=13.0067,80.2206&q=TIDCO');
+ok(!!a && a.lat === 13.0067 && a.lng === 80.2206, 'Apple Maps ll= read');
+ok(nameFrom('https://www.google.com/maps/place/Codissia+Trade+Fair+Complex/@11.03,77.03,17z') === 'Codissia Trade Fair Complex', 'place name from Google link');
+ok(nameFrom('https://maps.apple.com/?ll=13.0,80.2&q=TIDCO%20Office') === 'TIDCO Office', 'place name from Apple link');
+ok(coordsFromHtml('<meta content="https://maps.google.com/maps/api/staticmap?center=11.0301%2C77.0322&zoom=15">')?.lat === 11.0301, 'coordinates found in page');
+ok(evaluate({ ...base, kind: 'visit' as const, serverTime: ist(14, 5), clientTime: ist(14, 5) }).flags.length === 0, 'venue check-in: no late or early-out flags');
+
 process.exit(fails ? 1 : 0);

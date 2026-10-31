@@ -2,12 +2,15 @@
 //   POST { action: 'start', ... }    -> device binding + signed S3 upload URL for the selfie
 //   POST { action: 'complete', ... } -> rules, face match, place name, punch, flags, attendance day
 //   POST { action: 'health' }   -> Tech admin: which services are on (no secrets)
+//   POST { action: 'resolve_venue', url } -> OD form: Google/Apple Maps link -> pin, name, place
+//   kind 'visit' = OD venue check-in during an approved OD; never changes the day's check-in or check-out
 // The reply to the phone never contains distance, radius, inside/outside, flags or face score.
 import { createClient } from 'npm:@supabase/supabase-js@2.45.4';
 import { S3Client, PutObjectCommand } from 'npm:@aws-sdk/client-s3@3.654.0';
 import { getSignedUrl } from 'npm:@aws-sdk/s3-request-presigner@3.654.0';
 import { RekognitionClient, CompareFacesCommand } from 'npm:@aws-sdk/client-rekognition@3.654.0';
 import { evaluate, istMinutes, type Settings, type PrevPunch } from '../_shared/rules.ts';
+import { firstUrl, isMapsHost, coordsFrom, coordsFromHtml, nameFrom } from '../_shared/maplink.ts';
 
 const env = (k: string) => Deno.env.get(k) ?? '';
 const REGION = env('AWS_REGION') || 'ap-south-1';
@@ -27,8 +30,9 @@ const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
 
 interface Body {
-  action: 'start' | 'complete' | 'health';
-  kind: 'in' | 'out';
+  action: 'start' | 'complete' | 'health' | 'resolve_venue';
+  kind: 'in' | 'out' | 'visit';
+  url?: string;
   idempotency_key: string;
   device_key: string;
   platform?: string;
@@ -59,7 +63,12 @@ Deno.serve(async (req) => {
     const t0 = Date.now(); const { error } = await db.from('settings').select('key').limit(1);
     return json({ ok: true, db_ms: Date.now() - t0, db_ok: !error, storage: USE_S3 ? 's3' : 'supabase', face_match: USE_S3, geocode: env('GOOGLE_GEOCODING_KEY') ? 'google' : 'osm', region: REGION });
   }
-  if (!['in', 'out'].includes(body.kind) || !body.idempotency_key || !body.device_key) return json({ error: 'bad_request' }, 400);
+  // ---- OD venue: read a Google or Apple Maps link on the server (short links need redirects the phone can't follow)
+  if (body.action === 'resolve_venue') {
+    const r = await resolveVenue(db, String(body.url ?? ''));
+    return 'error' in r ? json(r, 422) : json(r);
+  }
+  if (!['in', 'out', 'visit'].includes(body.kind) || !body.idempotency_key || !body.device_key) return json({ error: 'bad_request' }, 400);
 
   const { data: profile } = await db.from('profiles').select('id, full_name, hub_id, active, consent_at, face_status, reference_photo_key').eq('id', user.id).single();
   if (!profile?.active) return json({ error: 'not_active' }, 403);
@@ -107,6 +116,7 @@ Deno.serve(async (req) => {
   if (body.kind === 'in' && day?.in_time) return json({ error: 'already_checked_in' }, 409);
   if (body.kind === 'out' && !day?.in_time) return json({ error: 'not_checked_in' }, 409);
   if (body.kind === 'out' && day?.out_time) return json({ error: 'already_checked_out' }, 409);
+  if (body.kind === 'visit' && !day?.in_time) return json({ error: 'check_in_first' }, 409);
 
   const settings = await loadSettings(db);
 
@@ -115,6 +125,11 @@ Deno.serve(async (req) => {
     .eq('user_id', user.id).eq('status', 'approved')
     .lte('starts_at', new Date(now.getTime() + 30 * 60000).toISOString()).gte('ends_at', now.toISOString())
     .not('venue_lat', 'is', null).limit(1).maybeSingle();
+  if (body.kind === 'visit') {
+    if (!od) return json({ error: 'no_od_now' }, 409);
+    const { data: done } = await db.from('punches').select('id').eq('user_id', user.id).eq('target_type', 'od').eq('target_id', od.id).limit(1).maybeSingle();
+    if (done) return json({ error: 'already_visited' }, 409);
+  }
   let target: { type: 'hub' | 'od'; id: string; lat: number; lng: number; radiusM: number };
   if (od) target = { type: 'od', id: od.id, lat: od.venue_lat, lng: od.venue_lng, radiusM: od.venue_radius_m };
   else {
@@ -174,7 +189,9 @@ Deno.serve(async (req) => {
     await db.from('flags').insert(ev.flags.map((f) => ({ punch_id: punch.id, user_id: user.id, kind: f.kind, rule: f.rule, details: f.details })));
   }
 
-  if (body.kind === 'in') {
+  if (body.kind === 'visit') {
+    // venue proof only; the day's check-in and check-out stay as they are
+  } else if (body.kind === 'in') {
     await db.from('attendance_days').insert({ user_id: user.id, day: today, in_punch: punch.id, in_time: now.toISOString(), band: ev.band, status: target.type === 'od' ? 'od' : 'present' });
   } else {
     await db.from('attendance_days').update({ out_punch: punch.id, out_time: now.toISOString(), early_out: ev.earlyOut }).eq('user_id', user.id).eq('day', today);
@@ -197,6 +214,42 @@ async function loadSettings(db: any): Promise<Settings> {
     faceThreshold: Number(m.face_threshold ?? 80), samePointDays: Number(m.same_point_days ?? 5),
     offlineFlagMinutes: Number(m.offline_flag_minutes ?? 30), clockGapMinutes: Number(m.clock_gap_minutes ?? 2), jumpKmh: Number(m.jump_kmh ?? 150)
   };
+}
+
+// OD venue from a Google or Apple Maps link. Follows short-link redirects only through Maps hosts (no open fetches).
+// deno-lint-ignore no-explicit-any
+async function resolveVenue(db: any, text: string): Promise<{ lat: number; lng: number; name: string | null; place: string | null; url: string } | { error: string }> {
+  const start = firstUrl(text.trim());
+  if (!start || !isMapsHost(start)) return { error: 'not_maps_link' };
+  const UA = { 'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148', 'Accept-Language': 'en' };
+  let url = start, name = nameFrom(url), c = coordsFrom(url);
+  try {
+    for (let hop = 0; !c && hop < 6; hop++) {
+      const r = await fetch(url, { redirect: 'manual', headers: UA, signal: AbortSignal.timeout(5000) });
+      const loc = r.headers.get('location');
+      if (r.status >= 300 && r.status < 400 && loc) {
+        const next = new URL(loc, url).toString();
+        if (!isMapsHost(next) && !/^https:\/\/(consent\.google\.com|www\.google\.com\/sorry)/.test(next)) return { error: 'not_maps_link' };
+        if (/consent\.google\.com/.test(next)) { const cont = new URL(next).searchParams.get('continue'); if (cont && isMapsHost(cont)) { url = cont; } else break; }
+        else url = next;
+        name = nameFrom(url) ?? name; c = coordsFrom(url);
+        continue;
+      }
+      if (r.ok) { const html = (await r.text()).slice(0, 400000); c = coordsFromHtml(html); }
+      else await r.body?.cancel();
+      break;
+    }
+  } catch { /* fall through to the name search */ }
+  if (!c && name) {
+    try {
+      const r = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=in&q=${encodeURIComponent(name)}`,
+        { headers: { 'User-Agent': 'StartupTN-HR/1.0 (attendance app)', 'Accept-Language': 'en' }, signal: AbortSignal.timeout(5000) });
+      const j = await r.json();
+      if (j?.[0]) c = { lat: Number(j[0].lat), lng: Number(j[0].lon) };
+    } catch { /* no luck */ }
+  }
+  if (!c) return { error: 'no_pin' };
+  return { lat: Number(c.lat.toFixed(6)), lng: Number(c.lng.toFixed(6)), name, place: await placeFor(db, c.lat, c.lng), url: start };
 }
 
 // Reverse geocode, cached by coordinates rounded to 4 decimals (~11 m) (PRD LC-09)
