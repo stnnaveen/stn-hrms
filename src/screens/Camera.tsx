@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { useApp } from '../App';
 import { api, ApiError, DEMO, errorText } from '../lib/api';
-import { bestFix, captureJpeg, openFrontCamera, stopCamera, type Fix } from '../device';
+import { trackFix, captureJpeg, openFrontCamera, stopCamera, type Fix } from '../device';
 import type { Challenge } from '../device/face';
 import { fmtTime, stamp } from '../lib/time';
+import { placeLabel } from '../lib/geo';
 import { Icon } from '../ui/Icon';
 import { PermHelp } from '../ui/PermHelp';
 
@@ -20,6 +21,8 @@ export function Camera() {
   const [err, setErr] = useState<string | null>(null);
   const [challenge] = useState<Challenge>(() => (Math.random() < 0.5 ? 'blink' : 'turn'));
   const [noCam, setNoCam] = useState(false);
+  const [slow, setSlow] = useState(false);
+  useEffect(() => { if (phase !== 'saving') return; const t = setTimeout(() => setSlow(true), 12000); return () => clearTimeout(t); }, [phase]);
   const out = camMode === 'out', visit = camMode === 'visit';
 
   useEffect(() => {
@@ -28,6 +31,9 @@ export function Camera() {
     let livenessPassed = false, livenessKind: string = challenge;
     let fixP: Promise<Fix> = Promise.reject(new Error('no_fix'));
     fixP.catch(() => undefined);
+    let bestSoFar: () => Fix | null = () => null;
+    const tOpen = performance.now();
+    api.warm();
 
     const run = async () => {
       // 1. camera first, then location: iPhone can drop a second prompt shown on top of the first
@@ -38,7 +44,9 @@ export function Camera() {
         else { setErr(denied ? 'camera_denied' : 'no_camera'); setPhase('error'); return; }
       }
       if (cancelled) return;
-      fixP = bestFix(15000, 50).then((f) => { if (!cancelled) setFix(f); return f; });
+      const tr = trackFix(15000, 50);
+      bestSoFar = tr.best;
+      fixP = tr.done.then((f) => { if (!cancelled) setFix(f); return f; });
       fixP.catch(() => undefined);
       // 2. face guide + liveness (never blocks the person: falls through after a timeout)
       setPhaseBoth('align');
@@ -78,9 +86,11 @@ export function Camera() {
       const photo = noCamRef() ? await placeholderJpeg() : await captureJpeg(video.current!);
       stopCamera(stream);
       setPhaseBoth('saving');
-      // 4. location (already running) and send
+      // 4. location (already running) and send. A reading within 75 m that's already in hand is used at once;
+      //    otherwise wait for the GPS (up to its 15 s limit). (75 m keeps the radius check honest: accuracy is credited up to 100 m.)
+      const tShot = performance.now();
       let f: Fix;
-      try { f = await fixP; }
+      try { const b = bestSoFar(); f = b && (b.accuracy ?? 999) <= 75 ? b : await fixP; }
       catch (e) {
         if (DEMO) f = { lat: 13.0108, lng: 80.2206, accuracy: 12, altitude: null, speed: null, mocked: null, at: new Date().toISOString() };
         else { setErr((e as Error).message === 'location_denied' ? 'location_denied' : 'no_fix'); setPhase('error'); return; }
@@ -89,7 +99,8 @@ export function Camera() {
         const punch = await api.punch({
           kind: camMode, selfie: photo,
           location: { lat: f.lat, lng: f.lng, accuracy: f.accuracy, altitude: f.altitude, speed: f.speed, mocked: f.mocked },
-          liveness: { challenge: livenessKind, passed: livenessPassed }
+          liveness: { challenge: livenessKind, passed: livenessPassed },
+          timings: { capture_ms: Math.round(tShot - tOpen), gps_wait_ms: Math.round(performance.now() - tShot), before_send_ms: Math.round(performance.now() - tShot) }
         });
         setResult({ punch, photo: URL.createObjectURL(photo) });
         await reload();
@@ -127,7 +138,7 @@ export function Camera() {
 
   const name = today?.profile.full_name ?? '';
   const code = today?.profile.employee_code ? ` · ${today.profile.employee_code}` : '';
-  const hint = phase === 'starting' ? 'Opening camera' : phase === 'align' ? 'Keep your face in the frame' : phase === 'challenge' ? '' : phase === 'saving' ? 'Saving' : 'Hold still';
+  const hint = phase === 'starting' ? 'Opening camera' : phase === 'align' ? 'Keep your face in the frame' : phase === 'challenge' ? '' : phase === 'saving' ? (slow ? 'Slow network. Still saving…' : 'Saving') : 'Hold still';
   return (
     <div className="cam">
       <div className="view">
@@ -159,7 +170,7 @@ export function Result() {
   const { punch, photo } = result;
   const out = punch.kind === 'out', visit = punch.kind === 'visit';
   const first = today?.profile.full_name.split(' ')[0] ?? '';
-  const place = punch.place_name ?? `${punch.lat.toFixed(4)}, ${punch.lng.toFixed(4)}`;
+  const place = <PlaceText name={punch.place_name} lat={punch.lat} lng={punch.lng} />;
   let col: string, icon: string, title: string, msg: string;
   if (punch.queued) {
     col = 'var(--ph-navy)'; icon = 'wifiOff'; title = 'Saved offline'; msg = 'It will send when you’re back online.';
@@ -191,6 +202,13 @@ export function Result() {
       </div>
     </div>
   );
+}
+
+/** Place name for the result: the server's name if it had one ready, else looked up on the phone (the server fills it in shortly). */
+function PlaceText({ name, lat, lng }: { name: string | null; lat: number; lng: number }) {
+  const [n, setN] = useState<string | null>(name);
+  useEffect(() => { if (!name) placeLabel(lat, lng).then((x) => x && setN(x)); }, [name, lat, lng]);
+  return <>{n ?? `${lat.toFixed(4)}, ${lng.toFixed(4)}`}</>;
 }
 
 function DemoFace() {

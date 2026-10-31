@@ -26,6 +26,8 @@ export interface RadiusResult { distance_m: number; credit_m: number; inside: bo
 export interface HubPunch { lat: number; lng: number; acc: number | null; inside: boolean | null; at: string; who: string; kind: string }
 export interface SelfieStats { total: number; people: { id: string; name: string; hub: string | null; count: number; last: string }[] }
 export interface SelfieRow { id: string; kind: string; at: string; place: string | null; key: string }
+export interface SpeedRow { who: string; at: string; kind: string; total: number | null; gps: number | null; upload: number | null; server: number | null; oneShot: boolean }
+export interface Speed { n: number; median: number | null; p95: number | null; over60: number; slowest: SpeedRow[] }
 export type PurgeWhat = 'checkins' | 'flags' | 'od' | 'leave' | 'notifications' | 'devices';
 export interface PurgeArgs { scope: 'person' | 'hub' | 'test' | 'everyone'; user?: string | null; hub?: string | null; from?: string | null; to?: string | null; what: PurgeWhat[]; dry: boolean }
 export interface PurgeResult { people: number; checkins: number; days: number; flags: number; od: number; leave: number; notifications: number; devices: number; photos_removed?: number }
@@ -163,6 +165,16 @@ const real = {
     if (error) { let code = 'purge_failed'; try { code = (await (error as { context?: Response }).context?.json())?.error ?? code; } catch { /* keep */ } throw new ApiError(code); }
     return data as PurgeResult;
   },
+  /** How long check-ins took to save (last 7 days), from timings the phone and server record. */
+  async speed(): Promise<Speed> {
+    const since = new Date(Date.now() - 7 * 864e5).toISOString();
+    const r = must(await sb!.from('punches').select('server_time, kind, timings, p:profiles!punches_user_id_fkey(full_name)').gte('server_time', since).not('timings', 'is', null).order('server_time', { ascending: false }).limit(3000)) as unknown as
+      { server_time: string; kind: string; timings: Record<string, number | boolean>; p: { full_name: string } | null }[];
+    const rows: SpeedRow[] = r.map((x) => { const t = x.timings ?? {}; const n = (k: string) => (typeof t[k] === 'number' ? (t[k] as number) : null);
+      return { who: x.p?.full_name ?? '', at: x.server_time, kind: x.kind, total: n('total_ms') ?? n('server_ms'), gps: n('gps_wait_ms'), upload: n('upload_ms'), server: n('server_ms'), oneShot: !!t.one_shot }; });
+    const tot = rows.map((x) => x.total).filter((x): x is number => x != null);
+    return { n: rows.length, median: median(tot), p95: pct(tot, 0.95), over60: tot.filter((x) => x > 60000).length, slowest: [...rows].sort((a, b) => (b.total ?? 0) - (a.total ?? 0)).slice(0, 12) };
+  },
   async selfieStats(): Promise<SelfieStats> {
     const r = must(await sb!.from('punches').select('user_id, server_time, p:profiles!punches_user_id_fkey(full_name, hub:hubs(name))').not('selfie_key', 'is', null).order('server_time', { ascending: false }).limit(20000)) as unknown as
       { user_id: string; server_time: string; p: PN }[];
@@ -276,6 +288,8 @@ const demo: typeof real = {
   },
   async hubPunches() { await wait(); return [{ lat: 13.0319, lng: 80.2434, acc: 12, inside: true, at: ago(300), who: 'Kavya R', kind: 'in' }, { lat: 13.0326, lng: 80.2441, acc: 20, inside: true, at: ago(320), who: 'Arun K', kind: 'in' }, { lat: 13.0412, lng: 80.2338, acc: 15, inside: false, at: ago(900), who: 'Ravi S', kind: 'in' }]; },
   async purge(a) { await wait(500); const n = a.scope === 'person' ? 1 : a.scope === 'test' ? 2 : a.scope === 'hub' ? 28 : 96; return { people: n, checkins: n * 6, days: n * 3, flags: Math.ceil(n / 2), od: a.what.includes('od') ? n : 0, leave: a.what.includes('leave') ? Math.ceil(n / 3) : 0, notifications: a.what.includes('notifications') ? n * 4 : 0, devices: a.what.includes('devices') ? n : 0, photos_removed: a.dry ? undefined : n * 6 }; },
+  async speed() { await wait(); const S = (who: string, m: number, total: number, gps: number, up: number, sv: number) => ({ who, at: ago(m), kind: 'in', total, gps, upload: up, server: sv, oneShot: true });
+    return { n: 214, median: 3400, p95: 9800, over60: 1, slowest: [S('Ravi S', 300, 64200, 14800, 900, 2100), S('Kavya R', 1500, 12400, 8200, 600, 1500), S('Arun K', 2900, 9100, 4100, 700, 1900), S('Test', 30, 3100, 300, 400, 1200)] }; },
   async selfieStats() { await wait(); return { total: DS.selfies.length + 160, people: [{ id: 's1', name: 'Kavya R', hub: 'Chennai', count: DS.selfies.length, last: ago(60) }, { id: 's2', name: 'Arun K', hub: 'Chennai', count: 44, last: ago(90) }, { id: 's3', name: 'Ravi S', hub: 'Madurai', count: 38, last: ago(120) }, { id: 'st', name: 'Test', hub: 'Chennai', count: 78, last: ago(20) }] }; },
   async personSelfies() { await wait(); return DS.selfies; },
   async removeSelfie(id) { await wait(); DS.selfies = DS.selfies.filter((x) => x.id !== id); },

@@ -31,7 +31,7 @@ export const DEMO = !sb;
 type PunchInput = Omit<QueuedPunch, 'idempotency_key' | 'client_time'> & { idempotency_key?: string; client_time?: string };
 
 // ---------------- real ----------------
-async function invoke<T>(body: Record<string, unknown>): Promise<T> {
+async function invoke<T>(body: Record<string, unknown> | FormData): Promise<T> {
   const { data, error } = await sb!.functions.invoke('check-in', { body });
   if (error) {
     let code = 'network';
@@ -41,7 +41,24 @@ async function invoke<T>(body: Record<string, unknown>): Promise<T> {
   return data as T;
 }
 
+const SAVE_TIMEOUT_MS = 40000;   // after this the phone keeps the check-in and sends it later; staff are never stuck
+const withTimeout = <T,>(pr: Promise<T>, ms: number) => Promise.race([pr, new Promise<T>((_, rej) => setTimeout(() => rej(new ApiError('network')), ms))]);
+
+/** One request: selfie + details together (no separate upload step), then report how long it took. */
 async function sendPunch(p: QueuedPunch): Promise<PunchResult> {
+  const device_key = await deviceKey();
+  const t0 = performance.now();
+  const fd = new FormData();
+  fd.append('data', JSON.stringify({ kind: p.kind, idempotency_key: p.idempotency_key, device_key, platform, client_time: p.client_time, location: p.location, liveness: p.liveness, timings: p.timings ?? {} }));
+  fd.append('selfie', p.selfie, 'selfie.jpg');
+  const res = await withTimeout(invoke<PunchResult>(fd as unknown as Record<string, unknown>), SAVE_TIMEOUT_MS);
+  const total = Math.round((p.timings?.before_send_ms ?? 0) + (performance.now() - t0));
+  void invoke({ action: 'timing', idempotency_key: p.idempotency_key, total_ms: total }).catch(() => undefined);
+  return res;
+}
+
+/** Older two-step path (signed upload, then complete); kept for check-ins queued by an earlier app version. */
+export async function sendPunchTwoStep(p: QueuedPunch): Promise<PunchResult> {
   const device_key = await deviceKey();
   const base = { kind: p.kind, idempotency_key: p.idempotency_key, device_key, platform };
   const start = await invoke<{ store: 's3' | 'supabase'; upload_url?: string; upload_path?: string; upload_token?: string; selfie_key: string }>({ action: 'start', ...base });
@@ -76,6 +93,8 @@ const real = {
   async signOut() { await sb!.auth.signOut(); },
   async today(): Promise<Today> { const { data, error } = await sb!.rpc('my_today'); if (error) throw new ApiError('load_failed'); return data as Today; },
   async consent() { const { error } = await sb!.rpc('give_consent'); if (error) throw new ApiError('save_failed'); },
+  /** Wake the server when the camera opens, so the save itself is quick. */
+  warm() { void invoke({ action: 'ping' }).catch(() => undefined); },
   async punch(input: PunchInput): Promise<PunchResult> {
     const p: QueuedPunch = { ...input, idempotency_key: input.idempotency_key ?? crypto.randomUUID(), client_time: input.client_time ?? new Date().toISOString() };
     if (!navigator.onLine) { await enqueue(p); return offlineResult(p); }
@@ -150,6 +169,7 @@ const demo = {
     };
   },
   async consent() { await wait(200); demoState.consented = true; },
+  warm() { /* demo */ },
   async punch(p: PunchInput): Promise<PunchResult> {
     await wait(900);
     const now = new Date();

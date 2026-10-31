@@ -10,6 +10,8 @@ import { AccountSheet } from '../../ui/AccountSheet';
 import { Notifications } from '../Notifications';
 import { firstViewToday } from '../../device';
 import { VenueLink } from '../../ui/VenueLink';
+import { GeoFlag } from '../../ui/GeoFlag';
+import { RefreshButton } from '../../ui/RefreshButton';
 
 type Tab = 'home' | 'people' | 'approvals';
 type ListKind = 'red' | 'in' | 'late' | 'notin' | 'out' | 'od' | 'lv' | 'early' | 'last';
@@ -22,7 +24,7 @@ const ini = (n: string) => n.split(' ').map((w) => w[0]).join('').slice(0, 2).to
 const Av = ({ n }: { n: string }) => <span className="av sm" style={{ background: tint(n), color: '#fff' }} aria-hidden="true">{ini(n)}</span>;
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
 const RF = () => <span className="rf" role="img" aria-label="Red flag: outside radius"><Icon n="flag" size={13} /></span>;
-const Nm = ({ s }: { s: Staff }) => <b className={isRed(s) ? 'nmf' : undefined}>{s.name}{isRed(s) && <RF />}</b>;
+const Nm = ({ s }: { s: Staff }) => <b className={isRed(s) || s.geo ? 'nmf' : undefined}>{s.name}{isRed(s) ? <RF /> : <GeoFlag geo={s.geo} />}</b>;
 const LABELS: Record<ListKind, string> = { red: 'Red flags', in: 'Checked in', late: 'Late', notin: 'Not in', out: 'Checked out', od: 'On OD', lv: 'On leave', early: 'Early out', last: 'Last out' };
 const STC: Record<string, string> = { approved: 'c-ok', pending: 'c-pend', returned: 'c-bad', cancelled: 'c-pend' };
 
@@ -223,6 +225,7 @@ function Home({ snap, view, hub, setHub, ods, open, setSheet, setAway, goApprova
   return (
     <div className="scr fade">
       <div className="hdr"><button className="av me" onClick={() => setSheet({ t: 'account' })} aria-label="Chairman account and log out">CH</button><div className="r">
+        <RefreshButton />
         <button className={`rbtn ${reds.length ? 'red' : ''}`} onClick={() => open({ name: 'alerts' })} aria-label={reds.length ? `Dispute alerts, ${reds.length} red flags today` : 'Dispute alerts'}><Icon n="flag" />{reds.length > 0 && <i className="bdg">{reds.length}</i>}</button>
         <button className="rbtn" onClick={() => open({ name: 'notifs' })} aria-label="Notifications"><Icon n="bell" /></button></div></div>
       <div className="pillrow" style={{ marginTop: 0 }} role="group" aria-label="Hub">{['All', ...snap.hubs].map((h) => <button key={h} className={`pill ${hub === h ? 'on' : ''}`} onClick={() => setHub(h)}>{h === 'All' ? 'All hubs' : h}</button>)}</div>

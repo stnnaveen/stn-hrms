@@ -9,6 +9,7 @@ export interface QueuedPunch {
   selfie: Blob;
   location: { lat: number; lng: number; accuracy: number | null; altitude: number | null; speed: number | null; mocked: boolean | null };
   liveness: { challenge: string; passed: boolean };
+  timings?: { gps_wait_ms?: number; capture_ms?: number; before_send_ms?: number };
 }
 
 const KEY = 'stn-punch-queue';

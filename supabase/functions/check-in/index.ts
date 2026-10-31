@@ -30,7 +30,8 @@ const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
 
 interface Body {
-  action: 'start' | 'complete' | 'health' | 'resolve_venue' | 'radius_test' | 'purge' | 'delete_person' | 'remove_selfie';
+  action: 'start' | 'complete' | 'punch' | 'ping' | 'timing' | 'health' | 'resolve_venue' | 'radius_test' | 'purge' | 'delete_person' | 'remove_selfie';
+  timings?: Record<string, number>; total_ms?: number;
   kind: 'in' | 'out' | 'visit';
   url?: string;
   // radius_test (Tech): a point to test against a hub, or against a pin + radius
@@ -53,14 +54,43 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
 
+  const T0 = Date.now();
+  // one-shot check-in sends the selfie and the details together (multipart); everything else is JSON
+  let body: Body;
+  let selfie: Blob | null = null;
+  try {
+    if ((req.headers.get('content-type') ?? '').startsWith('multipart/form-data')) {
+      const fd = await req.formData();
+      body = JSON.parse(String(fd.get('data') ?? '{}'));
+      const f = fd.get('selfie');
+      selfie = f instanceof Blob ? f : null;
+      body.action = 'punch';
+    } else body = await req.json();
+  } catch { return json({ error: 'bad_json' }, 400); }
+  // warm-up when the camera opens, so the real save doesn't wait for a cold start
+  if (body.action === 'ping') return json({ ok: true });
+
   const authHeader = req.headers.get('Authorization') ?? '';
   const asUser = createClient(env('SUPABASE_URL'), env('SUPABASE_ANON_KEY'), { global: { headers: { Authorization: authHeader } } });
   const { data: { user } } = await asUser.auth.getUser();
   if (!user) return json({ error: 'not_signed_in' }, 401);
   const db = createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'));
+  const tAuth = Date.now() - T0;
 
-  let body: Body;
-  try { body = await req.json(); } catch { return json({ error: 'bad_json' }, 400); }
+  // ---- the phone reports how long the whole save took; very slow saves are reported to Tech
+  if (body.action === 'timing') {
+    const total = Math.round(Number(body.total_ms ?? 0));
+    if (!body.idempotency_key || !Number.isFinite(total)) return json({ error: 'bad_request' }, 400);
+    const { data: pu } = await db.from('punches').select('id, timings, kind').eq('idempotency_key', body.idempotency_key).eq('user_id', user.id).maybeSingle();
+    if (pu) {
+      await db.from('punches').update({ timings: { ...(pu.timings ?? {}), total_ms: total } }).eq('id', pu.id);
+      if (total > 60000) {
+        const { data: me } = await db.from('profiles').select('full_name').eq('id', user.id).single();
+        await db.rpc('notify_role', { p_role: 'tech', p_kind: 'slow_checkin', p_title: 'Slow check-in', p_body: `${me?.full_name ?? 'Staff'} · ${Math.round(total / 1000)} s to save`, p_data: { punch_id: pu.id } });
+      }
+    }
+    return json({ ok: true });
+  }
   // ---- health: which services are switched on (names only, never keys). Tech admin only.
   if (body.action === 'health') {
     const { data: me } = await db.from('profiles').select('role, active').eq('id', user.id).single();
@@ -108,12 +138,14 @@ Deno.serve(async (req) => {
   }
   if (!['in', 'out', 'visit'].includes(body.kind) || !body.idempotency_key || !body.device_key) return json({ error: 'bad_request' }, 400);
 
-  const { data: profile } = await db.from('profiles').select('id, full_name, hub_id, active, consent_at, face_status, reference_photo_key').eq('id', user.id).single();
+  const [{ data: profile }, { data: devices }] = await Promise.all([
+    db.from('profiles').select('id, full_name, hub_id, active, consent_at, face_status, reference_photo_key').eq('id', user.id).single(),
+    db.from('devices').select('id, device_key, status').eq('user_id', user.id)
+  ]);
   if (!profile?.active) return json({ error: 'not_active' }, 403);
   if (!profile.consent_at) return json({ error: 'consent_needed' }, 403);
 
   // ---- phone binding: first phone is bound; any other waits for the Tech admin (PRD LC-06)
-  const { data: devices } = await db.from('devices').select('id, device_key, status').eq('user_id', user.id);
   let device = devices?.find((d) => d.device_key === body.device_key);
   if (!device) {
     const first = !devices?.some((d) => d.status === 'active');
@@ -141,28 +173,47 @@ Deno.serve(async (req) => {
     return json({ store: 's3', upload_url: url, selfie_key: key });
   }
 
-  // ---- complete
-  if (body.action !== 'complete' || !body.location || !body.selfie_key || !body.client_time) return json({ error: 'bad_request' }, 400);
+  // ---- punch (one request: selfie + details) or complete (after a separate upload; used by offline-queued saves)
+  if (body.action === 'punch') {
+    if (!selfie || selfie.size < 1000 || selfie.size > 4_000_000) return json({ error: 'bad_selfie' }, 400);
+    body.selfie_key = `selfies/${user.id}/${istDay(new Date())}/${body.idempotency_key}.jpg`;
+  } else if (body.action !== 'complete') return json({ error: 'bad_request' }, 400);
+  if (!body.location || !body.selfie_key || !body.client_time) return json({ error: 'bad_request' }, 400);
   if (!body.selfie_key.startsWith(`selfies/${user.id}/`)) return json({ error: 'bad_selfie_key' }, 400);
-
-  const { data: existing } = await db.from('punches').select('server_time, kind, band, early_out, place_name, lat, lng').eq('idempotency_key', body.idempotency_key).maybeSingle();
-  if (existing) return json(reply(existing));
 
   const now = new Date();
   const today = istDay(now);
-  const { data: day } = await db.from('attendance_days').select('in_time, out_time').eq('user_id', user.id).eq('day', today).maybeSingle();
+  // everything this save needs, fetched at the same time
+  const [{ data: existing }, { data: day }, settings, { data: od }, { data: hubRow }, { data: history }] = await Promise.all([
+    db.from('punches').select('server_time, kind, band, early_out, place_name, lat, lng').eq('idempotency_key', body.idempotency_key).maybeSingle(),
+    db.from('attendance_days').select('in_time, out_time').eq('user_id', user.id).eq('day', today).maybeSingle(),
+    loadSettings(db),
+    // target: an approved OD covering now (from 30 min before) beats the hub (PRD LC-04)
+    db.from('od_requests').select('id, venue_lat, venue_lng, venue_radius_m')
+      .eq('user_id', user.id).eq('status', 'approved')
+      .lte('starts_at', new Date(now.getTime() + 30 * 60000).toISOString()).gte('ends_at', now.toISOString())
+      .not('venue_lat', 'is', null).limit(1).maybeSingle(),
+    profile.hub_id ? db.from('hubs').select('id, lat, lng, radius_m').eq('id', profile.hub_id).single() : Promise.resolve({ data: null }),
+    db.from('punches').select('kind, lat, lng, accuracy_m, server_time').eq('user_id', user.id).order('server_time', { ascending: false }).limit(20)
+  ]);
+  if (existing) return json(reply(existing));
+  // the selfie upload starts now and runs while the rules are checked
+  const tUp0 = Date.now();
+  const uploadP: Promise<boolean> = body.action !== 'punch' ? Promise.resolve(true) : (async () => {
+    const key = body.selfie_key!;
+    if (USE_S3) {
+      try { await s3.send(new PutObjectCommand({ Bucket: BUCKET, Key: key, ContentType: 'image/jpeg', Body: new Uint8Array(await selfie!.arrayBuffer()) })); return true; } catch { return false; }
+    }
+    const { error } = await db.storage.from('selfies').upload(key.slice('selfies/'.length), selfie!, { contentType: 'image/jpeg', upsert: true });
+    return !error;
+  })();
+  let uploadMs = 0;
+  uploadP.then(() => { uploadMs = Date.now() - tUp0; });
   if (body.kind === 'in' && day?.in_time) return json({ error: 'already_checked_in' }, 409);
   if (body.kind === 'out' && !day?.in_time) return json({ error: 'not_checked_in' }, 409);
   if (body.kind === 'out' && day?.out_time) return json({ error: 'already_checked_out' }, 409);
   if (body.kind === 'visit' && !day?.in_time) return json({ error: 'check_in_first' }, 409);
 
-  const settings = await loadSettings(db);
-
-  // target: an approved OD covering now (from 30 min before) beats the hub (PRD LC-04)
-  const { data: od } = await db.from('od_requests').select('id, venue_lat, venue_lng, venue_radius_m')
-    .eq('user_id', user.id).eq('status', 'approved')
-    .lte('starts_at', new Date(now.getTime() + 30 * 60000).toISOString()).gte('ends_at', now.toISOString())
-    .not('venue_lat', 'is', null).limit(1).maybeSingle();
   if (body.kind === 'visit') {
     if (!od) return json({ error: 'no_od_now' }, 409);
     const { data: done } = await db.from('punches').select('id').eq('user_id', user.id).eq('target_type', 'od').eq('target_id', od.id).limit(1).maybeSingle();
@@ -171,13 +222,10 @@ Deno.serve(async (req) => {
   let target: { type: 'hub' | 'od'; id: string; lat: number; lng: number; radiusM: number };
   if (od) target = { type: 'od', id: od.id, lat: od.venue_lat, lng: od.venue_lng, radiusM: od.venue_radius_m };
   else {
-    const { data: hub } = await db.from('hubs').select('id, lat, lng, radius_m').eq('id', profile.hub_id).single();
+    const hub = hubRow as { id: string; lat: number; lng: number; radius_m: number } | null;
     if (!hub) return json({ error: 'no_hub' }, 409);
     target = { type: 'hub', id: hub.id, lat: hub.lat, lng: hub.lng, radiusM: hub.radius_m };
   }
-
-  const { data: history } = await db.from('punches').select('kind, lat, lng, accuracy_m, server_time')
-    .eq('user_id', user.id).order('server_time', { ascending: false }).limit(20);
   const toPrev = (p: { lat: number; lng: number; accuracy_m: number | null; server_time: string }): PrevPunch =>
     ({ lat: p.lat, lng: p.lng, accuracy: p.accuracy_m, at: new Date(p.server_time) });
   const seen = new Set<string>([today]);
@@ -187,6 +235,9 @@ Deno.serve(async (req) => {
     if (p.kind === 'in' && !seen.has(d)) { seen.add(d); recentDays.push(toPrev(p)); }
   }
   const lastPunch = history?.[0] ? toPrev(history[0]) : null;
+
+  // the photo must be stored before the face check and before the punch points at it
+  if (!(await uploadP)) return json({ error: 'upload_failed' }, 502);
 
   // face match 1:1 against the approved reference photo (PRD FM-05); keep the score only
   let faceSimilarity: number | null = null;
@@ -210,7 +261,10 @@ Deno.serve(async (req) => {
     integrityOk: null, settings
   });
 
-  const placeName = await placeFor(db, loc.lat, loc.lng);
+  // place name: instant from the cache; otherwise filled in right after the reply so the save never waits on a map service
+  const geoKey = `${loc.lat.toFixed(4)},${loc.lng.toFixed(4)}`;
+  const { data: cached } = await db.from('geo_cache').select('place_name').eq('key', geoKey).maybeSingle();
+  const placeName: string | null = cached?.place_name ?? null;
 
   const { data: punch, error } = await db.from('punches').insert({
     user_id: user.id, kind: body.kind, status: ev.status, device_id: device.id, idempotency_key: body.idempotency_key,
@@ -219,22 +273,24 @@ Deno.serve(async (req) => {
     lat: loc.lat, lng: loc.lng, accuracy_m: loc.accuracy, altitude: loc.altitude ?? null, speed: loc.speed ?? null, mocked: loc.mocked ?? null,
     place_name: placeName, target_type: target.type, target_id: target.id, distance_m: Math.round(ev.distanceM), inside: ev.inside,
     selfie_key: body.selfie_key, face_similarity: faceSimilarity,
-    liveness: { ...(body.liveness ?? {}), face_error: faceError }, quality_score: ev.quality, band: ev.band, early_out: ev.earlyOut
+    liveness: { ...(body.liveness ?? {}), face_error: faceError }, quality_score: ev.quality, band: ev.band, early_out: ev.earlyOut,
+    timings: { ...(body.timings ?? {}), auth_ms: tAuth, upload_ms: uploadMs, server_ms: Date.now() - T0, one_shot: body.action === 'punch' }
   }).select('id, server_time, kind, band, early_out, place_name, lat, lng').single();
   if (error || !punch) return json({ error: 'save_failed' }, 500);
 
-  if (ev.flags.length) {
-    await db.from('flags').insert(ev.flags.map((f) => ({ punch_id: punch.id, user_id: user.id, kind: f.kind, rule: f.rule, details: f.details })));
-  }
+  await Promise.all([
+    ev.flags.length ? db.from('flags').insert(ev.flags.map((f) => ({ punch_id: punch.id, user_id: user.id, kind: f.kind, rule: f.rule, details: f.details }))) : Promise.resolve(),
+    body.kind === 'visit' ? Promise.resolve()   // venue proof only; the day's check-in and check-out stay as they are
+      : body.kind === 'in' ? db.from('attendance_days').insert({ user_id: user.id, day: today, in_punch: punch.id, in_time: now.toISOString(), band: ev.band, status: target.type === 'od' ? 'od' : 'present' })
+      : db.from('attendance_days').update({ out_punch: punch.id, out_time: now.toISOString(), early_out: ev.earlyOut }).eq('user_id', user.id).eq('day', today)
+  ]);
 
-  if (body.kind === 'visit') {
-    // venue proof only; the day's check-in and check-out stay as they are
-  } else if (body.kind === 'in') {
-    await db.from('attendance_days').insert({ user_id: user.id, day: today, in_punch: punch.id, in_time: now.toISOString(), band: ev.band, status: target.type === 'od' ? 'od' : 'present' });
-  } else {
-    await db.from('attendance_days').update({ out_punch: punch.id, out_time: now.toISOString(), early_out: ev.earlyOut }).eq('user_id', user.id).eq('day', today);
+  if (!placeName) {
+    const fill = placeFor(db, loc.lat, loc.lng).then((n) => (n ? db.from('punches').update({ place_name: n }).eq('id', punch.id) : null)).catch(() => null);
+    // deno-lint-ignore no-explicit-any
+    const rt = (globalThis as any).EdgeRuntime;
+    if (rt?.waitUntil) rt.waitUntil(fill);
   }
-
   return json(reply(punch));
 });
 

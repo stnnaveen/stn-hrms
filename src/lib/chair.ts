@@ -10,6 +10,7 @@ export interface Staff {
   od?: { subject: string; venue: string; starts_at: string; ends_at: string; place?: string | null; url?: string | null; visit?: { at: string; inside: boolean | null } | null } | null; leaveType?: string | null;
   /** Today's check-in landed outside the hub/venue radius (Chairman and HR only; never shown to staff). */
   outside?: Outside | null;
+  geo?: 'in' | 'out' | null;   // today's check-in inside / outside the radius
 }
 export interface Outside { flagId: string; status: string; distance: number | null; place: string | null; lat: number | null; lng: number | null }
 /** Red flag = outside radius today and HR has not cleared it yet. */
@@ -36,20 +37,22 @@ const real = {
     const since = new Date(Date.now() - 30 * 864e5 + 330 * 60000).toISOString().slice(0, 10);
     const [ps, days, ods, lvs, hubs, away, hist, rad, vis] = await Promise.all([
       sb!.from('profiles').select('id, full_name, email, designation, hub:hubs(name)').in('role', ['staff', 'intern']).eq('active', true),
-      sb!.from('attendance_days').select('user_id, in_time, out_time, band, early_out, status').eq('day', today),
+      sb!.from('attendance_days').select('user_id, in_time, out_time, band, early_out, status, in_punch').eq('day', today),
       sb!.from('od_requests').select('id, user_id, subject, venue_name, venue_place, venue_url, starts_at, ends_at').eq('status', 'approved').lte('starts_at', endIso).gte('ends_at', startIso),
       sb!.from('leave_requests').select('user_id, leave_type').eq('status', 'approved').lte('starts_on', today).gte('ends_on', today),
       sb!.from('hubs').select('name').eq('active', true).order('name'),
       sb!.from('settings').select('value').eq('key', 'chairman_away').maybeSingle(),
       sb!.from('attendance_days').select('day, band').gte('day', since).not('in_time', 'is', null),
       sb!.from('flags').select('id, user_id, status, created_at, punch:punches(distance_m, place_name, lat, lng)').eq('kind', 'radius').gte('created_at', startIso).order('created_at'),
-      sb!.from('punches').select('user_id, target_id, server_time, inside').eq('target_type', 'od').gte('server_time', startIso).order('server_time')
+      sb!.from('punches').select('id, user_id, target_id, target_type, server_time, inside').gte('server_time', startIso).order('server_time')
     ]);
+    const inside = new Map<string, boolean | null>();
+    for (const v of must(vis) as { id: string; inside: boolean | null }[]) inside.set(v.id, v.inside);
     const vmap = new Map<string, { at: string; inside: boolean | null }>();
-    for (const v of must(vis) as { user_id: string; target_id: string; server_time: string; inside: boolean | null }[]) if (!vmap.has(v.target_id)) vmap.set(v.target_id, { at: v.server_time, inside: v.inside });
+    for (const v of must(vis) as { user_id: string; target_id: string; target_type: string; server_time: string; inside: boolean | null }[]) if (v.target_type === 'od' && !vmap.has(v.target_id)) vmap.set(v.target_id, { at: v.server_time, inside: v.inside });
     type R = { id: string; user_id: string; status: string; punch: { distance_m: number | null; place_name: string | null; lat: number; lng: number } | null };
     const rmap = new Map((must(rad) as unknown as R[]).map((f) => [f.user_id, { flagId: f.id, status: f.status, distance: f.punch?.distance_m ?? null, place: f.punch?.place_name ?? null, lat: f.punch?.lat ?? null, lng: f.punch?.lng ?? null } as Outside]));
-    const dmap = new Map((must(days) as { user_id: string }[]).map((d) => [d.user_id, d as unknown as { in_time: string | null; out_time: string | null; band: Staff['band']; early_out: boolean; status: string }]));
+    const dmap = new Map((must(days) as { user_id: string }[]).map((d) => [d.user_id, d as unknown as { in_time: string | null; out_time: string | null; band: Staff['band']; early_out: boolean; status: string; in_punch: string | null }]));
     const omap = new Map((must(ods) as { id: string; user_id: string; subject: string; venue_name: string; venue_place: string | null; venue_url: string | null; starts_at: string; ends_at: string }[]).map((o) => [o.user_id, o]));
     const lmap = new Map((must(lvs) as { user_id: string; leave_type: string }[]).map((l) => [l.user_id, l.leave_type]));
     const staff: Staff[] = (must(ps) as unknown as { id: string; full_name: string; email: string; designation: string | null; hub: { name: string } | null }[]).map((p) => {
@@ -57,7 +60,8 @@ const real = {
       const cat: Cat = lv ? 'lv' : d?.in_time ? 'in' : o ? 'od' : 'notin';
       return { id: p.id, name: p.full_name, email: p.email, hub: p.hub?.name ?? 'No hub', designation: p.designation, cat,
         inTime: d?.in_time ?? null, outTime: d?.out_time ?? null, band: d?.band ?? null, early: !!d?.early_out,
-        od: o ? { subject: o.subject, venue: o.venue_name, starts_at: o.starts_at, ends_at: o.ends_at, place: o.venue_place, url: o.venue_url, visit: vmap.get(o.id) ?? null } : null, leaveType: lv ?? null, outside: rmap.get(p.id) ?? null };
+        od: o ? { subject: o.subject, venue: o.venue_name, starts_at: o.starts_at, ends_at: o.ends_at, place: o.venue_place, url: o.venue_url, visit: vmap.get(o.id) ?? null } : null, leaveType: lv ?? null, outside: rmap.get(p.id) ?? null,
+        geo: (() => { const g = d?.in_punch ? inside.get(d.in_punch) : undefined; return g == null ? null : g ? 'in' as const : 'out' as const; })() };
     });
     const byDay = new Map<string, { n: number; ok: number }>();
     for (const r of must(hist) as { day: string; band: string | null }[]) { const x = byDay.get(r.day) ?? { n: 0, ok: 0 }; x.n++; if (r.band === 'ok') x.ok++; byDay.set(r.day, x); }
@@ -111,6 +115,7 @@ const D = (() => {
   const PLACES: Record<string, [number, string, number, number, string]> = { Trichy: [1400, 'Cantonment, Trichy', 10.8064, 78.6851, 'open'], Coimbatore: [8800, 'Ukkadam, Coimbatore', 10.9872, 76.9617, 'reason_asked'], Madurai: [2300, 'Anna Nagar, Madurai', 9.9312, 78.1404, 'open'] };
   staff.filter((s) => s.cat === 'in' && ['Trichy', 'Coimbatore', 'Madurai'].includes(s.hub)).filter((_, i) => i % 9 === 4).slice(0, 3)
     .forEach((s, i) => { const [d, pl, la, ln, st] = PLACES[s.hub]; s.outside = { flagId: `fr${i}`, status: st, distance: d, place: pl, lat: la, lng: ln }; });
+  staff.forEach((s) => { if (s.cat === 'in') s.geo = s.outside ? 'out' : 'in'; });
   const trend = Array.from({ length: 22 }, (_, i) => ({ day: new Date(Date.now() - (22 - i) * 864e5).toISOString().slice(0, 10), pct: 86 + Math.round(rnd() * 10) }));
   const iso = (minAgo: number) => new Date(Date.now() - minAgo * 60000).toISOString();
   const pending: OdItem[] = [

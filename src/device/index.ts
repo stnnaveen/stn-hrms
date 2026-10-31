@@ -23,8 +23,16 @@ export async function deviceKey(): Promise<string> {
   return k;
 }
 
+/** Like bestFix, but the caller can take the best reading so far at any moment (used at the shutter, so saving never waits long for GPS). */
+export function trackFix(ms = 15000, goodM = 50): { done: Promise<Fix>; best: () => Fix | null } {
+  let latest: Fix | null = null;
+  const done = bestFix(ms, goodM, (f) => { latest = f; });
+  done.then((f) => { latest = f; }).catch(() => undefined);
+  return { done, best: () => latest };
+}
+
 /** Best GPS reading within `ms`: stops early once accuracy reaches `goodM` (PRD LC-02). */
-export function bestFix(ms = 15000, goodM = 50): Promise<Fix> {
+export function bestFix(ms = 15000, goodM = 50, onBetter?: (f: Fix) => void): Promise<Fix> {
   return new Promise((resolve, reject) => {
     if (!('geolocation' in navigator)) return reject(new Error('no_geolocation'));
     let best: GeolocationPosition | null = null;
@@ -38,7 +46,10 @@ export function bestFix(ms = 15000, goodM = 50): Promise<Fix> {
     };
     const id = navigator.geolocation.watchPosition(
       (p) => {
-        if (!best || p.coords.accuracy < best.coords.accuracy) best = p;
+        if (!best || p.coords.accuracy < best.coords.accuracy) {
+          best = p;
+          onBetter?.({ lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy ?? null, altitude: p.coords.altitude ?? null, speed: p.coords.speed ?? null, mocked: null, at: new Date(p.timestamp).toISOString() });
+        }
         if (p.coords.accuracy <= goodM) done();
       },
       (err) => { if (err.code === err.PERMISSION_DENIED) { navigator.geolocation.clearWatch(id); clearTimeout(timer); reject(new Error('location_denied')); } },
@@ -138,4 +149,10 @@ export function firstViewToday(name: string): boolean {
 /** Forget daily flags, so the next sign-in shows the greeting again. */
 export function clearDailyFlags() {
   try { for (const k of ['stn-greeted', 'stn-chair-intro', 'stn-tech-intro']) localStorage.removeItem(k); } catch { /* private mode */ }
+}
+
+/** Refresh button: fetch the newest app version if there is one, then reload the page. */
+export async function hardRefresh(): Promise<void> {
+  try { const r = await navigator.serviceWorker?.getRegistration(); await r?.update(); } catch { /* offline or no service worker */ }
+  location.reload();
 }

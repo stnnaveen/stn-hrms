@@ -9,6 +9,8 @@ import { Icon } from '../../ui/Icon';
 import { Notifications } from '../Notifications';
 import { AccountSheet } from '../../ui/AccountSheet';
 import { VenueLink } from '../../ui/VenueLink';
+import { GeoFlag } from '../../ui/GeoFlag';
+import { RefreshButton } from '../../ui/RefreshButton';
 
 type Tab = 'home' | 'staff' | 'approvals' | 'disputes';
 type Sub = { name: 'today' } | { name: 'person'; p: Person } | { name: 'dispute'; f: Flag } | { name: 'hubs' } | { name: 'hub'; h: Hub | null }
@@ -94,6 +96,7 @@ function Home({ c, open, setTab }: { c: HrToday | null; open: (s: Sub) => void; 
   return (
     <><div className="scr fade">
       <div className="hdr"><button className="av me" onClick={() => setAccount(true)} aria-label="HR account and log out">HR</button><div className="r">
+        <RefreshButton />
         <button className="rbtn" onClick={() => open({ name: 'hubs' })} aria-label="Hubs"><Icon n="building" /></button>
         <button className="rbtn" onClick={() => open({ name: 'notifs' })} aria-label="Notifications"><Icon n="bell" /></button></div></div>
       <div className="dark">
@@ -141,7 +144,7 @@ function Today({ onBack, open }: { onBack: () => void; open: (s: Sub) => void })
       <Top small="Today" big="Attendance" onBack={onBack} />
       <div className="pillrow" role="group" aria-label="Filter">{(Object.keys(lab) as (keyof typeof lab)[]).map((k) => <button key={k} className={`pill ${f === k ? 'on' : ''}`} onClick={() => setF(k)}>{lab[k]}</button>)}</div>
       {!people ? <Spin /> : <div className="list">{list.map((p) => (
-        <button key={p.id} className="card row" onClick={() => open({ name: 'person', p })}><Av n={p.full_name} /><div className="t"><b>{p.full_name}</b><span>{p.hub ?? 'No hub'} hub</span></div>{dayChip(p)}</button>
+        <button key={p.id} className="card row" onClick={() => open({ name: 'person', p })}><Av n={p.full_name} /><div className="t"><b className={p.geo ? 'nmf' : undefined}>{p.full_name}<GeoFlag geo={p.geo} /></b><span>{p.hub ?? 'No hub'} hub</span></div>{dayChip(p)}</button>
       ))}{list.length === 0 && <div className="empty"><b>No one here</b>Try another filter.</div>}</div>}
     </div>
   );
@@ -159,7 +162,7 @@ function StaffList({ open }: { open: (s: Sub) => void }) {
       <label className="search" htmlFor="q"><Icon n="search" /><input id="q" placeholder="Search name or hub" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search staff" /></label>
       <div className="pillrow" role="group" aria-label="Filter">{['All', 'Late', 'Interns', 'Invited', 'Inactive'].map((k) => <button key={k} className={`pill ${f === k ? 'on' : ''}`} onClick={() => setF(k)}>{k}</button>)}</div>
       {!people ? <Spin /> : <div className="list">{list.map((p) => (
-        <button key={p.id} className="card row" onClick={() => open({ name: 'person', p })}><Av n={p.full_name} /><div className="t"><b>{p.full_name}</b><span>{p.designation ?? cap(p.role)} · {p.hub ?? 'No hub'}</span></div>{p.active ? dayChip(p) : <span className="chip c-pend">Inactive</span>}</button>
+        <button key={p.id} className="card row" onClick={() => open({ name: 'person', p })}><Av n={p.full_name} /><div className="t"><b className={p.geo ? 'nmf' : undefined}>{p.full_name}<GeoFlag geo={p.geo} /></b><span>{p.designation ?? cap(p.role)} · {p.hub ?? 'No hub'}</span></div>{p.active ? dayChip(p) : <span className="chip c-pend">Inactive</span>}</button>
       ))}{list.length === 0 && <div className="empty"><b>No match</b>Try another name or hub.</div>}</div>}
     </div>
   );
@@ -264,8 +267,8 @@ function PersonView({ p: p0, onBack, open }: { p: Person; onBack: () => void; op
           <div className="dayc"><Tile k="in" /><Tile k="out" /></div>
           {punch('in') && <div className="meta" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 10 }}>
             {punch('in')!.band && <span className={`chip ${punch('in')!.band === 'ok' ? 'c-ok' : punch('in')!.band === 'warn' ? 'c-warn' : 'c-bad'}`}>{punch('in')!.band === 'ok' ? 'On time' : punch('in')!.band === 'warn' ? 'Slightly late' : 'Late'}</span>}
-            {punch('in')!.distance_m != null && <span className="chip c-pend">In {fmtDistance(punch('in')!.distance_m!)} from target</span>}
-            {punch('out')?.distance_m != null && <span className="chip c-pend">Out {fmtDistance(punch('out')!.distance_m!)} from target</span>}
+            {punch('in')!.distance_m != null && <span className={`chip ${punch('in')!.inside === false ? 'c-bad' : 'c-ok'}`}><Icon n="flag" size={12} />In {punch('in')!.inside === false ? 'outside' : 'inside'} · {fmtDistance(punch('in')!.distance_m!)}</span>}
+            {punch('out')?.distance_m != null && <span className={`chip ${punch('out')!.inside === false ? 'c-bad' : 'c-ok'}`}><Icon n="flag" size={12} />Out {punch('out')!.inside === false ? 'outside' : 'inside'} · {fmtDistance(punch('out')!.distance_m!)}</span>}
             {punch('out')?.early_out && <span className="chip c-bad">Early out</span>}
           </div>}
         </>)}
@@ -535,7 +538,9 @@ function Hubs({ onBack, open }: { onBack: () => void; open: (s: Sub) => void }) 
 function HubEdit({ h, onBack }: { h: Hub | null; onBack: () => void }) {
   const { toast } = useApp();
   const [name, setName] = useState(h?.name ?? '');
-  const [link, setLink] = useState('');
+  const [link, setLink] = useState(h?.maps_url ?? '');   // the saved link stays visible
+  const [touched, setTouched] = useState(false);          // only a newly pasted link is read again
+  const [confirmed, setConfirmed] = useState(false);      // a pin from a link must be confirmed on the map
   const [pin, setPin] = useState<{ lat: number; lng: number; place: string | null; src: 'link' | 'tap' | 'saved' } | null>(h?.pin_set_at ? { lat: h.lat, lng: h.lng, place: null, src: 'saved' } : null);
   const [lstate, setLstate] = useState<'idle' | 'checking' | 'error'>('idle');
   const [lerr, setLerr] = useState('');
@@ -543,33 +548,44 @@ function HubEdit({ h, onBack }: { h: Hub | null; onBack: () => void }) {
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
+    if (!touched) return;
     const t = link.trim(); if (!t) { setLstate('idle'); return; }
-    setLstate('checking'); setLerr('');
+    setLstate('checking'); setLerr(''); setConfirmed(false);
     const k = setTimeout(async () => {
       try { const v = await api.resolveVenue(t); setPin({ lat: v.lat, lng: v.lng, place: v.place, src: 'link' }); setLstate('idle'); }
       catch (e) { setLstate('error'); setLerr(e instanceof ApiError && e.code !== 'network' ? errorText(e.code) : 'Couldn’t read this link. Try again.'); }
     }, 450);
     return () => clearTimeout(k);
-  }, [link]);
+  }, [link, touched]);
   useEffect(() => { if (pin && !pin.place) placeLabel(pin.lat, pin.lng).then((p) => setPin((x) => (x && x.lat === pin.lat && x.lng === pin.lng ? { ...x, place: p } : x))); }, [pin?.lat, pin?.lng]); // eslint-disable-line react-hooks/exhaustive-deps
   const save = async () => {
     if (!name.trim()) { setErr('Add a name.'); return; }
     if (lstate === 'error' || lstate === 'checking') { setErr('Fix the map link first.'); return; }
     if (!pin) { setErr('Paste the hub’s map link, or tap its spot on the map.'); return; }
+    if (pin.src === 'link' && !confirmed) { setErr('Check the pin on the map, then tap Confirm location.'); return; }
     setBusy(true);
-    try { await hr.saveHub({ id: h?.id, name: name.trim(), lat: pin.lat, lng: pin.lng, radius_m: r, maps_url: link.trim() || h?.maps_url || null }); toast('Hub saved'); onBack(); }
+    try { await hr.saveHub({ id: h?.id, name: name.trim(), lat: pin.lat, lng: pin.lng, radius_m: r, maps_url: (pin.src === 'link' ? link.trim() : (link.trim() || h?.maps_url)) || null }); toast('Hub saved'); onBack(); }
     catch { setBusy(false); setErr('Could not save. Try again.'); }
   };
   return (
     <div className="scr fade" style={{ paddingBottom: 40 }}>
       <Top small={h ? 'Edit' : 'New'} big={h ? `${h.name} hub` : 'Add hub'} onBack={onBack} />
       <Suspense fallback={<div className="mapv" style={{ height: 260 }} />}>
-        <MapView height={260} circle={pin ? { lat: pin.lat, lng: pin.lng, radius: r } : null} onTap={(lat, lng) => { setPin({ lat, lng, place: null, src: 'tap' }); setErr(null); }} />
+        <MapView height={260} circle={pin ? { lat: pin.lat, lng: pin.lng, radius: r } : null} onTap={(lat, lng) => { setPin({ lat, lng, place: null, src: 'tap' }); setConfirmed(true); setErr(null); }} />
       </Suspense>
-      <p className="to" style={{ textAlign: 'left', margin: '8px 0 0' }}>{pin ? `${pin.place ?? 'Finding place…'} · ${pin.lat.toFixed(5)}, ${pin.lng.toFixed(5)}${pin.src === 'tap' ? ' · moved by tap' : ''}` : 'Pin not set. Paste the link or tap the map.'}</p>
-      {h && !h.pin_set_at && <div className="note" style={{ marginTop: 10 }}><Icon n="alert" size={16} />This hub still has a starter pin (city centre). Check-ins are measured from the wrong spot until you set it.</div>}
+      {pin && pin.src === 'link' && !confirmed ? (
+        <div className="card" style={{ marginTop: 10, border: '1.5px solid var(--od, #2F62D9)' }}>
+          <div className="row"><span className="ri c-od"><Icon n="pin" /></span><span className="t"><b>Is this the hub?</b><span style={{ whiteSpace: 'normal' }}>{pin.place ?? 'Finding place…'} · {pin.lat.toFixed(5)}, {pin.lng.toFixed(5)}</span></span></div>
+          <p className="to" style={{ textAlign: 'left', margin: '8px 0 0' }}>Zoom the map to check. Wrong spot? Tap the right place on the map.</p>
+          <div className="two" style={{ marginTop: 10 }}>
+            <a className="btn light" style={{ height: 44, fontSize: 14, textDecoration: 'none' }} href={googleMapsUrl(pin.lat, pin.lng)} target="_blank" rel="noreferrer">Open in Maps</a>
+            <button className="btn dark" style={{ height: 44, fontSize: 14 }} onClick={() => { setConfirmed(true); setErr(null); }}><Icon n="check" />Confirm location</button>
+          </div>
+        </div>
+      ) : <p className="to" style={{ textAlign: 'left', margin: '8px 0 0' }}>{pin ? `${confirmed && pin.src !== 'saved' ? '✓ ' : ''}${pin.place ?? 'Finding place…'} · ${pin.lat.toFixed(5)}, ${pin.lng.toFixed(5)}${pin.src === 'tap' ? ' · set by tap' : pin.src === 'link' ? ' · confirmed' : ''}` : 'Pin not set. Paste the link or tap the map.'}</p>}
+      {h && !h.pin_set_at && !(pin && pin.src !== 'saved' && confirmed) && <div className="note" style={{ marginTop: 10 }}><Icon n="alert" size={16} />This hub still has a starter pin (city centre). Check-ins are measured from the wrong spot until you set it.</div>}
       <label className="lab" htmlFor="h-n">Name</label><input className="inp" id="h-n" value={name} onChange={(e) => setName(e.target.value)} placeholder="Hub name" />
-      <label className="lab" htmlFor="h-l">Map link</label><input className="inp" id="h-l" inputMode="url" autoCapitalize="none" value={link} onChange={(e) => { setLink(e.target.value); setErr(null); }} placeholder="Google Maps or Apple Maps link" />
+      <label className="lab" htmlFor="h-l">Map link</label><input className="inp" id="h-l" inputMode="url" autoCapitalize="none" value={link} onChange={(e) => { setLink(e.target.value); setTouched(true); setErr(null); }} placeholder="Google Maps or Apple Maps link" />
       {lstate === 'checking' && <div className="hintl">Reading the link…</div>}
       {lstate === 'error' && <div className="err">{lerr}</div>}
       {lstate === 'idle' && !link && <div className="hintl">In Maps, open the office → Share → Copy link. Or tap the exact spot above.</div>}

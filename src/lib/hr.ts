@@ -10,6 +10,7 @@ export interface Person {
   employee_code: string | null; active: boolean; face_status: string;
   invited?: boolean;               // on the roster, has not signed in yet
   today?: { in_time: string | null; out_time: string | null; band: string | null; status: string } | null;
+  geo?: 'in' | 'out' | null;   // today's check-in inside / outside the radius (HR only)
 }
 export interface LeaveReq { id: string; who: string; hub: string | null; leave_type: string; starts_on: string; ends_on: string; half_day: string | null; reason: string | null; status: string; created_at: string }
 export interface OdReq { id: string; who: string; hub: string | null; subject: string; note: string | null; venue_name: string; venue_place?: string | null; venue_url?: string | null; venue_lat?: number | null; venue_lng?: number | null; starts_at: string; ends_at: string; status: string; created_at: string }
@@ -21,7 +22,7 @@ export interface Flag {
 }
 export interface Hub { id: string; name: string; lat: number; lng: number; radius_m: number; maps_url: string | null; active: boolean; staff?: number; pin_set_at?: string | null }
 export interface Pin { server_time: string; lat: number; lng: number; accuracy_m: number | null }
-export interface DayPunch { kind: 'in' | 'out'; server_time: string; lat: number; lng: number; place_name: string | null; band: string | null; early_out: boolean; selfie_key: string | null; distance_m: number | null }
+export interface DayPunch { kind: 'in' | 'out'; server_time: string; lat: number; lng: number; place_name: string | null; band: string | null; early_out: boolean; selfie_key: string | null; distance_m: number | null; inside?: boolean | null }
 export interface PersonDetail {
   punches: DayPunch[];
   days: { day: string; band: string | null; status: string; early_out: boolean; in_time: string | null; out_time: string | null }[];
@@ -37,9 +38,16 @@ const real = {
   async today(): Promise<HrToday> { return must(await sb!.rpc('hr_today')) as HrToday; },
   async people(): Promise<Person[]> {
     const ps = must(await sb!.from('profiles').select('id, full_name, email, role, designation, phone, employee_code, active, face_status, hub:hubs(name)').in('role', ['staff', 'intern']).order('full_name'));
-    const days = must(await sb!.from('attendance_days').select('user_id, in_time, out_time, band, status').eq('day', istToday()));
+    const days = must(await sb!.from('attendance_days').select('user_id, in_time, out_time, band, status, in_punch').eq('day', istToday()));
+    const ins = (days as { in_punch: string | null }[]).map((d) => d.in_punch).filter(Boolean) as string[];
+    const geo = new Map<string, boolean | null>();
+    if (ins.length) for (const x of must(await sb!.from('punches').select('id, inside').in('id', ins)) as { id: string; inside: boolean | null }[]) geo.set(x.id, x.inside);
     const byUser = new Map((days as { user_id: string }[]).map((d) => [d.user_id, d]));
-    const people = (ps as unknown as (Person & { hub: { name: string } | null })[]).map((p) => ({ ...p, hub: p.hub?.name ?? null, today: (byUser.get(p.id) as Person['today']) ?? null }));
+    const people = (ps as unknown as (Person & { hub: { name: string } | null })[]).map((p) => {
+      const d = byUser.get(p.id) as (Person['today'] & { in_punch: string | null }) | undefined;
+      const g = d?.in_punch ? geo.get(d.in_punch) : undefined;
+      return { ...p, hub: p.hub?.name ?? null, today: d ?? null, geo: g == null ? null : g ? 'in' as const : 'out' as const };
+    });
     const roster = must(await sb!.from('staff_roster').select('email, full_name, role, designation, hub_name, phone, employee_code').in('role', ['staff', 'intern'])) as
       { email: string; full_name: string; role: string; designation: string | null; hub_name: string | null; phone: string | null; employee_code: string | null }[];
     const known = new Set(people.map((p) => p.email));
@@ -111,7 +119,7 @@ const real = {
     const ist = new Date(Date.now() + 330 * 60000);
     const today = ist.toISOString().slice(0, 10), monthStart = today.slice(0, 8) + '01';
     const [punches, days, ods, leaves] = await Promise.all([
-      sb!.from('punches').select('kind, server_time, lat, lng, place_name, band, early_out, selfie_key, distance_m').eq('user_id', userId).gte('server_time', new Date(`${today}T00:00:00+05:30`).toISOString()).order('server_time'),
+      sb!.from('punches').select('kind, server_time, lat, lng, place_name, band, early_out, selfie_key, distance_m, inside').eq('user_id', userId).gte('server_time', new Date(`${today}T00:00:00+05:30`).toISOString()).order('server_time'),
       sb!.from('attendance_days').select('day, band, status, early_out, in_time, out_time').eq('user_id', userId).gte('day', monthStart).order('day'),
       sb!.from('od_requests').select('id, subject, venue_name, starts_at, ends_at, status').eq('user_id', userId).order('starts_at', { ascending: false }).limit(10),
       sb!.from('leave_requests').select('id, leave_type, starts_on, ends_on, status').eq('user_id', userId).order('starts_on', { ascending: false }).limit(10)
@@ -153,7 +161,7 @@ const D = {
 const wait = (ms = 250) => new Promise((r) => setTimeout(r, ms));
 const demo: typeof real = {
   async today() { await wait(); return { staff: 96, checked_in: 77, late: 6, od: 6, leave: 4, pending_leave: D.leaves.length, pending_od: D.ods.length, open_flags: D.flags.length, chairman_away: false }; },
-  async people() { await wait(); return D.people; },
+  async people() { await wait(); return D.people.map((p) => ({ ...p, geo: p.today?.in_time ? (p.full_name.startsWith('Vignesh') ? 'out' as const : 'in' as const) : null })); },
   async leaves() { await wait(); return D.leaves; },
   async ods() { await wait(); return D.ods; },
   async flags() { await wait(); return D.flags; },

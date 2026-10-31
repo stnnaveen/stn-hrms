@@ -4,6 +4,7 @@ import { api, type Notif } from '../lib/api';
 import { fmtShortDay, fmtTime, greeting, hoursBetween, istMinutesNow, splitTime } from '../lib/time';
 import { Icon } from '../ui/Icon';
 import { AccountSheet } from '../ui/AccountSheet';
+import { RefreshButton } from '../ui/RefreshButton';
 
 const BAND_CHIP = {
   ok: <span className="chip c-ok"><i />On time</span>,
@@ -49,6 +50,7 @@ export function Home() {
         <div className="hdr">
           <button className="av" onClick={() => setAccount(true)} aria-label={`${p.full_name}, account and log out`}>{p.full_name.split(' ').map((w) => w[0]).join('').slice(0, 2)}</button>
           <div className="r">
+            <RefreshButton />
             <button className="rbtn" onClick={() => go('notifs')} aria-label="Notifications"><Icon n="bell" />{unread && <span className="badge" />}</button>
           </div>
         </div>

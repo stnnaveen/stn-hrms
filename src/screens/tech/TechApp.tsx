@@ -1,12 +1,13 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useApp } from '../../App';
 import { ApiError } from '../../lib/api';
-import { tech, phoneName, type HubPunch, type SelfieRow, type SelfieStats, type PurgeArgs, type PurgeResult, type PurgeWhat, type RadiusResult, type Accuracy, type AuditRow, type Devices, type Device, type Health, type Overview, type RoleLogin, type Roles, type Settings } from '../../lib/tech';
+import { tech, phoneName, type Speed, type HubPunch, type SelfieRow, type SelfieStats, type PurgeArgs, type PurgeResult, type PurgeWhat, type RadiusResult, type Accuracy, type AuditRow, type Devices, type Device, type Health, type Overview, type RoleLogin, type Roles, type Settings } from '../../lib/tech';
 import { hr, FLAG_LABEL, type Flag } from '../../lib/hr';
 import { placeLabel, googleMapsUrl, appleMapsUrl, fmtDistance } from '../../lib/geo';
 import { fmtDay, fmtShortDay, fmtTime, greeting } from '../../lib/time';
 import { Icon } from '../../ui/Icon';
 import { AccountSheet } from '../../ui/AccountSheet';
+import { RefreshButton } from '../../ui/RefreshButton';
 import { Notifications } from '../Notifications';
 import { bestFix, firstViewToday } from '../../device';
 import { hr as hrApi, type Hub, type Person } from '../../lib/hr';
@@ -205,7 +206,7 @@ function Home({ ov, svc, temps, open, setSheet, goTab }: { ov: Overview | null; 
   return (
     <div className="scr fade">
       <div className="hdr"><button className="av me" onClick={() => setSheet({ t: 'account' })} aria-label="Tech admin account and log out">AI</button>
-        <div className="r"><button className="rbtn" onClick={() => open({ name: 'notifs' })} aria-label="Notifications"><Icon n="bell" /></button></div></div>
+        <div className="r"><RefreshButton /><button className="rbtn" onClick={() => open({ name: 'notifs' })} aria-label="Notifications"><Icon n="bell" /></button></div></div>
       <div className="dark">
         <div className="top"><div><div className="hi">{greeting()}, Tech team</div><div className="day">System health</div></div><span className="live"><i />Live</span></div>
         <div className="gcard gc4">
@@ -330,15 +331,24 @@ function AlertView({ f, onBack }: { f: Flag; onBack: () => void }) {
 
 // ---------------- accuracy ----------------
 function AccuracyView() {
-  const [a, setA] = useState<Accuracy | null>(null); const [seg, setSeg] = useState<'gps' | 'face' | 'rules'>('gps');
-  useEffect(() => { tech.accuracy().then(setA).catch(() => setA(null)); }, []);
+  const [a, setA] = useState<Accuracy | null>(null); const [seg, setSeg] = useState<'gps' | 'face' | 'rules' | 'speed'>('gps');
+  const [sp, setSp] = useState<Speed | null>(null);
+  useEffect(() => { tech.accuracy().then(setA).catch(() => setA(null)); tech.speed().then(setSp).catch(() => setSp(null)); }, []);
+  const sec = (ms: number | null) => (ms == null ? '—' : ms >= 10000 ? `${Math.round(ms / 1000)} s` : `${(ms / 1000).toFixed(1)} s`);
   const mx = (xs: { n: number }[]) => Math.max(1, ...xs.map((x) => x.n));
   return (
     <div className="scr fade">
       <Head small="Last 7 days" big="Accuracy" />
       <div className="seg" role="group" aria-label="View" style={{ marginBottom: 16 }}>
-        <button className={seg === 'gps' ? 'on' : ''} onClick={() => setSeg('gps')}>GPS</button><button className={seg === 'face' ? 'on' : ''} onClick={() => setSeg('face')}>Face</button><button className={seg === 'rules' ? 'on' : ''} onClick={() => setSeg('rules')}>Rules</button></div>
-      {!a ? <Spin /> : seg === 'gps' ? (a.n === 0 ? <div className="empty"><b>No check-ins yet</b>Numbers appear after the first check-ins.</div> : <>
+        <button className={seg === 'gps' ? 'on' : ''} onClick={() => setSeg('gps')}>GPS</button><button className={seg === 'face' ? 'on' : ''} onClick={() => setSeg('face')}>Face</button><button className={seg === 'rules' ? 'on' : ''} onClick={() => setSeg('rules')}>Rules</button><button className={seg === 'speed' ? 'on' : ''} onClick={() => setSeg('speed')}>Speed</button></div>
+      {seg === 'speed' && (!sp ? <Spin /> : sp.n === 0 ? <div className="empty"><b>No timings yet</b>They appear after the next check-ins.</div> : <>
+        <div className="tiles"><div className="tile"><b>{sec(sp.median)}</b><span>Typical save</span></div><div className="tile"><b>{sec(sp.p95)}</b><span>Slowest 5%</span></div><div className="tile"><b style={{ color: sp.over60 ? 'var(--bad)' : undefined }}>{sp.over60}</b><span>Over 1 min</span></div></div>
+        <div className="sec">Slowest · last 7 days</div>
+        <div className="card" style={{ padding: '4px 16px' }}>{sp.slowest.map((x, i) => (
+          <div key={i} className="setrow"><span className="t"><b>{x.who} · {sec(x.total)}</b><span>{fmtShortDay(new Date(x.at))} {fmtTime(x.at)} · GPS wait {sec(x.gps)} · photo {sec(x.upload)} · server {sec(x.server)}</span></span>{(x.total ?? 0) > 60000 && <span className="chip c-bad">Slow</span>}</div>))}</div>
+        <p className="to">Over 1 minute sends Tech a “Slow check-in” notification. After 40 s the phone keeps the check-in and sends it when the network is better.</p>
+      </>)}
+      {seg === 'speed' ? null : !a ? <Spin /> : seg === 'gps' ? (a.n === 0 ? <div className="empty"><b>No check-ins yet</b>Numbers appear after the first check-ins.</div> : <>
         <div className="tiles"><div className="tile"><b>{a.gpsMedian != null ? `${Math.round(a.gpsMedian)} m` : '—'}</b><span>Median</span></div><div className="tile"><b>{a.gpsP95 != null ? `${Math.round(a.gpsP95)} m` : '—'}</b><span>95th pct</span></div><div className="tile"><b>{a.within50 != null ? `${a.within50}%` : '—'}</b><span>Within 50 m</span></div></div>
         <div className="sec">Accuracy spread · {a.n} check-ins</div>
         <div className="card">{a.spread.map((s, i) => <VBar key={s.l} l={s.l} p={(s.n / mx(a.spread)) * 100} v={String(s.n)} col={i < 2 ? 'var(--ok)' : i < 3 ? 'var(--warn)' : 'var(--bad)'} />)}</div>

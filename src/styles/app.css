@@ -507,3 +507,6 @@ b.nmf .rf{flex:none}
 .sph .cap{position:absolute;left:0;right:0;bottom:0;padding:16px 6px 6px;background:linear-gradient(transparent,rgba(5,6,8,.8));color:#fff;font:500 10px/1.35 var(--mono);text-align:left}
 .brandrow{display:flex;align-items:center;gap:12px}
 .logo-img{box-shadow:0 8px 24px rgba(11,18,32,.18);object-fit:cover;user-select:none}
+.t .rf.gf,.rf.gf{background:#1FAA6B!important;color:#fff!important}
+.rbtn.spinning .ico{animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
