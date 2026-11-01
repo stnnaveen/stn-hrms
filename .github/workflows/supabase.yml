@@ -37,7 +37,7 @@ jobs:
       - name: Secret SUPABASE_DB_PASSWORD is set
         run: test -n "$SUPABASE_DB_PASSWORD"
       - uses: supabase/setup-cli@v1
-        with: { version: latest }
+        with: { version: 2.121.0 }   # pinned: "latest" hits GitHub rate limits
       - name: Access token works
         run: supabase projects list > /dev/null
       - name: Token can see this project

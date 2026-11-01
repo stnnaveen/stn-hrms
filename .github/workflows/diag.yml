@@ -20,7 +20,7 @@ jobs:
           ref=$(printf '%s' "$PROJECT_REF" | tr -d '[:space:]"' | sed -E 's#^https?://##; s#\.supabase\.co.*$##')
           echo "REF=$ref" >> "$GITHUB_ENV"; echo "SUPA_URL=https://$ref.supabase.co" >> "$GITHUB_ENV"
       - uses: supabase/setup-cli@v1
-        with: { version: latest }
+        with: { version: 2.121.0 }   # pinned: "latest" hits GitHub rate limits
       - name: Fetch key (masked)
         run: |
           keys=$(supabase projects api-keys --project-ref "$REF" -o json)
