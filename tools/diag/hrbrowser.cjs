@@ -11,13 +11,14 @@ const { chromium } = require('playwright');
   p.on('console', (m) => console.log('BR console', m.type(), m.text().slice(0, 200)));
   p.on('pageerror', (e) => console.log('BR pageerror', e.message.slice(0, 200)));
   p.on('requestfailed', (r) => console.log('BR failed', r.url().slice(0, 120), r.failure()?.errorText));
-  p.on('response', async (r) => { if (/functions\/v1\/check-in/.test(r.url())) { let body = ''; try { body = (await r.text()).slice(0, 160).replace(/https:[^"]+/g, '<url>'); } catch {} console.log('BR fn', r.status(), r.request().postData()?.slice(0, 80), body); } if (/storage\/v1\/object\/sign/.test(r.url())) console.log('BR img', r.status()); });
+  p.on('response', async (r) => { if (/functions\/v1\/check-in/.test(r.url())) { let body = ''; try { body = (await r.text()).slice(0, 160).replace(/https:[^"]+/g, '<url>'); } catch {} console.log('BR fn', new Date().toISOString().slice(11, 23), r.status(), r.request().postData()?.slice(0, 80), body); } if (/storage\/v1\/object\/sign/.test(r.url())) console.log('BR img', r.status()); });
   await p.goto('http://localhost:4173/'); await p.waitForTimeout(6000);
   await p.screenshot({ path: 'br1.png' });
   await p.getByRole('button', { name: /Staff/ }).last().click().catch((e) => console.log('BR no staff tab', e.message.slice(0, 80)));
   await p.waitForTimeout(3000);
   await p.getByText(WHO, { exact: true }).first().click().catch((e) => console.log('BR no person', e.message.slice(0, 80)));
-  await p.waitForTimeout(6000);
+  console.log('BR opened', new Date().toISOString().slice(11, 23));
+  for (let i = 0; i < 10; i++) { await p.waitForTimeout(2000); console.log('BR t', (i + 1) * 2, 's imgs', await p.locator('.ph img').count()); }
   await p.screenshot({ path: 'br2.png', fullPage: false });
   const tiles = await p.locator('.ph').evaluateAll((els) => els.map((e) => ({ img: !!e.querySelector('img'), src: e.querySelector('img')?.getAttribute('src')?.slice(0, 50) ?? null, ok: e.querySelector('img')?.naturalWidth ?? null, text: e.textContent.slice(0, 40) })));
   console.log('BR tiles', JSON.stringify(tiles));
