@@ -1,3 +1,4 @@
+import { DiwaliBanner, crackers, diwaliOn } from '../ui/Festive';
 import { useEffect, useState } from 'react';
 import { useApp } from '../App';
 import { api, type Notif } from '../lib/api';
@@ -15,6 +16,7 @@ const STATUS_CHIP: Record<string, string> = { approved: 'c-ok', pending: 'c-pend
 
 export function Home() {
   const { today, reload, go, setCamMode, setOdPrefill, setLeaveOd, toast } = useApp();
+  const festive = diwaliOn();
   const [fab, setFab] = useState(false);
   const [sheet, setSheet] = useState<null | 'early' | 'early1h' | 'out'>(null);
   const [notifs, setNotifs] = useState<Notif[]>([]);
@@ -64,6 +66,7 @@ export function Home() {
           <div className="banner"><span className="pulse" /><div className="t"><b>Time to check out</b><span>Office closed at 6:00 PM</span></div>
             <button className="sbtn" onClick={() => { setCamMode('out'); go('camera'); }}>Check out</button></div>
         )}
+        <DiwaliBanner name={first} />
         <div className="dark">
           <div className="top"><div><div className="hi">{greeting()}, {first}</div><div className="day">Today, {fmtShortDay()}</div></div>{topChip}</div>
           <div className="gcard">
@@ -126,8 +129,8 @@ export function Home() {
         {checkedOut
           ? <div className="ci done"><button className="orb" disabled aria-label="Done for today"><Icon n="check" /></button><span className="cap">Done for today</span></div>
           : checkedIn
-            ? <div className="ci"><button className="orb" onClick={startCheckout} aria-label="Check out"><Icon n="out" /></button><span className="cap">Check out</span></div>
-            : <div className="ci"><button className="orb" onClick={() => { setCamMode('in'); go('camera'); }} aria-label="Check in"><Icon n="scan" /></button><span className="cap">Check in</span></div>}
+            ? <div className={`ci ${festive ? 'dw' : ''}`}><button className="orb" onClick={(e) => { crackers(e.currentTarget); startCheckout(); }} aria-label="Check out"><Icon n="out" /></button><span className="cap">Check out</span></div>
+            : <div className={`ci ${festive ? 'dw' : ''}`}><button className="orb" onClick={(e) => { crackers(e.currentTarget); setCamMode('in'); go('camera'); }} aria-label="Check in"><Icon n="scan" /></button><span className="cap">Check in</span></div>}
       </div>
       <button className={`fab ${fab ? 'open' : ''}`} onClick={() => setFab(!fab)} aria-label={fab ? 'Close' : 'New request'} aria-expanded={fab}><Icon n="plus" /></button>
 

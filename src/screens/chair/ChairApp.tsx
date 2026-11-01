@@ -1,3 +1,4 @@
+import { DiwaliBanner } from '../../ui/Festive';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useApp } from '../../App';
 import { ApiError } from '../../lib/api';
@@ -230,6 +231,7 @@ function Home({ snap, view, hub, setHub, ods, open, setSheet, setAway, goApprova
         <button className={`rbtn ${reds.length ? 'red' : ''}`} onClick={() => open({ name: 'alerts' })} aria-label={reds.length ? `Dispute alerts, ${reds.length} red flags today` : 'Dispute alerts'}><Icon n="flag" />{reds.length > 0 && <i className="bdg">{reds.length}</i>}</button>
         <button className="rbtn" onClick={() => open({ name: 'notifs' })} aria-label="Notifications"><Icon n="bell" /></button></div></div>
       <div className="pillrow" style={{ marginTop: 0 }} role="group" aria-label="Hub">{['All', ...snap.hubs].map((h) => <button key={h} className={`pill ${hub === h ? 'on' : ''}`} onClick={() => setHub(h)}>{h === 'All' ? 'All hubs' : h}</button>)}</div>
+      <DiwaliBanner name="Chairman" />
       <div className="dark">
         <div className="top"><div><div className="hi">{greeting()}, Chairman</div><div className="day">{hub === 'All' ? 'All hubs' : `${hub} hub`}</div></div><span className="live"><i />Live</span></div>
         <div className="gcard gc4">
