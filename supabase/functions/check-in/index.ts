@@ -489,6 +489,7 @@ async function resolveVenue(db: any, text: string): Promise<{ lat: number; lng: 
     console.log(JSON.stringify({ resolve_venue: 'no_pin', name, hops }));
     return { error: isListLink(url) ? 'list_link' : 'no_pin' };
   }
+  name = name?.replace(/^[23456789CFGHJMPQRVWX]{4,8}[+ ][23456789CFGHJMPQRVWX]{2,3}[\s,]*/i, '').trim() || null;   // drop the Plus Code from the name
   return { lat: Number(c.lat.toFixed(6)), lng: Number(c.lng.toFixed(6)), name, place: await placeFor(db, c.lat, c.lng), url: start };
 }
 
