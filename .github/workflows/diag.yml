@@ -1,6 +1,9 @@
 # Diagnostics (run by hand): read-only checks against the live project.
 name: Diagnostics
-on: { workflow_dispatch: {} }
+on:
+  workflow_dispatch:
+    inputs:
+      link: { description: 'Map link to test', default: '' }
 jobs:
   diag:
     runs-on: ubuntu-latest
@@ -25,3 +28,7 @@ jobs:
         run: node tools/diag/venuelogs.mjs
       - name: Map links
         run: node tools/diag/maplinks.mjs
+      - name: One link
+        if: ${{ inputs.link != '' }}
+        env: { LINK: '${{ inputs.link }}' }
+        run: node tools/diag/linktest.mjs
