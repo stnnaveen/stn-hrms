@@ -30,6 +30,8 @@ jobs:
         run: node tools/diag/venuelogs.mjs
       - name: Selfies today
         run: node tools/diag/selfies.mjs
+      - name: Selfie links as HR
+        run: node tools/diag/selfieview.mjs
       - name: Pins near the server city
         run: node tools/diag/badpins.mjs
       - name: Map links
