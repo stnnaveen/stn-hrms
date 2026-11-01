@@ -2,7 +2,7 @@
 const { REF, SUPABASE_ACCESS_TOKEN } = process.env;
 const end = new Date(), start = new Date(Date.now() - 6 * 3600e3);
 const sql = "select timestamp, event_message from function_logs where event_message like '%resolve_venue%' order by timestamp desc limit 20";
-const u = `https://api.supabase.com/v1/projects/${REF}/analytics/endpoints/logs.all?sql=${encodeURIComponent(sql)}&iso_timestamp_start=${start.toISOString()}&iso_timestamp_end=${end.toISOString()}`;
+const u = `https://api.supabase.com/v1/projects/${REF}/analytics/endpoints/logs?sql=${encodeURIComponent(sql)}&iso_timestamp_start=${start.toISOString()}&iso_timestamp_end=${end.toISOString()}`;
 const r = await fetch(u, { headers: { Authorization: `Bearer ${SUPABASE_ACCESS_TOKEN}` } });
 const j = await r.json();
 console.log(r.status);
