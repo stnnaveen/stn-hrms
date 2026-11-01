@@ -78,10 +78,15 @@ export async function sendPunchTwoStep(p: QueuedPunch): Promise<PunchResult> {
   return invoke<PunchResult>({ action: 'complete', ...base, selfie_key: start.selfie_key, client_time: p.client_time, location: p.location, liveness: p.liveness });
 }
 
+/** Test logins that sign in with a fixed test code instead of an emailed one (no email is sent).
+ *  The code is set on the account by the Tech admin; remove the address here before the pilot. */
+export const CODE_LOGINS = new Set(['naveenflop+staff@gmail.com']);
+
 const real = {
   async session() { const { data } = await sb!.auth.getSession(); return data.session ? { email: data.session.user.email ?? '' } : null; },
   onAuth(cb: (signedIn: boolean) => void) { const { data } = sb!.auth.onAuthStateChange((_e, s) => cb(!!s)); return () => data.subscription.unsubscribe(); },
   async sendCode(email: string) {
+    if (CODE_LOGINS.has(email)) return;   // test login: fixed test code, nothing to send
     // First sign-in creates the account; the database refuses any email not on HR's staff roster.
     const { error } = await sb!.auth.signInWithOtp({ email, options: { shouldCreateUser: true, emailRedirectTo: location.origin } });
     if (error) {
@@ -92,7 +97,9 @@ const real = {
     }
   },
   async verifyCode(email: string, token: string) {
-    const { error } = await sb!.auth.verifyOtp({ email, token, type: 'email' });
+    const { error } = CODE_LOGINS.has(email)
+      ? await sb!.auth.signInWithPassword({ email, password: token })
+      : await sb!.auth.verifyOtp({ email, token, type: 'email' });
     if (error) throw new ApiError('bad_code');
   },
   async google() { await sb!.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: location.origin } }); },

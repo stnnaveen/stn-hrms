@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       link: { description: 'Map link to test', default: '' }
+      testcode: { description: 'Set test staff code (8 digits)', default: '' }
       resolve: { description: 'Links to send to the live server (space separated)', default: '' }
 jobs:
   diag:
@@ -44,3 +45,8 @@ jobs:
         if: ${{ inputs.resolve != '' }}
         env: { LINKS: '${{ inputs.resolve }}' }
         run: node tools/diag/resolve.mjs
+      - name: Test staff code
+        if: ${{ inputs.testcode != '' }}
+        run: |
+          echo "::add-mask::${{ inputs.testcode }}"
+          CODE='${{ inputs.testcode }}' node tools/diag/testcode.mjs

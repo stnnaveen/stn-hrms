@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useApp } from '../App';
-import { api, ApiError, errorText } from '../lib/api';
+import { api, ApiError, errorText, CODE_LOGINS } from '../lib/api';
 import { fmtDay, greeting, istMinutesNow } from '../lib/time';
 import { Icon, Logo } from '../ui/Icon';
 import { PermHelp } from '../ui/PermHelp';
@@ -58,6 +58,7 @@ export function Code() {
   const [err, setErr] = useState<string | null>(null);
   const [left, setLeft] = useState(30);
   const ref = useRef<HTMLInputElement>(null);
+  const testLogin = CODE_LOGINS.has(email.trim().toLowerCase());
   useEffect(() => { ref.current?.focus(); const t = setInterval(() => setLeft((l) => Math.max(0, l - 1)), 1000); return () => clearInterval(t); }, []);
   const verify = async (c = code) => {
     setBusy(true); setErr(null);
@@ -68,8 +69,8 @@ export function Code() {
   return (
     <div className="scr fade" style={{ paddingBottom: 30 }}>
       <button className="back" onClick={() => go('signin')}><Icon n="chevL" />Back</button>
-      <h1 className="h1">Check your mail</h1>
-      <p className="sub">Code sent to {email}</p>
+      <h1 className="h1">{testLogin ? 'Test login' : 'Check your mail'}</h1>
+      <p className="sub">{testLogin ? 'Enter the test code.' : `Code sent to ${email}`}</p>
       <div className="otpw" onClick={() => ref.current?.focus()}>
         <input ref={ref} inputMode="numeric" autoComplete="one-time-code" maxLength={OTP_LEN} value={code} aria-label={`${OTP_LEN}-digit code`}
           onChange={(e) => { const v = e.target.value.replace(/\D/g, '').slice(0, OTP_LEN); setCode(v); if (v.length === OTP_LEN) verify(v); }} />
@@ -77,7 +78,7 @@ export function Code() {
       </div>
       {err && <div className="err" role="alert" style={{ marginTop: -12, marginBottom: 12 }}>{err}</div>}
       <button className="btn dark" disabled={code.length !== OTP_LEN || busy} onClick={() => verify()}>{busy ? 'Checking' : 'Verify'}</button>
-      {left > 0
+      {testLogin ? null : left > 0
         ? <p className="to">Resend in 0:{String(left).padStart(2, '0')}</p>
         : <p className="to"><button style={{ color: 'var(--ph-ink)', fontWeight: 600 }} onClick={async () => { await api.sendCode(email); setLeft(30); toast('Code sent'); }}>Resend code</button></p>}
     </div>
