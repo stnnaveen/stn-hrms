@@ -16,3 +16,18 @@ for (const [k, ua] of Object.entries(UAS)) for (const clean of [false, true]) {
   }
   console.log(`## ${k} ${clean ? 'no g_st' : 'as pasted'}\n  ${hops.join('\n  ')}`);
 }
+// shared list links (!7m4...!2s<list>) carry no pin; try the list contents
+{
+  const r = await fetch(link, { redirect: 'follow', headers: { 'User-Agent': UAS.desktop } });
+  const m = decodeURIComponent(r.url).match(/!2s([A-Za-z0-9_\-+/=]{10,})/);
+  if (m) {
+    const raw = Buffer.from(m[1].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('latin1');
+    const id = raw.match(/[A-Za-z0-9_-]{20,}/)?.[0];
+    console.log(`## list id ${id}`);
+    for (const pb of [`!1m4!1s${id}!2e1!3m1!1e1!2e2!3e2!4i500!16b1`, `!1m4!1s${id}!2e2!3m1!1e1!2e2!3e2!4i500!16b1`]) {
+      const g = await fetch(`https://www.google.com/maps/preview/entitylist/getlist?authuser=0&hl=en&gl=in&pb=${encodeURIComponent(pb)}`, { headers: { 'User-Agent': UAS.desktop } });
+      const t = await g.text();
+      console.log(`## getlist ${g.status} ${t.length} bytes: ${t.replace(/\s+/g, ' ').slice(0, 900)}`);
+    }
+  }
+}
