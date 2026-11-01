@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       link: { description: 'Map link to test', default: '' }
+      resolve: { description: 'Links to send to the live server (space separated)', default: '' }
 jobs:
   diag:
     runs-on: ubuntu-latest
@@ -22,8 +23,9 @@ jobs:
         with: { version: latest }
       - name: Fetch key (masked)
         run: |
-          svc=$(supabase projects api-keys --project-ref "$REF" -o json | jq -r '.[] | select(.name=="service_role") | .api_key')
-          echo "::add-mask::$svc"; echo "SERVICE=$svc" >> "$GITHUB_ENV"
+          keys=$(supabase projects api-keys --project-ref "$REF" -o json)
+          svc=$(echo "$keys" | jq -r '.[] | select(.name=="service_role") | .api_key'); anon=$(echo "$keys" | jq -r '.[] | select(.name=="anon") | .api_key')
+          echo "::add-mask::$svc"; echo "::add-mask::$anon"; echo "SERVICE=$svc" >> "$GITHUB_ENV"; echo "ANON=$anon" >> "$GITHUB_ENV"
       - name: Map link failures (server log)
         run: node tools/diag/venuelogs.mjs
       - name: Map links
@@ -32,3 +34,7 @@ jobs:
         if: ${{ inputs.link != '' }}
         env: { LINK: '${{ inputs.link }}' }
         run: node tools/diag/linktest.mjs
+      - name: Live server answers
+        if: ${{ inputs.resolve != '' }}
+        env: { LINKS: '${{ inputs.resolve }}' }
+        run: node tools/diag/resolve.mjs
