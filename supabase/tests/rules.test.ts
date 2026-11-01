@@ -60,7 +60,7 @@ ok(e.earlyOut && e.band === null, '4:30 PM checkout is early out');
 
 
 // ---- OD venue map links
-import { firstUrl, isMapsHost, isMapsRedirect, coordsFrom, nameFrom, coordsFromHtml } from '../functions/_shared/maplink.ts';
+import { firstUrl, isMapsHost, isMapsRedirect, coordsFrom, nameFrom, coordsFromHtml, coordsFromText, plusCodeIn, decodePlusCode } from '../functions/_shared/maplink.ts';
 ok(firstUrl('TIDCO Office\nhttps://maps.app.goo.gl/AbC123xyz') === 'https://maps.app.goo.gl/AbC123xyz', 'finds the link in shared text');
 ok(isMapsHost('https://maps.app.goo.gl/x') && isMapsHost('https://www.google.com/maps/place/x') && isMapsHost('https://maps.apple.com/?ll=1,2') && isMapsHost('https://maps.apple/p/abc'), 'Google and Apple Maps links accepted');
 ok(!isMapsHost('https://evil.com/maps') && !isMapsHost('https://www.google.com/search?x=1') && !isMapsHost('Guindy, Chennai'), 'other links and typed places rejected');
@@ -72,6 +72,12 @@ ok(nameFrom('https://www.google.com/maps/place/Codissia+Trade+Fair+Complex/@11.0
 ok(nameFrom('https://maps.apple.com/?ll=13.0,80.2&q=TIDCO%20Office') === 'TIDCO Office', 'place name from Apple link');
 { const d = coordsFrom('https://maps.google.com/?geocode=FZzHxgAdTHDHBA%3D%3D;FUQWsgAd5FOoBClh-nBNAPGrOzEh5U_uzYnXig%3D%3D&daddr=StartupTN,+Salem+Hub+Office&saddr=13.0272280,80.1792760&dirflg=d');
   ok(d !== null && Math.abs(d.lat - 11.671108) < 1e-6 && Math.abs(d.lng - 78.140388) < 1e-6, 'directions link: destination read, not the starting point'); }
+ok(coordsFromHtml('<meta content="https://maps.google.com/maps/api/staticmap?center=19.08151%2C72.87835&amp;zoom=7&amp;size=900x900">') === null, 'zoomed-out page centre (the visitor’s city, e.g. our Mumbai server) is never used as the place');
+{ const pc = plusCodeIn('https://www.google.com/maps?q=244M+6JF+Skc+Enclave+Apartment,+5th+Cross+St,+Vishalakshi+Nagar,+Tharapakkam,+Thandalam,+Tamil+Nadu+600128&ftid=0x3a5261');
+  const d = pc && decodePlusCode(pc.code, { lat: 13.03, lng: 80.15 });
+  ok(pc?.code === '244M+6JF' && /Tharapakkam/.test(pc.area) && d !== null && Math.abs(d.lat - 13.005563) < 1e-5 && Math.abs(d.lng - 80.134062) < 1e-5, 'short Plus Code in a shared link decoded near the named area (Tharapakkam)'); }
+ok(decodePlusCode('7M52244M+6JF')?.lat === 13.005563, 'full Plus Code decoded');
+ok(coordsFromText('13.00623, 80.25241')?.lng === 80.25241 && Math.abs((coordsFromText(`13°00'22.4"N 80°15'08.7"E`)?.lat ?? 0) - 13.006222) < 1e-5 && coordsFromText('Guindy') === null, 'typed coordinates accepted (decimal and degrees)');
 ok(isMapsRedirect('https://www.google.co.in/maps/x') && isMapsRedirect('https://consent.google.com/ml') && isMapsRedirect('https://share.google/abc') && !isMapsRedirect('https://evil.com/google.com'), 'redirects through Google/Apple pages only');
 ok(nameFrom('https://maps.google.com/?daddr=StartupTN,+Salem+Hub') === 'StartupTN, Salem Hub', 'directions link: place name read');
 ok(coordsFromHtml('<meta content="https://maps.google.com/maps/api/staticmap?center=11.0301%2C77.0322&zoom=15">')?.lat === 11.0301, 'coordinates found in page');

@@ -544,7 +544,7 @@ function HubEdit({ h, onBack }: { h: Hub | null; onBack: () => void }) {
   const [link, setLink] = useState(h?.maps_url ?? '');   // the saved link stays visible
   const [touched, setTouched] = useState(false);          // only a newly pasted link is read again
   const [confirmed, setConfirmed] = useState(false);      // a pin from a link must be confirmed on the map
-  const [pin, setPin] = useState<{ lat: number; lng: number; place: string | null; src: 'link' | 'tap' | 'saved' } | null>(h?.pin_set_at ? { lat: h.lat, lng: h.lng, place: null, src: 'saved' } : null);
+  const [pin, setPin] = useState<{ lat: number; lng: number; place: string | null; src: 'link' | 'tap' | 'saved'; url?: string } | null>(h?.pin_set_at ? { lat: h.lat, lng: h.lng, place: null, src: 'saved' } : null);
   const [lstate, setLstate] = useState<'idle' | 'checking' | 'error'>('idle');
   const [lerr, setLerr] = useState('');
   const [r, setR] = useState(h?.radius_m ?? 300);
@@ -555,8 +555,8 @@ function HubEdit({ h, onBack }: { h: Hub | null; onBack: () => void }) {
     const t = link.trim(); if (!t) { setLstate('idle'); return; }
     setLstate('checking'); setLerr(''); setConfirmed(false);
     const k = setTimeout(async () => {
-      try { const v = await api.resolveVenue(t); setPin({ lat: v.lat, lng: v.lng, place: v.place, src: 'link' }); setLstate('idle'); }
-      catch (e) { setLstate('error'); const code = e instanceof ApiError ? e.code : ''; setLerr(code === 'not_maps_link' ? 'Paste a Google Maps or Apple Maps link, or tap the hub on the map.' : code === 'list_link' ? 'That’s a saved-list link. Open the office itself in Maps → Share → Copy link. Or tap the map.' : 'Couldn’t read this link. Tap the hub on the map instead.'); }
+      try { const v = await api.resolveVenue(t); setPin({ lat: v.lat, lng: v.lng, place: v.place, src: 'link', url: v.url }); setLstate('idle'); }
+      catch (e) { setLstate('error'); const code = e instanceof ApiError ? e.code : ''; setLerr(code === 'not_maps_link' ? 'Paste a Maps link or coordinates like 13.00623, 80.25241.' : code === 'list_link' ? 'That’s a saved-list link. Open the office itself in Maps → Share → Copy link. Or tap the map.' : 'Couldn’t read this link. Tap the hub on the map instead.'); }
     }, 450);
     return () => clearTimeout(k);
   }, [link, touched]);
@@ -567,7 +567,7 @@ function HubEdit({ h, onBack }: { h: Hub | null; onBack: () => void }) {
     if (!pin) { setErr('Paste the hub’s map link, or tap its spot on the map.'); return; }
     if (pin.src === 'link' && !confirmed) { setErr('Check the pin on the map, then tap Confirm location.'); return; }
     setBusy(true);
-    try { await hr.saveHub({ id: h?.id, name: name.trim(), lat: pin.lat, lng: pin.lng, radius_m: r, maps_url: (pin.src === 'link' ? link.trim() : (link.trim() || h?.maps_url)) || null }); toast('Hub saved'); onBack(); }
+    try { await hr.saveHub({ id: h?.id, name: name.trim(), lat: pin.lat, lng: pin.lng, radius_m: r, maps_url: (pin.src === 'link' ? (pin.url ?? link.trim()) : pin.src === 'tap' ? `https://www.google.com/maps?q=${pin.lat},${pin.lng}` : (link.trim() || h?.maps_url)) || null }); toast('Hub saved'); onBack(); }
     catch { setBusy(false); setErr('Could not save. Try again.'); }
   };
   return (
@@ -588,10 +588,10 @@ function HubEdit({ h, onBack }: { h: Hub | null; onBack: () => void }) {
       ) : <p className="to" style={{ textAlign: 'left', margin: '8px 0 0' }}>{pin ? `${confirmed && pin.src !== 'saved' ? '✓ ' : ''}${pin.place ?? 'Finding place…'} · ${pin.lat.toFixed(5)}, ${pin.lng.toFixed(5)}${pin.src === 'tap' ? ' · set by tap' : pin.src === 'link' ? ' · confirmed' : ''}` : 'Pin not set. Paste the link or tap the map.'}</p>}
       {h && !h.pin_set_at && !(pin && pin.src !== 'saved' && confirmed) && <div className="note" style={{ marginTop: 10 }}><Icon n="alert" size={16} />This hub still has a starter pin (city centre). Check-ins are measured from the wrong spot until you set it.</div>}
       <label className="lab" htmlFor="h-n">Name</label><input className="inp" id="h-n" value={name} onChange={(e) => setName(e.target.value)} placeholder="Hub name" />
-      <label className="lab" htmlFor="h-l">Map link</label><input className="inp" id="h-l" inputMode="url" autoCapitalize="none" value={link} onChange={(e) => { setLink(e.target.value); setTouched(true); setErr(null); }} placeholder="Google Maps or Apple Maps link" />
+      <label className="lab" htmlFor="h-l">Map link or coordinates</label><input className="inp" id="h-l" inputMode="url" autoCapitalize="none" value={link} onChange={(e) => { setLink(e.target.value); setTouched(true); setErr(null); }} placeholder="Maps link, or 13.00623, 80.25241" />
       {lstate === 'checking' && <div className="hintl">Reading the link…</div>}
       {lstate === 'error' && <div className="err">{lerr}</div>}
-      {lstate === 'idle' && !link && <div className="hintl">In Maps, open the office → Share → Copy link. Or tap the exact spot above.</div>}
+      {lstate === 'idle' && !link && <div className="hintl">Best: in Google Maps, press and hold on the office building, then copy the coordinates shown at the top and paste them here. A Share → Copy link from the place also works. Or tap the spot above.</div>}
       <label className="lab">Radius</label>
       <div className="seg" role="group" aria-label="Radius">{[100, 200, 300, 500, 800].map((x) => <button key={x} className={r === x ? 'on' : ''} onClick={() => setR(x)}>{x} m</button>)}</div>
       {err && <div className="err">{err}</div>}

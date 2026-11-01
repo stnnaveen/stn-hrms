@@ -28,6 +28,8 @@ jobs:
           echo "::add-mask::$svc"; echo "::add-mask::$anon"; echo "SERVICE=$svc" >> "$GITHUB_ENV"; echo "ANON=$anon" >> "$GITHUB_ENV"
       - name: Map link failures (server log)
         run: node tools/diag/venuelogs.mjs
+      - name: Pins near the server city
+        run: node tools/diag/badpins.mjs
       - name: Map links
         run: node tools/diag/maplinks.mjs
       - name: One link
