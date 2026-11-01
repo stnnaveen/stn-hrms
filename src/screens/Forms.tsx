@@ -1,10 +1,14 @@
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { useApp } from '../App';
 import { api, ApiError, errorText, type Venue } from '../lib/api';
 import { readClipboard } from '../device';
 import { Icon } from '../ui/Icon';
+import { placeLabel } from '../lib/geo';
+
+const MapView = lazy(() => import('../ui/MapView'));   // only downloaded once a venue is being picked
 
 const MAPS_RE = /^https?:\/\/(maps\.app\.goo\.gl|goo\.gl|(www\.|maps\.)?google\.[a-z.]+|maps\.apple\.com|maps\.apple)(\/|$|\?)/i;
+const LOOKS_LIKE_PLACE = /^\s*-?\d{1,2}\.\d{3,}\s*[,\s]\s*-?\d{1,3}\.\d{3,}\s*$|°|[23456789CFGHJMPQRVWX]{4,8}\+[23456789CFGHJMPQRVWX]{2,3}/i;   // coordinates or a Plus Code
 const todayISO = () => new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
 const istToUtc = (date: string, time: string) => new Date(`${date}T${time}:00+05:30`).toISOString();
 
@@ -35,15 +39,23 @@ export function ODForm() {
     const text = f.venue.trim();
     setVenue(null); setVErr('');
     if (!text) { setVState('idle'); return; }
-    if (!MAPS_RE.test(text.match(/https?:\/\/\S+/)?.[0] ?? '')) { setVState('error'); setVErr(errorText('not_maps_link')); return; }
+    const url = text.match(/https?:\/\/\S+/)?.[0];
+    if (url ? !MAPS_RE.test(url) : !LOOKS_LIKE_PLACE.test(text)) { setVState('error'); setVErr('Paste a Google Maps or Apple Maps link.'); return; }
     setVState('checking');
     const my = ++seq.current;
     const t = setTimeout(async () => {
       try { const v = await api.resolveVenue(text); if (my !== seq.current) return; setVenue(v); setVName(v.name ?? v.place?.split(',')[0] ?? ''); setVState('ok'); }
-      catch (e) { if (my !== seq.current) return; setVState('error'); setVErr(e instanceof ApiError && e.code !== 'network' ? errorText(e.code) : 'Couldn’t check the link. Try again.'); }
+      catch (e) { if (my !== seq.current) return; setVState('error'); setVErr(e instanceof ApiError && e.code === 'list_link' ? 'That’s a saved list. Open the place → Share → Copy link.' : e instanceof ApiError && e.code === 'not_maps_link' ? 'Paste a Google Maps or Apple Maps link.' : 'Couldn’t read this link. Tap the venue on the map below.'); }
     }, 450);
     return () => clearTimeout(t);
   }, [f.venue]);
+  // tap on the map: set or correct the venue pin (always possible, so a link that can't be read never blocks the request)
+  const tapVenue = (lat: number, lng: number) => {
+    const v: Venue = { lat: Number(lat.toFixed(6)), lng: Number(lng.toFixed(6)), name: venue?.name ?? null, place: null, url: `https://www.google.com/maps?q=${lat.toFixed(6)},${lng.toFixed(6)}` };
+    setVenue(v); setVState('ok'); setVErr('');
+    placeLabel(v.lat, v.lng).then((p) => setVenue((x) => (x && x.lat === v.lat && x.lng === v.lng ? { ...x, place: p } : x)));
+    if (!vName.trim()) setVName('');
+  };
   const set = (k: string, v: string) => setF((x) => ({ ...x, [k]: v }));
   const startsAt = f.shape === 'hours' ? istToUtc(f.date, f.from) : istToUtc(f.date, '10:00');
   const endsAt = f.shape === 'hours' ? istToUtc(f.date, f.until) : istToUtc(f.shape === 'days' ? f.to : f.date, '18:00');
@@ -79,9 +91,16 @@ export function ODForm() {
       {vState === 'idle' && <div className="hintl">In Maps, open the place → Share → Copy link.</div>}
       {vState === 'checking' && <div className="hintl"><span className="spin dark" style={{ width: 12, height: 12, verticalAlign: -1, marginRight: 6 }} />Finding the place…</div>}
       {vState === 'error' && <div className="err">{vErr}</div>}
+      {(venue || vState === 'error') && (
+        <div style={{ marginTop: 10 }}>
+          <Suspense fallback={<div className="mapv" style={{ height: 200 }} />}>
+            <MapView height={200} points={venue ? [{ lat: venue.lat, lng: venue.lng, color: '#2F62D9', label: venue.name ?? 'Venue' }] : []} onTap={tapVenue} />
+          </Suspense>
+          <div className="hintl">{!venue ? 'Tap the venue on the map.' : venue.approx ? 'Approximate spot. Tap the exact venue to fix it.' : 'Pin wrong? Tap the right spot.'}</div>
+        </div>)}
       {venue && <div className="venue"><span className="ri c-od"><Icon n="pin" /></span><span className="t"><b>{venue.name ?? 'Pinned place'}</b><span>{venue.place ?? `${venue.lat.toFixed(5)}, ${venue.lng.toFixed(5)}`}</span></span><a href={venue.url} target="_blank" rel="noreferrer">Open</a></div>}
       {venue && <><label className="lab" htmlFor="f-vname">Venue name</label><input className="inp" id="f-vname" value={vName} onChange={(e) => setVName(e.target.value)} placeholder="TIDCO office" />{errs.vname && <div className="err">Add the venue name.</div>}</>}
-      {errs.venue && !venue && vState !== 'error' && vState !== 'checking' && <div className="err">Paste the venue’s map link.</div>}
+      {errs.venue && !venue && vState !== 'checking' && <div className="err">Paste the venue’s map link, or tap it on the map.</div>}
       <label className="lab">Duration</label>
       <div className="seg" role="group" aria-label="Duration">
         {[['hours', 'Hours'], ['day', 'Full day'], ['days', 'Days']].map(([k, l]) => (

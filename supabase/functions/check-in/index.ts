@@ -440,7 +440,7 @@ function isListLink(u: string): boolean { let d = u; try { d = decodeURIComponen
 
 // OD venue / hub pin from a Google or Apple Maps link. Follows short-link redirects only through Google/Apple pages (no open fetches).
 // deno-lint-ignore no-explicit-any
-async function resolveVenue(db: any, text: string): Promise<{ lat: number; lng: number; name: string | null; place: string | null; url: string } | { error: string }> {
+async function resolveVenue(db: any, text: string): Promise<{ lat: number; lng: number; name: string | null; place: string | null; url: string; approx?: boolean } | { error: string }> {
   // typed coordinates ("13.00623, 80.25241" or 13°00'22.4"N 80°15'08.7"E) or a Plus Code ("244M+6JF Tharapakkam")
   if (!/https?:\/\//i.test(text)) {
     const typed = coordsFromText(text) ?? await fromPlusCode(text, db);
@@ -481,20 +481,20 @@ async function resolveVenue(db: any, text: string): Promise<{ lat: number; lng: 
       break;
     }
   } catch (e) { hops.push(`error ${String(e).slice(0, 80)}`); /* fall through to the name search */ }
+  // link has only a place name (Google "?q=Leelavathi Nagar, Tharapakkam, Chennai"): look the name up (Google → Photon → OpenStreetMap)
+  let approx = false;
   if (!c && name) {
-    try {
-      const r = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=in&q=${encodeURIComponent(name)}`,
-        { headers: { 'User-Agent': 'StartupTN-HR/1.0 (attendance app)', 'Accept-Language': 'en' }, signal: AbortSignal.timeout(5000) });
-      const j = await r.json();
-      if (j?.[0]) c = { lat: Number(j[0].lat), lng: Number(j[0].lon) };
-    } catch { /* no luck */ }
+    const parts = name.split(',').map((x) => x.trim()).filter(Boolean);
+    const tries = [...new Set([name, parts.slice(0, 3).join(', '), parts.slice(0, 2).join(', '), parts.slice(-3).join(', ')].filter(Boolean))];
+    const deadline = Date.now() + 9000;
+    for (const q of tries) { if (Date.now() > deadline) break; const g = await geocodeArea(q, deadline); if (g) { c = g; approx = true; break; } }
   }
   if (!c) {
     console.log(JSON.stringify({ resolve_venue: 'no_pin', name, hops }));
     return { error: isListLink(url) ? 'list_link' : 'no_pin' };
   }
   name = name?.replace(/^[23456789CFGHJMPQRVWX]{4,8}[+ ][23456789CFGHJMPQRVWX]{2,3}[\s,]*/i, '').trim() || null;   // drop the Plus Code from the name
-  return { lat: Number(c.lat.toFixed(6)), lng: Number(c.lng.toFixed(6)), name, place: await placeFor(db, c.lat, c.lng), url: start };
+  return { lat: Number(c.lat.toFixed(6)), lng: Number(c.lng.toFixed(6)), name, place: await placeFor(db, c.lat, c.lng), url: start, ...(approx ? { approx: true } : {}) };
 }
 
 // Reverse geocode, cached by coordinates rounded to 4 decimals (~11 m) (PRD LC-09)

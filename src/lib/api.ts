@@ -15,7 +15,7 @@ export interface Today {
   chairman_available?: { starts_at: string; ends_at: string; place: string | null; note: string | null }[];
   od_today?: { id: string; subject: string; venue_name: string; venue_place: string | null; venue_url: string | null; starts_at: string; ends_at: string; visited_at: string | null } | null;
 }
-export interface Venue { lat: number; lng: number; name: string | null; place: string | null; url: string }
+export interface Venue { lat: number; lng: number; name: string | null; place: string | null; url: string; approx?: boolean }
 export interface PunchResult {
   kind: 'in' | 'out' | 'visit'; server_time: string; band: 'ok' | 'warn' | 'bad' | null; early_out: boolean;
   place_name: string | null; lat: number; lng: number; queued?: boolean;
