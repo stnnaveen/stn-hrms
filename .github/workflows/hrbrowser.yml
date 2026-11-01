@@ -1,0 +1,40 @@
+# Diagnostics (run by hand): the HR app in a real browser on live data, signed in as the HR test login.
+name: HR app check
+on:
+  workflow_dispatch:
+    inputs:
+      who: { description: 'Staff name to open', default: 'Naveen Kumar S' }
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Clean project ref
+        run: |
+          ref=$(printf '%s' "$PROJECT_REF" | tr -d '[:space:]"' | sed -E 's#^https?://##; s#\.supabase\.co.*$##')
+          echo "REF=$ref" >> "$GITHUB_ENV"; echo "SUPA_URL=https://$ref.supabase.co" >> "$GITHUB_ENV"
+      - uses: supabase/setup-cli@v1
+        with: { version: 2.121.0 }
+      - name: Fetch keys (masked)
+        run: |
+          keys=$(supabase projects api-keys --project-ref "$REF" -o json)
+          svc=$(echo "$keys" | jq -r '.[] | select(.name=="service_role") | .api_key'); anon=$(echo "$keys" | jq -r '.[] | select(.name=="anon") | .api_key')
+          echo "::add-mask::$svc"; echo "::add-mask::$anon"; echo "SERVICE=$svc" >> "$GITHUB_ENV"; echo "ANON=$anon" >> "$GITHUB_ENV"
+      - name: Build app on live data
+        run: |
+          npm ci
+          VITE_SUPABASE_URL="$SUPA_URL" VITE_SUPABASE_ANON_KEY="$ANON" npx vite build
+          (npx vite preview --port 4173 &) ; sleep 4
+      - name: Open HR app
+        env: { WHO: '${{ inputs.who }}' }
+        run: |
+          npm i --no-save playwright@1.48.2 && npx playwright install --with-deps chromium >/dev/null
+          node tools/diag/hrbrowser.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: hr-screens, path: '*.png', if-no-files-found: ignore }
