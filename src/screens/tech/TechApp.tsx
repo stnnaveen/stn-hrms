@@ -765,7 +765,7 @@ function Selfies({ onBack }: { onBack: () => void }) {
   useEffect(() => { load(); }, []);
   useEffect(() => {
     if (!who) { setRows(null); return; }
-    tech.personSelfies(who.id).then(async (r) => { setRows(r); const u: Record<string, string | null> = {}; for (const x of r.slice(0, 60)) u[x.id] = await hrApi.selfieUrl(x.key); setUrls(u); }).catch(() => setRows([]));
+    tech.personSelfies(who.id).then(async (r) => { setRows(r); const list = r.slice(0, 60); const got = await Promise.all(list.map((x) => hrApi.selfieUrl(x.key))); setUrls(Object.fromEntries(list.map((x, i) => [x.id, got[i]]))); }).catch(() => setRows([]));
   }, [who]);
   const remove = async () => {
     if (!sel || !reason) return; setBusy(true);

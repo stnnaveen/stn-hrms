@@ -476,7 +476,7 @@ function PersonSheet({ s, onClose }: { s: Staff; onClose: () => void }) {
   const [d, setD] = useState<PersonDetail | null>(null);
   const [photos, setPhotos] = useState<Record<string, string | null>>({});
   useEffect(() => {
-    hr.personDetail(s.id).then(async (x) => { setD(x); const u: Record<string, string | null> = {}; for (const p of x.punches) u[p.kind] = await hr.selfieUrl(p.selfie_key); setPhotos(u); }).catch(() => setD({ punches: [], days: [], ods: [], leaves: [] }));
+    hr.personDetail(s.id).then((x) => { setD(x); x.punches.forEach((p) => { void hr.selfieUrl(p.selfie_key).then((u) => setPhotos((m) => ({ ...m, [p.kind]: u }))); }); }).catch(() => setD({ punches: [], days: [], ods: [], leaves: [] }));
   }, [s.id]);
   const [places, setPlaces] = useState<Record<string, string | null>>({});
   useEffect(() => { d?.punches.forEach((pu) => { if (!pu.place_name) placeLabel(pu.lat, pu.lng).then((n) => setPlaces((x) => ({ ...x, [pu.kind]: n }))); }); }, [d]);

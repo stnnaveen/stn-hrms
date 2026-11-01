@@ -120,18 +120,22 @@ Deno.serve(async (req) => {
   }
   // ---- HR / Chairman / Tech: short-lived links (5 min) to view selfies, wherever each file lives
   if (body.action === 'selfie_urls') {
-    const { data: me } = await db.from('profiles').select('role, active').eq('id', user.id).single();
-    if (!me?.active || !['hr', 'chairman', 'tech'].includes(me.role)) return json({ error: 'not_allowed' }, 403);
     const keys = [...new Set((body.keys ?? []).filter((k) => typeof k === 'string' && k.startsWith('selfies/')))].slice(0, 100);
-    const { data: rows } = keys.length ? await db.from('punches').select('selfie_key, selfie_store').in('selfie_key', keys) : { data: [] };
+    const [{ data: me }, { data: rows }] = await Promise.all([
+      db.from('profiles').select('role, active').eq('id', user.id).single(),
+      keys.length ? db.from('punches').select('selfie_key, selfie_store').in('selfie_key', keys) : Promise.resolve({ data: [] })
+    ]);
+    if (!me?.active || !['hr', 'chairman', 'tech'].includes(me.role)) return json({ error: 'not_allowed' }, 403);
     const store = new Map((rows ?? []).map((r: { selfie_key: string; selfie_store: string | null }) => [r.selfie_key, r.selfie_store ?? 'supabase']));
     const urls: Record<string, string | null> = {};
-    await Promise.all(keys.map(async (k) => {
-      try {
-        if (store.get(k) === 's3' && USE_S3) urls[k] = await getSignedUrl(s3, new GetObjectCommand({ Bucket: BUCKET, Key: k }), { expiresIn: 300 });
-        else { const { data } = await db.storage.from('selfies').createSignedUrl(k.slice('selfies/'.length), 300); urls[k] = data?.signedUrl ?? null; }
-      } catch { urls[k] = null; }
-    }));
+    const s3Keys = keys.filter((k) => store.get(k) === 's3' && USE_S3), sbKeys = keys.filter((k) => !s3Keys.includes(k));
+    await Promise.all([
+      // Supabase photos: one call signs them all
+      sbKeys.length ? db.storage.from('selfies').createSignedUrls(sbKeys.map((k) => k.slice('selfies/'.length)), 300).then(({ data }: { data: { path: string | null; signedUrl: string | null }[] | null }) => {
+        for (const k of sbKeys) urls[k] = data?.find((d) => d.path === k.slice('selfies/'.length))?.signedUrl ?? null;
+      }).catch(() => { for (const k of sbKeys) urls[k] = null; }) : null,
+      ...s3Keys.map(async (k) => { try { urls[k] = await getSignedUrl(s3, new GetObjectCommand({ Bucket: BUCKET, Key: k }), { expiresIn: 300 }); } catch { urls[k] = null; } })
+    ]);
     return json({ ok: true, urls });
   }
 

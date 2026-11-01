@@ -135,7 +135,13 @@ async function cleanup() {
     log(`deleted ${gone}/${ids.length} test accounts`);
     if (false) for (const id of ids) await fetch(`${SUPA_URL}/auth/v1/admin/users/${id}`, { method: 'DELETE', headers: svc }).catch(() => undefined);
   }
-  try { await rest(`/rest/v1/staff_roster?email=in.(${Array.from({ length: n }, (_, k) => `"${email(k + 1)}"`).join(',')})`, { method: 'DELETE' }); } catch (e) { log('cleanup roster', String(e).slice(0, 160)); }
+  // '+' must be encoded (%2B) or the filter reads it as a space and matches nothing
+  try {
+    const gone = await rest(`/rest/v1/staff_roster?email=like.${encodeURIComponent('naveenflop+lt%')}`, { method: 'DELETE', headers: { Prefer: 'return=representation' } });
+    log(`removed ${gone?.length ?? 0} roster rows`);
+    const left = await rest(`/rest/v1/staff_roster?select=email&email=like.${encodeURIComponent('naveenflop+lt%')}`);
+    if (left.length) throw new Error(`${left.length} roster rows still there`);
+  } catch (e) { log('cleanup roster FAILED', String(e).slice(0, 160)); process.exitCode = 1; }
   if (savedLimits?.rate_limit_verify != null) {
     const r = await mgmt('/config/auth', { method: 'PATCH', body: JSON.stringify(savedLimits) });
     log('auth verify limit restored', r.ok ? savedLimits.rate_limit_verify : `FAILED ${r.status}`);

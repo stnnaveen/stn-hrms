@@ -230,9 +230,8 @@ function PersonView({ p: p0, onBack, open }: { p: Person; onBack: () => void; op
     if (p.invited) return;
     hr.personDetail(p.id).then(async (x) => {
       setD(x);
-      const urls: Record<string, string | null> = {};
-      for (const pu of x.punches) urls[pu.kind] = await hr.selfieUrl(pu.selfie_key);
-      setPhotos(urls);
+      // all photos asked for together: they go to the server as one request
+      x.punches.forEach((pu) => { void hr.selfieUrl(pu.selfie_key).then((u) => setPhotos((m) => ({ ...m, [pu.kind]: u }))); });
     }).catch(() => setD({ punches: [], days: [], ods: [], leaves: [] }));
     hr.pins(p.id).then(setPins).catch(() => setPins([]));
   }, [p.id, p.invited]);
