@@ -385,29 +385,50 @@ async function removeSelfies(db: any, keys: string[]): Promise<number> {
   return n;
 }
 
-// Plus Code in a link or text. A short code ("244M+6JF") is completed from the area written after it.
-async function fromPlusCode(text: string): Promise<{ lat: number; lng: number } | null> {
+// Plus Code in a link or text. A short code ("244M+6JF") is completed from a reference point within ~50 km:
+// the area written after it (Google → Photon → OpenStreetMap), else the nearest hub. Kept under ~8 s in total.
+// deno-lint-ignore no-explicit-any
+async function fromPlusCode(text: string, db: any): Promise<{ lat: number; lng: number } | null> {
   const p = plusCodeIn(text);
   if (!p) return null;
   if (p.full) return decodePlusCode(p.code);
+  const deadline = Date.now() + 8000;
   const parts = p.area.split(',').map((x) => x.trim()).filter(Boolean);
-  const tries: string[] = [];
-  for (let i = 0; i < parts.length && tries.length < 4; i++) tries.push(parts.slice(i).join(', '));
   const pin = p.area.match(/\b\d{6}\b/)?.[0];
+  const tries = [...new Set([parts.slice(-3).join(', '), pin ? `${pin}, India` : '', parts.slice(-2).join(', ')].filter(Boolean))];
   for (const q of tries) {
-    const ref = await geocodeArea(`q=${encodeURIComponent(q)}`);
+    if (Date.now() > deadline) break;
+    const ref = await geocodeArea(q, deadline);
     if (ref) return decodePlusCode(p.code, ref);
   }
-  if (pin) { const ref = await geocodeArea(`postalcode=${pin}`); if (ref) return decodePlusCode(p.code, ref); }
-  return null;
+  // nearest hub: decode against each hub and keep the answer closest to its hub
+  const { data: hubs } = await db.from('hubs').select('lat, lng');
+  let best: { lat: number; lng: number } | null = null, bestD = Infinity;
+  for (const h of hubs ?? []) {
+    const c = decodePlusCode(p.code, h); if (!c) continue;
+    const d = Math.hypot(c.lat - h.lat, (c.lng - h.lng) * Math.cos((h.lat * Math.PI) / 180));
+    if (d < bestD) { bestD = d; best = c; }
+  }
+  return bestD < 0.5 ? best : null;
 }
-async function geocodeArea(query: string): Promise<{ lat: number; lng: number } | null> {
+async function geocodeArea(q: string, deadline: number): Promise<{ lat: number; lng: number } | null> {
+  const left = () => Math.max(500, Math.min(3000, deadline - Date.now()));
+  const gkey = env('GOOGLE_GEOCODING_KEY');
+  if (gkey) {
+    try {
+      const j = await (await fetch(`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(q)}&region=in&key=${gkey}`, { signal: AbortSignal.timeout(left()) })).json();
+      const l = j?.results?.[0]?.geometry?.location; if (l) return { lat: l.lat, lng: l.lng };
+    } catch { /* next */ }
+  }
+  try {   // Photon (OpenStreetMap data, no key), biased to Tamil Nadu
+    const j = await (await fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=1&lat=11.1&lon=78.6`, { headers: { 'User-Agent': 'StartupTN-HR/1.0 (attendance app)' }, signal: AbortSignal.timeout(left()) })).json();
+    const g = j?.features?.[0]?.geometry?.coordinates; if (g) return { lat: g[1], lng: g[0] };
+  } catch { /* next */ }
   try {
-    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=in&${query}`,
-      { headers: { 'User-Agent': 'StartupTN-HR/1.0 (attendance app)', 'Accept-Language': 'en' }, signal: AbortSignal.timeout(4000) });
-    const j = await r.json();
-    return j?.[0] ? { lat: Number(j[0].lat), lng: Number(j[0].lon) } : null;
-  } catch { return null; }
+    const j = await (await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=in&q=${encodeURIComponent(q)}`, { headers: { 'User-Agent': 'StartupTN-HR/1.0 (attendance app)', 'Accept-Language': 'en' }, signal: AbortSignal.timeout(left()) })).json();
+    if (j?.[0]) return { lat: Number(j[0].lat), lng: Number(j[0].lon) };
+  } catch { /* none */ }
+  return null;
 }
 
 // Google Maps "share list" links ("/maps/@/data=…!7m…") point at a saved-places list, not one place
@@ -418,14 +439,14 @@ function isListLink(u: string): boolean { let d = u; try { d = decodeURIComponen
 async function resolveVenue(db: any, text: string): Promise<{ lat: number; lng: number; name: string | null; place: string | null; url: string } | { error: string }> {
   // typed coordinates ("13.00623, 80.25241" or 13°00'22.4"N 80°15'08.7"E) or a Plus Code ("244M+6JF Tharapakkam")
   if (!/https?:\/\//i.test(text)) {
-    const typed = coordsFromText(text) ?? await fromPlusCode(text);
+    const typed = coordsFromText(text) ?? await fromPlusCode(text, db);
     if (typed) return { lat: typed.lat, lng: typed.lng, name: null, place: await placeFor(db, typed.lat, typed.lng), url: `https://www.google.com/maps?q=${typed.lat},${typed.lng}` };
   }
   const start = firstUrl(text.trim());
   if (!start || !isMapsHost(start)) { console.log(JSON.stringify({ resolve_venue: 'not_maps_link', text: text.slice(0, 200) })); return { error: 'not_maps_link' }; }
   // desktop browser: a phone browser gets Google's "Open in app?" page instead of the map
   const UA = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36', 'Accept-Language': 'en' };
-  let url = start, name = nameFrom(url), c = coordsFrom(url) ?? await fromPlusCode(text);
+  let url = start, name = nameFrom(url), c = coordsFrom(url) ?? await fromPlusCode(text, db);
   try { const x = new URL(url); x.searchParams.delete('g_st'); url = x.toString(); } catch { /* keep */ }   // iPhone share tag
   const hops: string[] = [start.slice(0, 160)];
   try {
@@ -436,7 +457,7 @@ async function resolveVenue(db: any, text: string): Promise<{ lat: number; lng: 
         const next = new URL(loc, url).toString();
         hops.push(next.slice(0, 160));
         // a pasted Google/Apple link may pass through other Google/Apple pages; read what we can from each, never follow elsewhere
-        name = nameFrom(next) ?? name; c = coordsFrom(next) ?? await fromPlusCode(next);
+        name = nameFrom(next) ?? name; c = coordsFrom(next) ?? await fromPlusCode(next, db);
         if (!isMapsRedirect(next)) break;
         if (/consent\.google\.com/.test(next)) { const cont = new URL(next).searchParams.get('continue'); if (cont && isMapsRedirect(cont)) { url = cont; name = nameFrom(url) ?? name; c = coordsFrom(url); } else break; }
         else if (/\/sorry\//.test(next)) { const cont = new URL(next).searchParams.get('continue'); if (cont) { name = nameFrom(cont) ?? name; c = coordsFrom(cont); } break; }
