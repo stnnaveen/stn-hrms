@@ -18,7 +18,7 @@ const targets = {
   'App site (opens the app)': site ? () => fetch(site, { cache: 'no-store' }).then((r) => r.ok) : null,
   'Sign-in service': () => fetch(`${SUPA_URL}/auth/v1/health`, { headers: { apikey: ANON } }).then((r) => r.ok),
   'Database (staff home data)': () => fetch(`${SUPA_URL}/rest/v1/rpc/my_today`, { method: 'POST', headers: user, body: '{}' }).then((r) => r.ok),
-  'Check-in server (warm-up)': () => fetch(`${SUPA_URL}/functions/v1/check-in`, { method: 'POST', headers: { apikey: ANON, 'Content-Type': 'application/json' }, body: '{"action":"ping"}' }).then((r) => r.ok),
+  'Check-in server (warm-up)': () => fetch(`${SUPA_URL}/functions/v1/check-in`, { method: 'POST', headers: { apikey: ANON, Authorization: `Bearer ${ANON}`, 'Content-Type': 'application/json' }, body: '{"action":"ping"}' }).then((r) => r.ok),
   'Photo storage': () => fetch(`${SUPA_URL}/storage/v1/bucket/selfies`, { headers: svc }).then((r) => r.ok)
 };
 let down = 0, md = `## StartupTN HR · uptime and speed\n\nApp: ${site || 'address not found (set repo variable APP_URL)'}\n\n| Service | Up | Typical | 95% within | Slowest |\n|---|---|---|---|---|\n`;
