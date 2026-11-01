@@ -29,6 +29,9 @@ jobs:
           echo "::add-mask::$svc"; echo "::add-mask::$anon"; echo "SERVICE=$svc" >> "$GITHUB_ENV"; echo "ANON=$anon" >> "$GITHUB_ENV"
       - name: Map link failures (server log)
         run: node tools/diag/venuelogs.mjs
+      - name: Security check (live)
+        run: node tools/diag/security.mjs
+        continue-on-error: true
       - name: Selfies today
         run: node tools/diag/selfies.mjs
       - name: Selfie links as HR
