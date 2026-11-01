@@ -22,8 +22,8 @@ for (const [f, b] of Object.entries(RPCS)) { const [st] = await rpc(anonH, f, b)
 const g = await (await fetch(`${SUPA_URL}/auth/v1/admin/generate_link`, { method: 'POST', headers: svc, body: JSON.stringify({ type: 'magiclink', email: 'naveenflop+staff@gmail.com' }) })).json();
 const s = await (await fetch(`${SUPA_URL}/auth/v1/verify`, { method: 'POST', headers: { apikey: ANON, 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'magiclink', token_hash: g.hashed_token ?? g.properties?.hashed_token }) })).json();
 const me = s.user?.id, st = { apikey: ANON, Authorization: `Bearer ${s.access_token}`, 'Content-Type': 'application/json' };
-for (const t of ['audit_log', 'staff_roster', 'devices', 'settings', 'geo_cache', 'custom_roles']) { const [c, j] = await sel(st, t); out(c >= 400 || (Array.isArray(j) && j.length === 0), `staff: ${t} hidden (${c}, ${Array.isArray(j) ? j.length : '-'})`); }
-for (const t of ['punches', 'attendance_days', 'flags', 'od_requests', 'leave_requests', 'notifications', 'profiles']) {
+for (const t of ['audit_log', 'staff_roster', 'settings', 'geo_cache', 'custom_roles']) { const [c, j] = await sel(st, t); out(c >= 400 || (Array.isArray(j) && j.length === 0), `staff: ${t} hidden (${c}, ${Array.isArray(j) ? j.length : '-'})`); }
+for (const t of ['devices', 'punches', 'attendance_days', 'flags', 'od_requests', 'leave_requests', 'notifications', 'profiles']) {
   const [c, j] = await sel(st, `${t}`); const others = Array.isArray(j) ? j.filter((x) => (x.user_id ?? x.id) !== me).length : 0;
   out(c >= 400 || others === 0, `staff: ${t} shows only own rows (${c}, others ${others})`);
 }
