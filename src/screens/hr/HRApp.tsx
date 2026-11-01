@@ -1,4 +1,4 @@
-import { DiwaliBanner } from '../../ui/Festive';
+import { DiwaliBanner, SkyCrackers } from '../../ui/Festive';
 import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import { useApp } from '../../App';
 import { api, errorText, ApiError } from '../../lib/api';
@@ -102,7 +102,7 @@ function Home({ c, open, setTab }: { c: HrToday | null; open: (s: Sub) => void; 
         <button className="rbtn" onClick={() => open({ name: 'hubs' })} aria-label="Hubs"><Icon n="building" /></button>
         <button className="rbtn" onClick={() => open({ name: 'notifs' })} aria-label="Notifications"><Icon n="bell" /></button></div></div>
       <DiwaliBanner name="HR team" />
-      <div className="dark">
+      <div className="dark"><SkyCrackers />
         <div className="top"><div><div className="hi">{greeting()}, HR team</div><div className="day">Today, {fmtShortDay()}</div></div><span className="chip c-mute"><i />{c.staff} staff</span></div>
         <button className="gcard" onClick={() => open({ name: 'today' })} aria-label="Open today's attendance">
           <span><small>Checked in</small><b>{c.checked_in}</b><em>{c.late} late</em></span>

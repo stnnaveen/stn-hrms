@@ -1,4 +1,4 @@
-import { DiwaliBanner, crackers, diwaliOn } from '../ui/Festive';
+import { DiwaliBanner, SkyCrackers, crackers, diwaliOn } from '../ui/Festive';
 import { useEffect, useState } from 'react';
 import { useApp } from '../App';
 import { api, type Notif } from '../lib/api';
@@ -67,7 +67,7 @@ export function Home() {
             <button className="sbtn" onClick={() => { setCamMode('out'); go('camera'); }}>Check out</button></div>
         )}
         <DiwaliBanner name={first} />
-        <div className="dark">
+        <div className="dark"><SkyCrackers />
           <div className="top"><div><div className="hi">{greeting()}, {first}</div><div className="day">Today, {fmtShortDay()}</div></div>{topChip}</div>
           <div className="gcard">
             <div><small>Check in</small><b>{inT}</b><em>{checkedIn ? inAp : 'By 10:00'}</em></div>

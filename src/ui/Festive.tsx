@@ -1,4 +1,7 @@
-// Diwali week (1–8 Nov 2026, IST): a slim greeting banner and a small cracker burst on the check-in button.
+import { useEffect, useState } from 'react';
+
+// Diwali week (1–8 Nov 2026, IST): a slim greeting banner, sky crackers in the home card for the first 3 seconds,
+// and a small cracker burst on the check-in button.
 // Turns itself off after 8 Nov. Light by design: inline SVG, transform/opacity animations only, nothing loaded,
 // no layout shift, never blocks a tap, and still for anyone who prefers reduced motion.
 
@@ -12,7 +15,7 @@ const still = () => { try { return matchMedia('(prefers-reduced-motion: reduce)'
 export function DiwaliBanner({ name }: { name: string }) {
   if (!diwaliOn()) return null;
   return (
-    <div className="dwl" role="note" aria-label={`Happy Diwali, ${name}`}>
+    <div className="dwl" role="note" aria-label={`Happy Diwali Week, ${name}`}>
       <svg className="dwl-art" viewBox="0 0 120 64" aria-hidden="true">
         <defs>
           <radialGradient id="dwlFlame" cx="50%" cy="70%" r="60%"><stop offset="0" stopColor="#FFF6C8" /><stop offset=".55" stopColor="#FFC24A" /><stop offset="1" stopColor="#FF7A1A" stopOpacity="0" /></radialGradient>
@@ -34,7 +37,30 @@ export function DiwaliBanner({ name }: { name: string }) {
         {/* slow sparkles */}
         <g fill="#FFE7A8">{[[18, 14, 0], [104, 10, 1.2], [96, 40, 2.1], [12, 44, 0.7], [84, 22, 1.7]].map(([x, y, d]) => <circle key={`${x}`} className="dwl-spark" cx={x} cy={y} r="1" style={{ animationDelay: `${d}s` }} />)}</g>
       </svg>
-      <div className="dwl-t"><b>Happy Diwali, {name}</b><span>Wishing you light and joy · StartupTN</span></div>
+      <div className="dwl-t"><b>Happy Diwali Week, {name}!</b><span>Wishing you light and joy – StartupTN</span></div>
+    </div>
+  );
+}
+
+/** Sky crackers: three thin rockets rise and burst behind the home card's greeting, once per app open, gone after 3 s. */
+let skyPlayed = false;
+const SKY = [
+  { x: 30, y: 30, d: 0, c: ['#FFD25E', '#FFF3C4'] },
+  { x: 64, y: 22, d: 0.75, c: ['#FF5C8A', '#FFB4C8'] },
+  { x: 80, y: 66, d: 1.5, c: ['#B57BFF', '#FFE7A8'] }
+];
+export function SkyCrackers() {
+  const [show, setShow] = useState(() => { if (skyPlayed || !diwaliOn() || still()) return false; skyPlayed = true; return true; });
+  useEffect(() => { if (!show) return; const t = setTimeout(() => setShow(false), 3200); return () => clearTimeout(t); }, [show]);
+  if (!show) return null;
+  return (
+    <div className="sky" aria-hidden="true">
+      {SKY.map((b, k) => (
+        <div key={k} className="sky-b" style={{ left: `${b.x}%`, top: `${b.y}px`, ['--d' as string]: `${b.d}s`, ['--h' as string]: `${104 - b.y}px` }}>
+          <span className="sky-rk" />
+          {Array.from({ length: 12 }, (_, i) => { const a = (i / 12) * Math.PI * 2, r = 18 + (i % 3) * 5;
+            return <i key={i} style={{ ['--x' as string]: `${(Math.cos(a) * r).toFixed(1)}px`, ['--y' as string]: `${(Math.sin(a) * r).toFixed(1)}px`, background: b.c[i % 2] }} />; })}
+        </div>))}
     </div>
   );
 }
