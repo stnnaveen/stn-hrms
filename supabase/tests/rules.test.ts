@@ -60,7 +60,7 @@ ok(e.earlyOut && e.band === null, '4:30 PM checkout is early out');
 
 
 // ---- OD venue map links
-import { firstUrl, isMapsHost, coordsFrom, nameFrom, coordsFromHtml } from '../functions/_shared/maplink.ts';
+import { firstUrl, isMapsHost, isMapsRedirect, coordsFrom, nameFrom, coordsFromHtml } from '../functions/_shared/maplink.ts';
 ok(firstUrl('TIDCO Office\nhttps://maps.app.goo.gl/AbC123xyz') === 'https://maps.app.goo.gl/AbC123xyz', 'finds the link in shared text');
 ok(isMapsHost('https://maps.app.goo.gl/x') && isMapsHost('https://www.google.com/maps/place/x') && isMapsHost('https://maps.apple.com/?ll=1,2') && isMapsHost('https://maps.apple/p/abc'), 'Google and Apple Maps links accepted');
 ok(!isMapsHost('https://evil.com/maps') && !isMapsHost('https://www.google.com/search?x=1') && !isMapsHost('Guindy, Chennai'), 'other links and typed places rejected');
@@ -70,6 +70,10 @@ const a = coordsFrom('https://maps.apple.com/?address=Guindy,%20Chennai&ll=13.00
 ok(!!a && a.lat === 13.0067 && a.lng === 80.2206, 'Apple Maps ll= read');
 ok(nameFrom('https://www.google.com/maps/place/Codissia+Trade+Fair+Complex/@11.03,77.03,17z') === 'Codissia Trade Fair Complex', 'place name from Google link');
 ok(nameFrom('https://maps.apple.com/?ll=13.0,80.2&q=TIDCO%20Office') === 'TIDCO Office', 'place name from Apple link');
+{ const d = coordsFrom('https://maps.google.com/?geocode=FZzHxgAdTHDHBA%3D%3D;FUQWsgAd5FOoBClh-nBNAPGrOzEh5U_uzYnXig%3D%3D&daddr=StartupTN,+Salem+Hub+Office&saddr=13.0272280,80.1792760&dirflg=d');
+  ok(d !== null && Math.abs(d.lat - 11.671108) < 1e-6 && Math.abs(d.lng - 78.140388) < 1e-6, 'directions link: destination read, not the starting point'); }
+ok(isMapsRedirect('https://www.google.co.in/maps/x') && isMapsRedirect('https://consent.google.com/ml') && isMapsRedirect('https://share.google/abc') && !isMapsRedirect('https://evil.com/google.com'), 'redirects through Google/Apple pages only');
+ok(nameFrom('https://maps.google.com/?daddr=StartupTN,+Salem+Hub') === 'StartupTN, Salem Hub', 'directions link: place name read');
 ok(coordsFromHtml('<meta content="https://maps.google.com/maps/api/staticmap?center=11.0301%2C77.0322&zoom=15">')?.lat === 11.0301, 'coordinates found in page');
 ok(evaluate({ ...base, kind: 'visit' as const, serverTime: ist(14, 5), clientTime: ist(14, 5) }).flags.length === 0, 'venue check-in: no late or early-out flags');
 

@@ -42,7 +42,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 .sec{font-size:15px;font-weight:600;color:var(--ph-ink2);margin:26px 0 12px;display:flex;justify-content:space-between;align-items:baseline}
 .sec small{font-size:13px;font-weight:500;color:var(--ok)}
 .card{background:var(--ph-card);border-radius:20px;padding:16px;box-shadow:0 4px 18px rgba(13,19,33,.05)}
-.fade{animation:fade .35s ease both}
+.fade{animation:fade .35s ease backwards}   /* backwards: no transform left behind, so sheets inside open over the screen */
 @keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 
 /* splash */
@@ -520,3 +520,13 @@ b.nmf .rf{flex:none}
 .mlegend{display:flex;flex-wrap:wrap;gap:12px;font-size:12.5px;color:var(--ph-ink3);margin-top:8px}
 .mlegend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;vertical-align:-1px}
 .leaflet-tooltip.mlabel.dist.ok{background:#1FAA6B}.leaflet-tooltip.mlabel.dist.na{background:#2F62D9}
+
+/* Sheets always open over the visible screen, wherever the button was scrolled to:
+   .screen is the frame for fixed layers, so scrim and sheet stay inside the app column. */
+.screen{transform:translateZ(0)}
+.scrim{position:fixed}
+.sheet{position:fixed;max-height:calc(100% - env(safe-area-inset-top,0px) - 24px);overflow-y:auto;overscroll-behavior:contain;padding-bottom:calc(env(safe-area-inset-bottom,0px) + 24px)}
+/* iPhone date/time fields keep their own width and spill out of two-column rows */
+.two>div{min-width:0}
+.inp[type=date],.inp[type=time]{-webkit-appearance:none;appearance:none;min-width:0;width:100%;display:block;min-height:52px;text-align:left}
+.inp[type=date]::-webkit-date-and-time-value,.inp[type=time]::-webkit-date-and-time-value{text-align:left}

@@ -295,8 +295,8 @@ function Availability() {
     <div className="card" style={{ padding: '4px 16px' }}>
       {(slots ?? []).map((x) => (
         <div key={x.id} className="row" style={{ padding: '10px 0' }}><span className="ri c-ok"><Icon n="users" /></span>
-          <span className="t"><b>{fmtShortDay(new Date(x.starts_at))} · {fmtTime(x.starts_at)} – {fmtTime(x.ends_at)}</b><span>{x.place ?? 'Office'}{x.note ? ` · ${x.note}` : ''}</span></span>
-          <button className="chip c-pend" onClick={async () => { await chair.removeSlot(x.id); load(); toast('Removed'); }}>Remove</button></div>))}
+          <span className="t"><b>{fmtTime(x.starts_at)} – {fmtTime(x.ends_at)}</b><span>{fmtShortDay(new Date(x.starts_at))} · {x.place ?? 'Office'}{x.note ? ` · ${x.note}` : ''}</span></span>
+          <button className="chip c-pend" onClick={async () => { try { await chair.removeSlot(x.id); toast('Removed'); } catch { toast('Could not remove'); } load(); }}>Remove</button></div>))}
       <button className="row" style={{ width: '100%', padding: '12px 0', textAlign: 'left' }} onClick={() => setOpen(true)}>
         <span className="ri c-od"><Icon n="plus" /></span><span className="t"><b>Share when you’re free</b><span>Optional · staff see it on their home</span></span></button>
     </div>

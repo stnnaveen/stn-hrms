@@ -11,7 +11,7 @@ import { S3Client, PutObjectCommand, DeleteObjectsCommand, GetObjectCommand, Del
 import { getSignedUrl } from 'npm:@aws-sdk/s3-request-presigner@3.654.0';
 import { RekognitionClient, CompareFacesCommand } from 'npm:@aws-sdk/client-rekognition@3.654.0';
 import { evaluate, istMinutes, radiusCheck, type Settings, type PrevPunch } from '../_shared/rules.ts';
-import { firstUrl, isMapsHost, coordsFrom, coordsFromHtml, nameFrom } from '../_shared/maplink.ts';
+import { firstUrl, isMapsHost, isMapsRedirect, coordsFrom, coordsFromHtml, nameFrom } from '../_shared/maplink.ts';
 
 const env = (k: string) => Deno.env.get(k) ?? '';
 const REGION = env('AWS_REGION') || 'ap-south-1';
@@ -389,26 +389,31 @@ async function removeSelfies(db: any, keys: string[]): Promise<number> {
 // deno-lint-ignore no-explicit-any
 async function resolveVenue(db: any, text: string): Promise<{ lat: number; lng: number; name: string | null; place: string | null; url: string } | { error: string }> {
   const start = firstUrl(text.trim());
-  if (!start || !isMapsHost(start)) return { error: 'not_maps_link' };
+  if (!start || !isMapsHost(start)) { console.log(JSON.stringify({ resolve_venue: 'not_maps_link', text: text.slice(0, 200) })); return { error: 'not_maps_link' }; }
   const UA = { 'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148', 'Accept-Language': 'en' };
   let url = start, name = nameFrom(url), c = coordsFrom(url);
+  const hops: string[] = [start.slice(0, 160)];
   try {
     for (let hop = 0; !c && hop < 6; hop++) {
       const r = await fetch(url, { redirect: 'manual', headers: UA, signal: AbortSignal.timeout(5000) });
       const loc = r.headers.get('location');
       if (r.status >= 300 && r.status < 400 && loc) {
         const next = new URL(loc, url).toString();
-        if (!isMapsHost(next) && !/^https:\/\/(consent\.google\.com|www\.google\.com\/sorry)/.test(next)) return { error: 'not_maps_link' };
-        if (/consent\.google\.com/.test(next)) { const cont = new URL(next).searchParams.get('continue'); if (cont && isMapsHost(cont)) { url = cont; } else break; }
+        hops.push(next.slice(0, 160));
+        // a pasted Google/Apple link may pass through other Google/Apple pages; read what we can from each, never follow elsewhere
+        name = nameFrom(next) ?? name; c = coordsFrom(next);
+        if (!isMapsRedirect(next)) break;
+        if (/consent\.google\.com/.test(next)) { const cont = new URL(next).searchParams.get('continue'); if (cont && isMapsRedirect(cont)) { url = cont; name = nameFrom(url) ?? name; c = coordsFrom(url); } else break; }
+        else if (/\/sorry\//.test(next)) { const cont = new URL(next).searchParams.get('continue'); if (cont) { name = nameFrom(cont) ?? name; c = coordsFrom(cont); } break; }
         else url = next;
-        name = nameFrom(url) ?? name; c = coordsFrom(url);
         continue;
       }
-      if (r.ok) { const html = (await r.text()).slice(0, 400000); c = coordsFromHtml(html); }
+      hops.push(`${r.status}`);
+      if (r.ok) { const html = (await r.text()).slice(0, 800000); c = coordsFromHtml(html); }
       else await r.body?.cancel();
       break;
     }
-  } catch { /* fall through to the name search */ }
+  } catch (e) { hops.push(`error ${String(e).slice(0, 80)}`); /* fall through to the name search */ }
   if (!c && name) {
     try {
       const r = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=in&q=${encodeURIComponent(name)}`,
@@ -417,7 +422,7 @@ async function resolveVenue(db: any, text: string): Promise<{ lat: number; lng: 
       if (j?.[0]) c = { lat: Number(j[0].lat), lng: Number(j[0].lon) };
     } catch { /* no luck */ }
   }
-  if (!c) return { error: 'no_pin' };
+  if (!c) { console.log(JSON.stringify({ resolve_venue: 'no_pin', name, hops })); return { error: 'no_pin' }; }
   return { lat: Number(c.lat.toFixed(6)), lng: Number(c.lng.toFixed(6)), name, place: await placeFor(db, c.lat, c.lng), url: start };
 }
 

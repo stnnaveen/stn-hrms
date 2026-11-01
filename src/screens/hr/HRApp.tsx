@@ -556,7 +556,7 @@ function HubEdit({ h, onBack }: { h: Hub | null; onBack: () => void }) {
     setLstate('checking'); setLerr(''); setConfirmed(false);
     const k = setTimeout(async () => {
       try { const v = await api.resolveVenue(t); setPin({ lat: v.lat, lng: v.lng, place: v.place, src: 'link' }); setLstate('idle'); }
-      catch (e) { setLstate('error'); setLerr(e instanceof ApiError && e.code !== 'network' ? errorText(e.code) : 'Couldn’t read this link. Try again.'); }
+      catch (e) { setLstate('error'); setLerr(e instanceof ApiError && e.code === 'not_maps_link' ? 'Paste a Google Maps or Apple Maps link, or tap the hub on the map.' : 'Couldn’t read this link. Tap the hub on the map instead.'); }
     }, 450);
     return () => clearTimeout(k);
   }, [link, touched]);
@@ -574,7 +574,7 @@ function HubEdit({ h, onBack }: { h: Hub | null; onBack: () => void }) {
     <div className="scr fade" style={{ paddingBottom: 40 }}>
       <Top small={h ? 'Edit' : 'New'} big={h ? `${h.name} hub` : 'Add hub'} onBack={onBack} />
       <Suspense fallback={<div className="mapv" style={{ height: 260 }} />}>
-        <MapView height={260} circle={pin ? { lat: pin.lat, lng: pin.lng, radius: r } : null} onTap={(lat, lng) => { setPin({ lat, lng, place: null, src: 'tap' }); setConfirmed(true); setErr(null); }} />
+        <MapView height={260} circle={pin ? { lat: pin.lat, lng: pin.lng, radius: r } : null} onTap={(lat, lng) => { setPin({ lat, lng, place: null, src: 'tap' }); setConfirmed(true); setErr(null); if (lstate === 'error') { setLstate('idle'); setLerr(''); } }} />
       </Suspense>
       {pin && pin.src === 'link' && !confirmed ? (
         <div className="card" style={{ marginTop: 10, border: '1.5px solid var(--od, #2F62D9)' }}>
