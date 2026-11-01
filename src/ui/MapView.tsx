@@ -8,13 +8,14 @@ const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&
 
 export interface MapPoint { lat: number; lng: number; acc?: number | null; color: string; label?: string }
 export interface MapProps {
-  circle?: { lat: number; lng: number; radius: number } | null;
+  circle?: { lat: number; lng: number; radius: number; label?: string } | null;
+  line?: { from: { lat: number; lng: number }; to: { lat: number; lng: number }; label?: string; color?: string } | null;
   points?: MapPoint[];
   onTap?: (lat: number, lng: number) => void;
   height?: number;
 }
 
-export default function MapView({ circle, points = [], onTap, height = 280 }: MapProps) {
+export default function MapView({ circle, line, points = [], onTap, height = 280 }: MapProps) {
   const el = useRef<HTMLDivElement>(null);
   const map = useRef<L.Map | null>(null);
   const layer = useRef<L.LayerGroup | null>(null);
@@ -39,8 +40,12 @@ export default function MapView({ circle, points = [], onTap, height = 280 }: Ma
     const bounds: L.LatLngExpression[] = [];
     if (circle) {
       const c = L.circle([circle.lat, circle.lng], { radius: circle.radius, color: '#2F62D9', weight: 2, fillColor: '#2F62D9', fillOpacity: 0.12 }).addTo(g);
-      L.circleMarker([circle.lat, circle.lng], { radius: 6, color: '#fff', weight: 2, fillColor: '#0B1220', fillOpacity: 1 }).addTo(g).bindTooltip('Hub pin');
+      L.circleMarker([circle.lat, circle.lng], { radius: 6, color: '#fff', weight: 2, fillColor: '#0B1220', fillOpacity: 1 }).addTo(g).bindTooltip(esc(circle.label ?? 'Hub pin'), { permanent: !!circle.label, direction: 'top', className: 'mlabel' });
       const b = c.getBounds(); bounds.push(b.getNorthEast(), b.getSouthWest());
+    }
+    if (line) {
+      const pl = L.polyline([[line.from.lat, line.from.lng], [line.to.lat, line.to.lng]], { color: line.color ?? '#E5303F', weight: 2.5, dashArray: '6 6' }).addTo(g);
+      if (line.label) pl.bindTooltip(esc(line.label), { permanent: true, direction: 'center', className: `mlabel dist ${line.color === '#1FAA6B' ? 'ok' : line.color === '#E5303F' ? '' : 'na'}` });
     }
     for (const p of points) {
       if (p.acc) L.circle([p.lat, p.lng], { radius: Math.min(p.acc, 300), color: p.color, weight: 1, fillColor: p.color, fillOpacity: 0.1, dashArray: '4 4' }).addTo(g);
@@ -49,7 +54,7 @@ export default function MapView({ circle, points = [], onTap, height = 280 }: Ma
       bounds.push([p.lat, p.lng]);
     }
     if (bounds.length) m.fitBounds(L.latLngBounds(bounds), { padding: [28, 28], maxZoom: 17 });
-  }, [circle?.lat, circle?.lng, circle?.radius, JSON.stringify(points)]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [circle?.lat, circle?.lng, circle?.radius, circle?.label, JSON.stringify(line), JSON.stringify(points)]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return <div ref={el} className="mapv" style={{ height }} role="application" aria-label="Map. Tap to test a point." />;
 }

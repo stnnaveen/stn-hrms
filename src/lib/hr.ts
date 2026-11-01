@@ -19,11 +19,12 @@ export interface Flag {
   id: string; kind: string; rule: string; details: Record<string, unknown>; status: string; staff_reason: string | null; created_at: string;
   user_id: string; who: string; hub: string | null;
   punch: { server_time: string; lat: number; lng: number; accuracy_m: number | null; place_name: string | null; distance_m: number | null;
-    quality_score: number | null; face_similarity: number | null; selfie_key: string | null; mocked: boolean | null } | null;
+    quality_score: number | null; face_similarity: number | null; selfie_key: string | null; mocked: boolean | null;
+    target_type?: string | null; target_id?: string | null; inside?: boolean | null } | null;
 }
 export interface Hub { id: string; name: string; lat: number; lng: number; radius_m: number; maps_url: string | null; active: boolean; staff?: number; pin_set_at?: string | null }
 export interface Pin { server_time: string; lat: number; lng: number; accuracy_m: number | null }
-export interface DayPunch { kind: 'in' | 'out'; server_time: string; lat: number; lng: number; place_name: string | null; band: string | null; early_out: boolean; selfie_key: string | null; distance_m: number | null; inside?: boolean | null }
+export interface DayPunch { kind: 'in' | 'out'; server_time: string; lat: number; lng: number; place_name: string | null; band: string | null; early_out: boolean; selfie_key: string | null; distance_m: number | null; inside?: boolean | null; accuracy_m?: number | null; target_type?: string | null; target_id?: string | null }
 export interface PersonDetail {
   punches: DayPunch[];
   days: { day: string; band: string | null; status: string; early_out: boolean; in_time: string | null; out_time: string | null }[];
@@ -90,7 +91,7 @@ const real = {
   },
   async flags(): Promise<Flag[]> {
     const r = must(await sb!.from('flags')
-      .select('id, kind, rule, details, status, staff_reason, created_at, user_id, punch:punches(server_time, lat, lng, accuracy_m, place_name, distance_m, quality_score, face_similarity, selfie_key, mocked), p:profiles!flags_user_id_fkey(full_name, hub:hubs(name))')
+      .select('id, kind, rule, details, status, staff_reason, created_at, user_id, punch:punches(server_time, lat, lng, accuracy_m, place_name, distance_m, quality_score, face_similarity, selfie_key, mocked, target_type, target_id, inside), p:profiles!flags_user_id_fkey(full_name, hub:hubs(name))')
       .in('status', ['open', 'reason_asked']).order('created_at', { ascending: false }).limit(100));
     return (r as unknown as (Flag & { p: { full_name: string; hub: { name: string } | null } })[])
       .filter((f) => f.kind !== 'late' || f.staff_reason)
@@ -140,7 +141,7 @@ const real = {
     const ist = new Date(Date.now() + 330 * 60000);
     const today = ist.toISOString().slice(0, 10), monthStart = today.slice(0, 8) + '01';
     const [punches, days, ods, leaves] = await Promise.all([
-      sb!.from('punches').select('kind, server_time, lat, lng, place_name, band, early_out, selfie_key, distance_m, inside').eq('user_id', userId).gte('server_time', new Date(`${today}T00:00:00+05:30`).toISOString()).order('server_time'),
+      sb!.from('punches').select('kind, server_time, lat, lng, place_name, band, early_out, selfie_key, distance_m, inside, accuracy_m, target_type, target_id').eq('user_id', userId).gte('server_time', new Date(`${today}T00:00:00+05:30`).toISOString()).order('server_time'),
       sb!.from('attendance_days').select('day, band, status, early_out, in_time, out_time').eq('user_id', userId).gte('day', monthStart).order('day'),
       sb!.from('od_requests').select('id, subject, venue_name, starts_at, ends_at, status').eq('user_id', userId).order('starts_at', { ascending: false }).limit(10),
       sb!.from('leave_requests').select('id, leave_type, starts_on, ends_on, status').eq('user_id', userId).order('starts_on', { ascending: false }).limit(10)

@@ -8,6 +8,7 @@ import { fmtDay, fmtShortDay, fmtTime, greeting } from '../../lib/time';
 import { Icon } from '../../ui/Icon';
 import { AccountSheet } from '../../ui/AccountSheet';
 import { RefreshButton } from '../../ui/RefreshButton';
+import { PunchMap } from '../../ui/PunchMap';
 import { Notifications } from '../Notifications';
 import { bestFix, firstViewToday } from '../../device';
 import { parseCsv, pick, normDate, toCsv, download } from '../../lib/csv';
@@ -317,6 +318,7 @@ function AlertView({ f, onBack }: { f: Flag; onBack: () => void }) {
       {pu && <div className="card" style={{ marginTop: 12 }}>
         <div className="row"><span className="ri c-bad"><Icon n="pin" /></span><span className="t"><b>Probable location</b><span style={{ whiteSpace: 'normal' }}>{place ?? 'Finding place name…'}</span></span></div>
         <dl className="kv" style={{ marginTop: 12 }}>{pu.distance_m != null && <><dt>From target</dt><dd>{fmtDistance(pu.distance_m)}</dd></>}<dt>Coordinates</dt><dd>{pu.lat.toFixed(6)}, {pu.lng.toFixed(6)}</dd>{pu.accuracy_m != null && <><dt>Accuracy</dt><dd>{Math.round(pu.accuracy_m)} m</dd></>}</dl>
+        <PunchMap main={{ lat: pu.lat, lng: pu.lng, accuracy_m: pu.accuracy_m, inside: pu.inside, target_type: pu.target_type, target_id: pu.target_id, label: 'This check-in' }} />
         <div className="two" style={{ marginTop: 12 }}>
           <a className="btn light" style={{ height: 44, fontSize: 14, textDecoration: 'none' }} href={googleMapsUrl(pu.lat, pu.lng)} target="_blank" rel="noreferrer">Google Maps</a>
           <a className="btn light" style={{ height: 44, fontSize: 14, textDecoration: 'none' }} href={appleMapsUrl(pu.lat, pu.lng)} target="_blank" rel="noreferrer">Apple Maps</a></div></div>}

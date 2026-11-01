@@ -11,6 +11,7 @@ import { Notifications } from '../Notifications';
 import { firstViewToday } from '../../device';
 import { VenueLink } from '../../ui/VenueLink';
 import { GeoFlag } from '../../ui/GeoFlag';
+import { PunchMap } from '../../ui/PunchMap';
 import { RefreshButton } from '../../ui/RefreshButton';
 
 type Tab = 'home' | 'people' | 'approvals';
@@ -502,6 +503,8 @@ function PersonSheet({ s, onClose }: { s: Staff; onClose: () => void }) {
         {s.od && <><div className="sec" style={{ margin: '16px 0 0' }}>OD today · {s.od.subject}</div><VenueLink name={s.od.venue} place={s.od.place} url={s.od.url} />
           <div className="meta" style={{ display: 'flex', marginTop: 8 }}>{venueChip(s)}<span className="chip c-pend">{fmtTime(s.od.starts_at)} – {fmtTime(s.od.ends_at)}</span></div></>}
         {s.cat !== 'lv' && (!d ? <Spin /> : <div className="dayc" style={{ marginTop: 16 }}>{tile('in')}{tile('out')}</div>)}
+        {(() => { const pi = d?.punches.find((x) => x.kind === 'in'), po = d?.punches.find((x) => x.kind === 'out');
+          return pi ? <PunchMap height={220} main={{ ...pi, label: `In ${fmtTime(pi.server_time)}` }} extra={po ? [{ ...po, label: `Out ${fmtTime(po.server_time)}` }] : []} /> : null; })()}
         <p className="to" style={{ marginBottom: 0 }}><Icon n="eye" size={14} style={{ verticalAlign: -2 }} /> View only. Changes go through HR.</p>
       </div>
       <button className="btn ghost" style={{ marginTop: 6 }} onClick={onClose}>Close</button></div></>);
@@ -550,6 +553,7 @@ function AlertView({ f, onBack }: { f: Flag; onBack: () => void }) {
       {pu && <div className="card" style={{ marginTop: 12 }}>
         <div className="row"><span className="ri c-bad"><Icon n="pin" /></span><span className="t"><b>Probable location</b><span style={{ whiteSpace: 'normal' }}>{place ?? 'Finding place name…'}</span></span></div>
         <dl className="kv" style={{ marginTop: 12 }}>{pu.distance_m != null && <><dt>From {f.hub ?? 'target'} hub</dt><dd>{fmtDistance(pu.distance_m)}</dd></>}<dt>Coordinates</dt><dd>{pu.lat.toFixed(5)}, {pu.lng.toFixed(5)}</dd></dl>
+        <PunchMap main={{ lat: pu.lat, lng: pu.lng, accuracy_m: pu.accuracy_m, inside: pu.inside, target_type: pu.target_type, target_id: pu.target_id, label: 'This check-in' }} />
         <div className="two" style={{ marginTop: 12 }}>
           <a className="btn light" style={{ height: 44, fontSize: 14, textDecoration: 'none' }} href={googleMapsUrl(pu.lat, pu.lng)} target="_blank" rel="noreferrer">Google Maps</a>
           <a className="btn light" style={{ height: 44, fontSize: 14, textDecoration: 'none' }} href={appleMapsUrl(pu.lat, pu.lng)} target="_blank" rel="noreferrer">Apple Maps</a></div></div>}

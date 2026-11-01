@@ -85,7 +85,7 @@ const real = {
   async alerts(): Promise<Flag[]> {
     const since = new Date(Date.now() - 30 * 864e5).toISOString();
     const r = must(await sb!.from('flags')
-      .select('id, kind, rule, details, status, staff_reason, created_at, user_id, punch:punches(server_time, lat, lng, accuracy_m, place_name, distance_m, quality_score, face_similarity, selfie_key, mocked), p:profiles!flags_user_id_fkey(full_name, hub:hubs(name))')
+      .select('id, kind, rule, details, status, staff_reason, created_at, user_id, punch:punches(server_time, lat, lng, accuracy_m, place_name, distance_m, quality_score, face_similarity, selfie_key, mocked, target_type, target_id, inside), p:profiles!flags_user_id_fkey(full_name, hub:hubs(name))')
       .gte('created_at', since).order('created_at', { ascending: false }).limit(300)) as unknown as (Flag & { p: PN })[];
     return r.map((f) => ({ ...f, who: f.p?.full_name ?? 'Unknown', hub: f.p?.hub?.name ?? null }));
   },

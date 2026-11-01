@@ -514,3 +514,9 @@ b.nmf .rf{flex:none}
 .tbl th,.tbl td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--ph-line);white-space:nowrap;max-width:200px;overflow:hidden;text-overflow:ellipsis}
 .tbl th{font-weight:600;color:var(--ph-ink3);background:var(--ph-surface);position:sticky;top:0}
 .tbl tr.bad td{background:#FFF0F2;color:#B4182C}
+.leaflet-tooltip.mlabel{font:600 11.5px var(--font,system-ui);padding:3px 7px;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.18)}
+.leaflet-tooltip.mlabel.dist{background:#E5303F;color:#fff;border:0}
+.leaflet-tooltip.mlabel.dist:before{display:none}
+.mlegend{display:flex;flex-wrap:wrap;gap:12px;font-size:12.5px;color:var(--ph-ink3);margin-top:8px}
+.mlegend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;vertical-align:-1px}
+.leaflet-tooltip.mlabel.dist.ok{background:#1FAA6B}.leaflet-tooltip.mlabel.dist.na{background:#2F62D9}

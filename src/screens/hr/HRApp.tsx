@@ -10,6 +10,7 @@ import { Notifications } from '../Notifications';
 import { AccountSheet } from '../../ui/AccountSheet';
 import { VenueLink } from '../../ui/VenueLink';
 import { GeoFlag } from '../../ui/GeoFlag';
+import { PunchMap } from '../../ui/PunchMap';
 import { RefreshButton } from '../../ui/RefreshButton';
 
 type Tab = 'home' | 'staff' | 'approvals' | 'disputes';
@@ -265,6 +266,7 @@ function PersonView({ p: p0, onBack, open }: { p: Person; onBack: () => void; op
         <div className="sec">Today</div>
         {!d ? <Spin /> : (<>
           <div className="dayc"><Tile k="in" /><Tile k="out" /></div>
+          {punch('in') && <PunchMap main={{ ...punch('in')!, label: `In ${fmtTime(punch('in')!.server_time)}` }} extra={punch('out') ? [{ ...punch('out')!, label: `Out ${fmtTime(punch('out')!.server_time)}` }] : []} />}
           {punch('in') && <div className="meta" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 10 }}>
             {punch('in')!.band && <span className={`chip ${punch('in')!.band === 'ok' ? 'c-ok' : punch('in')!.band === 'warn' ? 'c-warn' : 'c-bad'}`}>{punch('in')!.band === 'ok' ? 'On time' : punch('in')!.band === 'warn' ? 'Slightly late' : 'Late'}</span>}
             {punch('in')!.distance_m != null && <span className={`chip ${punch('in')!.inside === false ? 'c-bad' : 'c-ok'}`}><Icon n="flag" size={12} />In {punch('in')!.inside === false ? 'outside' : 'inside'} · {fmtDistance(punch('in')!.distance_m!)}</span>}
@@ -488,6 +490,7 @@ function DisputeView({ f, onBack }: { f: Flag; onBack: () => void }) {
           <dt>Coordinates</dt><dd>{pu.lat.toFixed(5)}, {pu.lng.toFixed(5)}</dd>
           {pu.accuracy_m != null && <><dt>Accuracy</dt><dd>± {Math.round(pu.accuracy_m)} m</dd></>}
         </dl>
+        <PunchMap main={{ lat: pu.lat, lng: pu.lng, accuracy_m: pu.accuracy_m, inside: pu.inside, target_type: pu.target_type, target_id: pu.target_id, label: 'This check-in' }} earlier={(pins ?? []).filter((x) => x.server_time !== pu.server_time).map((x) => ({ lat: x.lat, lng: x.lng, label: `${fmtShortDay(new Date(x.server_time))} ${fmtTime(x.server_time)}` }))} />
         <div className="two" style={{ marginTop: 12 }}>
           <a className="btn light" style={{ height: 44, fontSize: 14, textDecoration: 'none' }} href={googleMapsUrl(pu.lat, pu.lng)} target="_blank" rel="noreferrer">Google Maps</a>
           <a className="btn light" style={{ height: 44, fontSize: 14, textDecoration: 'none' }} href={appleMapsUrl(pu.lat, pu.lng)} target="_blank" rel="noreferrer">Apple Maps</a>
