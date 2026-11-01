@@ -6,8 +6,7 @@ const run = async (sql) => {
   const r = await fetch(u, { headers: { Authorization: `Bearer ${SUPABASE_ACCESS_TOKEN}` } });
   return [r.status, await r.json()];
 };
-for (const t of ['function_logs', 'edge_function_logs', 'function_edge_logs', 'functions_logs', 'deno_logs']) {
-  const [st, j] = await run(`select timestamp, event_message from ${t} where event_message like '%resolve_venue%' order by timestamp desc limit 20`);
-  console.log(`-- ${t}: ${st} ${j.error ? JSON.stringify(j.error).slice(0, 200) : `${j.result?.length ?? 0} rows`}`);
-  for (const x of j.result ?? []) console.log(new Date(Number(x.timestamp) / 1000).toISOString(), x.event_message);
-}
+{ const [st, j] = await run(`select source_name, count() as n from logs group by source_name`); console.log('-- sources', st, JSON.stringify(j).slice(0, 400)); }
+{ const [st, j] = await run(`select timestamp, source_name, event_message from logs where event_message like '%resolve_venue%' order by timestamp desc limit 20`);
+  console.log(`-- venue: ${st} ${j.error ? JSON.stringify(j.error).slice(0, 200) : `${j.result?.length ?? 0} rows`}`);
+  for (const x of j.result ?? []) console.log(String(x.timestamp), x.source_name, x.event_message); }
