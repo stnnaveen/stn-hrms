@@ -1,0 +1,25 @@
+# Diagnostics (run by hand): read-only checks against the live project.
+name: Diagnostics
+on: { workflow_dispatch: {} }
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Clean project ref
+        run: |
+          ref=$(printf '%s' "$PROJECT_REF" | tr -d '[:space:]"' | sed -E 's#^https?://##; s#\.supabase\.co.*$##')
+          echo "REF=$ref" >> "$GITHUB_ENV"; echo "SUPA_URL=https://$ref.supabase.co" >> "$GITHUB_ENV"
+      - uses: supabase/setup-cli@v1
+        with: { version: latest }
+      - name: Fetch key (masked)
+        run: |
+          svc=$(supabase projects api-keys --project-ref "$REF" -o json | jq -r '.[] | select(.name=="service_role") | .api_key')
+          echo "::add-mask::$svc"; echo "SERVICE=$svc" >> "$GITHUB_ENV"
+      - name: Map links
+        run: node tools/diag/maplinks.mjs
