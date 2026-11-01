@@ -21,5 +21,7 @@ jobs:
         run: |
           svc=$(supabase projects api-keys --project-ref "$REF" -o json | jq -r '.[] | select(.name=="service_role") | .api_key')
           echo "::add-mask::$svc"; echo "SERVICE=$svc" >> "$GITHUB_ENV"
+      - name: Map link failures (server log)
+        run: node tools/diag/venuelogs.mjs
       - name: Map links
         run: node tools/diag/maplinks.mjs
