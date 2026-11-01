@@ -1,0 +1,34 @@
+# Uptime watch: every 15 minutes checks the app, sign-in, database, check-in server and photo storage.
+# A failed run means something was down; GitHub emails the repo owner.
+name: Uptime
+on:
+  schedule: [{ cron: '*/15 * * * *' }]
+  workflow_dispatch:
+    inputs:
+      samples: { description: 'Requests per service', default: '10' }
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+      APP_URL: ${{ vars.APP_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Clean project ref
+        run: |
+          ref=$(printf '%s' "$PROJECT_REF" | tr -d '[:space:]"' | sed -E 's#^https?://##; s#\.supabase\.co.*$##')
+          echo "REF=$ref" >> "$GITHUB_ENV"; echo "SUPA_URL=https://$ref.supabase.co" >> "$GITHUB_ENV"
+      - uses: supabase/setup-cli@v1
+        with: { version: 2.121.0 }
+      - name: Fetch keys (masked)
+        run: |
+          keys=$(supabase projects api-keys --project-ref "$REF" -o json)
+          svc=$(echo "$keys" | jq -r '.[] | select(.name=="service_role") | .api_key'); anon=$(echo "$keys" | jq -r '.[] | select(.name=="anon") | .api_key')
+          echo "::add-mask::$svc"; echo "::add-mask::$anon"; echo "SERVICE=$svc" >> "$GITHUB_ENV"; echo "ANON=$anon" >> "$GITHUB_ENV"
+      - name: Check
+        env: { SAMPLES: "${{ inputs.samples || '3' }}" }
+        run: node tools/diag/uptime.mjs
