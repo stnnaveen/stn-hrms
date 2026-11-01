@@ -232,6 +232,7 @@ export function errorText(code: string): string {
     already_visited: 'Venue check-in already done.',
     not_maps_link: 'Paste a Google Maps or Apple Maps link.',
     no_pin: 'Couldn’t find the place in this link. Copy it again from Maps.',
+    list_link: 'That’s a saved-list link. Open the place itself → Share → Copy link.',
     venue_pin_needed: 'Paste the venue’s map link.',
     bad_location: 'Could not read your location. Try again.',
     bad_time: 'Your phone’s date looks wrong. Fix it and try again.',

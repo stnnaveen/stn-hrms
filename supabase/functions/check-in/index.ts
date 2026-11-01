@@ -385,13 +385,18 @@ async function removeSelfies(db: any, keys: string[]): Promise<number> {
   return n;
 }
 
-// OD venue from a Google or Apple Maps link. Follows short-link redirects only through Maps hosts (no open fetches).
+// Google Maps "share list" links ("/maps/@/data=…!7m…") point at a saved-places list, not one place
+function isListLink(u: string): boolean { let d = u; try { d = decodeURIComponent(u); } catch { /* raw */ } return /\/maps\/@\/data=.*!7m/.test(d); }
+
+// OD venue / hub pin from a Google or Apple Maps link. Follows short-link redirects only through Google/Apple pages (no open fetches).
 // deno-lint-ignore no-explicit-any
 async function resolveVenue(db: any, text: string): Promise<{ lat: number; lng: number; name: string | null; place: string | null; url: string } | { error: string }> {
   const start = firstUrl(text.trim());
   if (!start || !isMapsHost(start)) { console.log(JSON.stringify({ resolve_venue: 'not_maps_link', text: text.slice(0, 200) })); return { error: 'not_maps_link' }; }
-  const UA = { 'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148', 'Accept-Language': 'en' };
+  // desktop browser: a phone browser gets Google's "Open in app?" page instead of the map
+  const UA = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36', 'Accept-Language': 'en' };
   let url = start, name = nameFrom(url), c = coordsFrom(url);
+  try { const x = new URL(url); x.searchParams.delete('g_st'); url = x.toString(); } catch { /* keep */ }   // iPhone share tag
   const hops: string[] = [start.slice(0, 160)];
   try {
     for (let hop = 0; !c && hop < 6; hop++) {
@@ -409,7 +414,14 @@ async function resolveVenue(db: any, text: string): Promise<{ lat: number; lng: 
         continue;
       }
       hops.push(`${r.status}`);
-      if (r.ok) { const html = (await r.text()).slice(0, 800000); c = coordsFromHtml(html); }
+      if (r.ok && isListLink(url)) { await r.body?.cancel(); break; }   // a shared saved-places list has no single pin
+      if (r.ok) {
+        const html = (await r.text()).slice(0, 800000);
+        c = coordsFromHtml(html);
+        // "Open in app?" page: continue to the map link written inside it
+        const inner = !c && /preview\.app\.goo\.gl/.test(url) ? html.match(/https:\/\/(?:www\.)?google\.[a-z.]+\/maps[^"'\s<>\\]*/)?.[0]?.replace(/&amp;/g, '&') : null;
+        if (inner && hop < 5) { url = inner; name = nameFrom(url) ?? name; c = coordsFrom(url); if (!c) continue; }
+      }
       else await r.body?.cancel();
       break;
     }
@@ -422,7 +434,10 @@ async function resolveVenue(db: any, text: string): Promise<{ lat: number; lng: 
       if (j?.[0]) c = { lat: Number(j[0].lat), lng: Number(j[0].lon) };
     } catch { /* no luck */ }
   }
-  if (!c) { console.log(JSON.stringify({ resolve_venue: 'no_pin', name, hops })); return { error: 'no_pin' }; }
+  if (!c) {
+    console.log(JSON.stringify({ resolve_venue: 'no_pin', name, hops }));
+    return { error: isListLink(url) ? 'list_link' : 'no_pin' };
+  }
   return { lat: Number(c.lat.toFixed(6)), lng: Number(c.lng.toFixed(6)), name, place: await placeFor(db, c.lat, c.lng), url: start };
 }
 

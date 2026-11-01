@@ -556,7 +556,7 @@ function HubEdit({ h, onBack }: { h: Hub | null; onBack: () => void }) {
     setLstate('checking'); setLerr(''); setConfirmed(false);
     const k = setTimeout(async () => {
       try { const v = await api.resolveVenue(t); setPin({ lat: v.lat, lng: v.lng, place: v.place, src: 'link' }); setLstate('idle'); }
-      catch (e) { setLstate('error'); setLerr(e instanceof ApiError && e.code === 'not_maps_link' ? 'Paste a Google Maps or Apple Maps link, or tap the hub on the map.' : 'Couldn’t read this link. Tap the hub on the map instead.'); }
+      catch (e) { setLstate('error'); const code = e instanceof ApiError ? e.code : ''; setLerr(code === 'not_maps_link' ? 'Paste a Google Maps or Apple Maps link, or tap the hub on the map.' : code === 'list_link' ? 'That’s a saved-list link. Open the office itself in Maps → Share → Copy link. Or tap the map.' : 'Couldn’t read this link. Tap the hub on the map instead.'); }
     }, 450);
     return () => clearTimeout(k);
   }, [link, touched]);
