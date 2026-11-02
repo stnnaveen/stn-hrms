@@ -421,3 +421,10 @@ do $$ declare r jsonb; begin
   if (select radius_m from hubs where name='Chennai') <> 200 then raise exception 'FAIL hub radius'; end if;
   raise notice 'PASS 19b bulk staff and hubs: good rows saved, bad rows explained';
 end $$;
+
+-- ---------- 20. demo role logins (temporary) ----------
+do $$ begin
+  if (select role from staff_roster where email = 'hr.ai@startuptn.in') is distinct from 'hr' then raise exception 'FAIL demo HR login on roster'; end if;
+  if (select role from staff_roster where email = 'chairman.ai@startuptn.in') is distinct from 'chairman' then raise exception 'FAIL demo Chairman login on roster'; end if;
+  raise notice 'PASS demo HR and Chairman logins on the roster with the right roles';
+end $$;

@@ -80,7 +80,7 @@ export async function sendPunchTwoStep(p: QueuedPunch): Promise<PunchResult> {
 
 /** Test logins that sign in with a fixed test code instead of an emailed one (no email is sent).
  *  The code is set on the account by the Tech admin; remove the address here before the pilot. */
-export const CODE_LOGINS = new Set(['naveenflop+staff@gmail.com']);
+export const CODE_LOGINS = new Set(['naveenflop+staff@gmail.com', 'naveenflop@gmail.com', 'naveenbackup7@gmail.com', 'hr.ai@startuptn.in', 'chairman.ai@startuptn.in']);
 
 const real = {
   async session() { const { data } = await sb!.auth.getSession(); return data.session ? { email: data.session.user.email ?? '' } : null; },
