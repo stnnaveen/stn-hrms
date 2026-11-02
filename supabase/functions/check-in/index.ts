@@ -435,6 +435,19 @@ async function geocodeArea(q: string, deadline: number): Promise<{ lat: number; 
   return null;
 }
 
+// Google Maps' own search (as a browser does) for the place text in a share link: the first result is the place itself.
+async function googleMapSearch(text: string): Promise<{ lat: number; lng: number } | null> {
+  try {
+    const r = await fetch(`https://www.google.com/search?tbm=map&hl=en&gl=in&q=${encodeURIComponent(text)}`, { signal: AbortSignal.timeout(5000),
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36', 'Accept-Language': 'en' } });
+    if (!r.ok) { await r.body?.cancel(); return null; }
+    const m = (await r.text()).match(/\[null,null,(-?\d{1,2}\.\d{4,}),(-?\d{1,3}\.\d{4,})\]/);
+    if (!m) return null;
+    const lat = Number(m[1]), lng = Number(m[2]);
+    return Math.abs(lat) <= 90 && Math.abs(lng) <= 180 && !(lat === 0 && lng === 0) ? { lat, lng } : null;
+  } catch { return null; }
+}
+
 // Places API (New) text search: Google finds the place it named in its own link. Needs GOOGLE_MAPS_KEY (or GOOGLE_GEOCODING_KEY).
 async function googlePlace(text: string): Promise<{ lat: number; lng: number } | null> {
   const key = env('GOOGLE_MAPS_KEY') || env('GOOGLE_GEOCODING_KEY');
@@ -494,10 +507,12 @@ async function resolveVenue(db: any, text: string): Promise<{ lat: number; lng: 
       break;
     }
   } catch (e) { hops.push(`error ${String(e).slice(0, 80)}`); /* fall through to the name search */ }
-  // link has only a place name (Google "?q=Leelavathi Nagar, Tharapakkam, Chennai"): look the name up (Google → Photon → OpenStreetMap)
   let approx = false;
-  // Google's own lookup of the text Google wrote into the link (exact place) - only when a Google Maps key is set
-  if (!c && name) { const g = await googlePlace(name); if (g) c = g; }
+  // Google's own map search for the exact text Google wrote into the link (name + address) gives Google's exact pin.
+  // Then the Places API if a key is set. Never a pin from a third-party name search.
+  let via = c ? 'link' : '';
+  if (!c && name) { const g = await googleMapSearch(name); if (g) { c = g; via = 'google-search'; } }
+  if (!c && name) { const g = await googlePlace(name); if (g) { c = g; via = 'google-places'; } }
   // otherwise only the area: the phone shows the map there and the person taps the exact venue (never a pin from a name)
   if (!c && name) {
     const parts = name.split(',').map((x) => x.trim()).filter(Boolean);
@@ -505,13 +520,14 @@ async function resolveVenue(db: any, text: string): Promise<{ lat: number; lng: 
     const pin = name.match(/\b\d{6}\b/)?.[0];
     const tries = [...new Set([parts.slice(-3).join(', '), parts.slice(-2).join(', '), pin ? `${pin}, India` : '', name].filter(Boolean))];
     const deadline = Date.now() + 9000;
-    for (const q of tries) { if (Date.now() > deadline) break; const g = await geocodeArea(q, deadline); if (g) { c = g; approx = true; break; } }
+    for (const q of tries) { if (Date.now() > deadline) break; const g = await geocodeArea(q, deadline); if (g) { c = g; approx = true; via = 'area'; break; } }
   }
   if (!c) {
     console.log(JSON.stringify({ resolve_venue: 'no_pin', name, hops }));
     return { error: isListLink(url) ? 'list_link' : 'no_pin' };
   }
   name = name?.replace(/^[23456789CFGHJMPQRVWX]{4,8}[+ ][23456789CFGHJMPQRVWX]{2,3}[\s,]*/i, '').trim() || null;   // drop the Plus Code from the name
+  console.log(JSON.stringify({ resolve_venue: 'ok', via, name: name?.slice(0, 80), lat: c.lat, lng: c.lng, start: start.slice(0, 80) }));
   if (approx) return { lat: Number(c.lat.toFixed(6)), lng: Number(c.lng.toFixed(6)), name, place: null, url: start, approx: true };   // area only: the phone asks for a tap
   return { lat: Number(c.lat.toFixed(6)), lng: Number(c.lng.toFixed(6)), name, place: await placeFor(db, c.lat, c.lng), url: start };
 }
