@@ -227,7 +227,7 @@ const demo: typeof real = {
 export const hr = DEMO ? demo : real;
 
 export const FLAG_LABEL: Record<string, [string, string]> = {
-  location_changer: ['Location changer', 'c-bad'], mock_location: ['Mock location', 'c-bad'], radius: ['Outside radius', 'c-bad'],
+  location_changer: ['Location changer', 'c-bad'], mock_location: ['Mock location', 'c-bad'], radius: ['Outside radius', 'c-bad'], radius_edge: ['Edge of radius', 'c-warn'],
   face: ['Face mismatch', 'c-bad'], liveness: ['Liveness', 'c-warn'], device: ['Device', 'c-bad'], jump: ['Impossible jump', 'c-bad'],
   clock: ['Phone clock', 'c-warn'], offline: ['Synced late', 'c-warn'], late: ['Late', 'c-warn'], early_out: ['Early out', 'c-warn']
 };

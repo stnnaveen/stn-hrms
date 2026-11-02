@@ -15,7 +15,8 @@ const meters = (a: { lat: number; lng: number }, b: { lat: number; lng: number }
 export function PunchMap({ main, extra = [], earlier = [], height = 260 }: { main: MapPunch; extra?: MapPunch[]; earlier?: { lat: number; lng: number; label: string }[]; height?: number }) {
   const [t, setT] = useState<Target | null | undefined>(undefined);
   useEffect(() => { punchTarget(main.target_type, main.target_id).then(setT); }, [main.target_type, main.target_id]);
-  const color = (p: MapPunch) => (p.inside === false ? '#E5303F' : p.inside ? '#1FAA6B' : '#2F62D9');
+  // red outside; amber when beyond the radius but counted inside only thanks to the GPS accuracy allowance; green inside
+  const color = (p: MapPunch) => (p.inside === false ? '#E5303F' : t && meters(p, t) > t.radius ? '#E39A0B' : p.inside ? '#1FAA6B' : '#2F62D9');
   const dist = t ? meters(main, t) : null;
   const points: MapPoint[] = [
     ...earlier.map((e) => ({ lat: e.lat, lng: e.lng, color: '#9AA0AC', label: e.label })),
@@ -31,7 +32,7 @@ export function PunchMap({ main, extra = [], earlier = [], height = 260 }: { mai
       </Suspense>
       <div className="mlegend">
         <span><i style={{ background: '#0B1220' }} />{t ? `${t.name} · ${t.radius} m radius` : t === null ? 'Target pin not found' : 'Loading target…'}</span>
-        <span><i style={{ background: color(main) }} />{main.label}{dist != null ? ` · ${fmtDistance(dist)} away` : ''}</span>
+        <span><i style={{ background: color(main) }} />{main.label}{dist != null ? ` · ${fmtDistance(dist)} away` : ''}{t && dist != null && dist > t.radius && main.inside ? ' · edge (GPS ±' + Math.round(main.accuracy_m ?? 0) + ' m)' : ''}</span>
         {extra.map((p, i) => <span key={i}><i style={{ background: color(p) }} />{p.label}</span>)}
         {earlier.length > 0 && <span><i style={{ background: '#9AA0AC' }} />Earlier check-ins</span>}
       </div>

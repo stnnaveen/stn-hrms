@@ -21,6 +21,12 @@ ok(!e.inside && e.flags.some(f => f.kind === 'radius') && e.status === 'review',
 
 e = evaluate({ ...base, fix: { lat: 13.0153, lng: 80.2206, accuracy: 30 } }); // ~500 m + accuracy credit
 ok(e.inside, 'edge of radius passes with accuracy credit');
+ok(e.flags.some(f => f.kind === 'radius_edge') && e.status === 'recorded', 'beyond the radius only by GPS accuracy: amber edge flag for HR, no review');
+{ const h200 = { lat: 13.0108, lng: 80.2206, radiusM: 200 };
+  const x = evaluate({ ...base, target: h200, fix: { lat: 13.0108 + 223 / 111320, lng: 80.2206, accuracy: 40 } });
+  ok(x.inside && x.flags.some(f => f.kind === 'radius_edge'), '223 m from a 200 m hub with ±40 m GPS: edge flag (the Chennai case)');
+  const y = evaluate({ ...base, target: h200, fix: { lat: 13.0108 + 150 / 111320, lng: 80.2206, accuracy: 40 } });
+  ok(y.inside && !y.flags.some(f => f.kind.startsWith('radius')), '150 m from a 200 m hub: no radius flag'); }
 
 e = evaluate({ ...base, fix: { lat: 13.0400, lng: 80.2206, accuracy: 3000 } });
 ok(!e.inside, 'huge accuracy cannot buy its way inside (credit capped at 100 m)');

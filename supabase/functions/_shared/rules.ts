@@ -4,7 +4,7 @@
 export type Band = 'ok' | 'warn' | 'bad';
 export type FlagKind =
   | 'late' | 'radius' | 'location_changer' | 'mock_location' | 'face' | 'liveness'
-  | 'device' | 'clock' | 'offline' | 'jump' | 'early_out';
+  | 'device' | 'clock' | 'offline' | 'jump' | 'early_out' | 'radius_edge';
 
 export interface Settings {
   officeStart: string;      // "10:00"
@@ -94,6 +94,8 @@ export function evaluate(input: {
 
   const { distanceM, inside } = radiusCheck(fix, target);
   if (!inside) flags.push({ kind: 'radius', rule: `R-02 distance > ${target.radiusM} m`, details: { distance_m: Math.round(distanceM), accuracy_m: fix.accuracy } });
+  // beyond the radius only by the GPS accuracy allowance: not a red flag, but HR sees it (amber, no review)
+  else if (distanceM > target.radiusM) flags.push({ kind: 'radius_edge', rule: `R-02b ${Math.round(distanceM)} m, inside ${target.radiusM} m only with GPS ±${Math.round(fix.accuracy ?? 0)} m`, details: { distance_m: Math.round(distanceM), accuracy_m: fix.accuracy } });
 
   // Time
   let band: Band | null = null;

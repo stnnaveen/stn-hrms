@@ -36,6 +36,8 @@ jobs:
       - name: Security check (live)
         run: node tools/diag/security.mjs
         continue-on-error: true
+      - name: Disputes (7 days)
+        run: node tools/diag/flags.mjs
       - name: Selfies today
         run: node tools/diag/selfies.mjs
       - name: Selfie links as HR
