@@ -34,7 +34,8 @@ export function ODForm() {
   const [vState, setVState] = useState<'idle' | 'checking' | 'ok' | 'tap' | 'error'>('idle');
   const [area, setArea] = useState<{ lat: number; lng: number } | null>(null);   // link gave only an area: look here, tap the venue
   const [vErr, setVErr] = useState('');
-  const [vName, setVName] = useState('');
+  const [vName, setVName] = useState('');       // the name Maps gives the place: shown to the approver for reference
+  const [odPlace, setOdPlace] = useState('');   // where the staff member says they are going (typed)
   const seq = useRef(0);
   useEffect(() => {
     const text = f.venue.trim();
@@ -60,7 +61,6 @@ export function ODForm() {
     const v: Venue = { lat: Number(lat.toFixed(6)), lng: Number(lng.toFixed(6)), name: venue?.name ?? null, place: null, url: `https://www.google.com/maps?q=${lat.toFixed(6)},${lng.toFixed(6)}` };
     setVenue(v); setVState('ok'); setVErr('');
     placeLabel(v.lat, v.lng).then((p) => setVenue((x) => (x && x.lat === v.lat && x.lng === v.lng ? { ...x, place: p } : x)));
-    if (!vName.trim()) setVName('');
   };
   const set = (k: string, v: string) => setF((x) => ({ ...x, [k]: v }));
   const startsAt = f.shape === 'hours' ? istToUtc(f.date, f.from) : istToUtc(f.date, '10:00');
@@ -71,14 +71,14 @@ export function ODForm() {
     const e: Record<string, boolean> = {};
     if (f.subject.trim().length < 2) e.subject = true;
     if (!venue) e.venue = true;
-    if (venue && !vName.trim()) e.vname = true;
+    if (odPlace.trim().length < 2) e.odplace = true;
     if (new Date(endsAt) <= new Date(startsAt)) e.time = true;
     setErrs(e);
     if (Object.keys(e).length) return;
     setBusy(true);
     try {
-      await api.createOD({ subject: f.subject.trim(), note: f.note.trim() || undefined, venue_name: vName.trim(), venue_lat: venue!.lat, venue_lng: venue!.lng,
-        venue_url: venue!.url, venue_place: venue!.place, starts_at: startsAt, ends_at: endsAt });
+      await api.createOD({ subject: f.subject.trim(), note: f.note.trim() || undefined, venue_name: odPlace.trim(), venue_lat: venue!.lat, venue_lng: venue!.lng,
+        venue_url: venue!.url, venue_place: vName.trim() || venue!.place, starts_at: startsAt, ends_at: endsAt });
       await reload(); toast('OD sent for approval'); back();
     } catch (e) { toast(e instanceof ApiError ? errorText(e.code) : 'Could not send. Try again.'); } finally { setBusy(false); }
   };
@@ -89,6 +89,9 @@ export function ODForm() {
       <label className="lab" htmlFor="f-subject">Subject</label>
       <input className="inp" id="f-subject" placeholder="Meeting at TIDCO" value={f.subject} onChange={(e) => set('subject', e.target.value)} />
       {errs.subject && <div className="err">Add a subject.</div>}
+      <label className="lab" htmlFor="f-odplace">OD place</label>
+      <input className="inp" id="f-odplace" placeholder="SIDCO office, Guindy" value={odPlace} onChange={(e) => { setOdPlace(e.target.value); if (errs.odplace) setErrs((x) => ({ ...x, odplace: false })); }} />
+      {errs.odplace && <div className="err">Add the OD place.</div>}
       <label className="lab" htmlFor="f-venue">Venue map link</label>
       <div className="inrow">
         <input className="inp" id="f-venue" inputMode="url" autoCapitalize="none" autoCorrect="off" placeholder="Google Maps or Apple Maps link" value={f.venue} onChange={(e) => set('venue', e.target.value)} />
@@ -100,13 +103,12 @@ export function ODForm() {
       {(venue || vState === 'error' || vState === 'tap') && (
         <div style={{ marginTop: 10 }}>
           <Suspense fallback={<div className="mapv" style={{ height: 200 }} />}>
-            <MapView height={220} center={area ? { ...area, zoom: 15 } : null} points={venue ? [{ lat: venue.lat, lng: venue.lng, color: '#2F62D9', label: vName || 'Venue' }] : []} onTap={tapVenue} />
+            <MapView height={220} center={area ? { ...area, zoom: 15 } : null} points={venue ? [{ lat: venue.lat, lng: venue.lng, color: '#2F62D9', label: odPlace || vName || 'Venue' }] : []} onTap={tapVenue} />
           </Suspense>
           <div className={!venue && vState === 'tap' ? 'err' : 'hintl'}>{!venue ? (vState === 'tap' ? 'This link has no exact spot. Zoom in and tap the venue.' : 'Tap the venue on the map.') : 'Pin wrong? Tap the right spot.'}
             {!venue && vState === 'tap' && <> <a href={f.venue.match(/https?:\/\/\S+/)?.[0]} target="_blank" rel="noreferrer" style={{ color: 'var(--od, #2F62D9)', fontWeight: 600 }}>Open in Maps</a></>}</div>
         </div>)}
-      {venue && <div className="venue"><span className="ri c-od"><Icon n="pin" /></span><span className="t"><b>{venue.name ?? 'Pinned place'}</b><span>{venue.place ?? `${venue.lat.toFixed(5)}, ${venue.lng.toFixed(5)}`}</span></span><a href={venue.url} target="_blank" rel="noreferrer">Open</a></div>}
-      {(venue || vState === 'tap') && <><label className="lab" htmlFor="f-vname">Venue name</label><input className="inp" id="f-vname" value={vName} onChange={(e) => setVName(e.target.value)} placeholder="TIDCO office" />{errs.vname && <div className="err">Add the venue name.</div>}</>}
+      {venue && <div className="venue"><span className="ri c-od"><Icon n="pin" /></span><span className="t"><b>{vName || venue.name || 'Pinned place'}</b><span>{venue.place ?? `${venue.lat.toFixed(5)}, ${venue.lng.toFixed(5)}`}</span></span><a href={venue.url} target="_blank" rel="noreferrer">Open</a></div>}
       {errs.venue && !venue && vState !== 'checking' && vState !== 'tap' && <div className="err">Paste the venue’s map link, or tap it on the map.</div>}
       <label className="lab">Duration</label>
       <div className="seg" role="group" aria-label="Duration">
