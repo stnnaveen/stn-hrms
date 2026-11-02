@@ -428,3 +428,30 @@ do $$ begin
   if (select role from staff_roster where email = 'chairman.ai@startuptn.in') is distinct from 'chairman' then raise exception 'FAIL demo Chairman login on roster'; end if;
   raise notice 'PASS demo HR and Chairman logins on the roster with the right roles';
 end $$;
+
+-- ---------- 21. HR asks a reason for a late check-in / early check-out ----------
+select pg_temp.reset();
+insert into punches (id, user_id, kind, idempotency_key, client_time, lat, lng, accuracy_m, target_type, band)
+values ('00000000-0000-0000-0000-00000000aa21', '00000000-0000-0000-0000-000000000002', 'in', 'late21', now(), 13.08, 80.27, 10, 'hub', 'warn');
+select pg_temp.as_user('00000000-0000-0000-0000-000000000002');
+do $$ begin
+  begin perform ask_punch_reason('00000000-0000-0000-0000-00000000aa21', 'late'); raise exception 'FAIL staff asked a reason';
+  exception when others then if sqlerrm like 'FAIL%' then raise; end if; end;
+  raise notice 'PASS staff cannot ask reasons';
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000a1');
+do $$ declare f uuid; begin
+  begin perform ask_punch_reason('00000000-0000-0000-0000-00000000aa21', 'early_out'); raise exception 'FAIL early-out asked on a check-in';
+  exception when others then if sqlerrm like 'FAIL%' then raise; end if; end;
+  f := ask_punch_reason('00000000-0000-0000-0000-00000000aa21', 'late');
+  if (select status from flags where id = f) <> 'reason_asked' then raise exception 'FAIL late flag not reason_asked'; end if;
+  raise notice 'PASS HR asks a reason for a late check-in';
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-000000000002');
+do $$ declare f uuid; begin
+  select (data->>'flag_id')::uuid into f from notifications where kind = 'reason_asked' and body like 'For your late check-in%' order by created_at desc limit 1;
+  if f is null then raise exception 'FAIL staff got no "Add a reason"'; end if;
+  perform submit_flag_reason(f, 'Bus breakdown on OMR');
+  raise notice 'PASS staff gets the ask and answers it';
+end $$;
+select pg_temp.reset();

@@ -2,7 +2,7 @@ import { DiwaliBanner, SkyCrackers } from '../../ui/Festive';
 import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import { useApp } from '../../App';
 import { api, errorText, ApiError } from '../../lib/api';
-import { hr, FLAG_LABEL, type Flag, type HrToday, type Hub, type LeaveReq, type OdReq, type Person, type PersonDetail, type Pin } from '../../lib/hr';
+import { hr, FLAG_LABEL, type Flag, type HrToday, type Hub, type LeaveReq, type OdReq, type Person, type PersonDetail, type Pin, type DayPunch } from '../../lib/hr';
 import { placeLabel, googleMapsUrl, appleMapsUrl, fmtDistance } from '../../lib/geo';
 import { fmtShortDay, fmtTime, greeting } from '../../lib/time';
 const MapView = lazy(() => import('../../ui/MapView'));
@@ -228,6 +228,7 @@ function PersonView({ p: p0, onBack, open }: { p: Person; onBack: () => void; op
   const [photos, setPhotos] = useState<Record<string, string | null>>({});
   const [sheet, setSheet] = useState<null | 'deact' | 'delete' | 'edit'>(null);
   const [active, setActive] = useState(p.active);
+  const reloadDetail = () => { hr.personDetail(p.id).then(setD).catch(() => undefined); };
   useEffect(() => {
     if (p.invited) return;
     hr.personDetail(p.id).then(async (x) => {
@@ -274,6 +275,8 @@ function PersonView({ p: p0, onBack, open }: { p: Person; onBack: () => void; op
             {punch('out')?.distance_m != null && <span className={`chip ${punch('out')!.inside === false ? 'c-bad' : 'c-ok'}`}><Icon n="flag" size={12} />Out {punch('out')!.inside === false ? 'outside' : 'inside'} · {fmtDistance(punch('out')!.distance_m!)}</span>}
             {punch('out')?.early_out && <span className="chip c-bad">Early out</span>}
           </div>}
+          <AskReason d={d} first={first} punch={punch('in')} kind="late" show={!!punch('in') && ['warn', 'bad'].includes(punch('in')!.band ?? '')} onAsked={reloadDetail} />
+          <AskReason d={d} first={first} punch={punch('out')} kind="early_out" show={!!punch('out')?.early_out} onAsked={reloadDetail} />
         </>)}
 
         <div className="sec">This month</div>
@@ -519,6 +522,23 @@ function DisputeView({ f, onBack }: { f: Flag; onBack: () => void }) {
         <button className="btn danger" onClick={() => act(() => hr.decideFlag(f.id, 'violation'), 'Marked violation')}>Violation</button>
       </div>
       {f.status !== 'reason_asked' && <button className="btn ghost" style={{ marginTop: 6 }} onClick={() => act(() => hr.askReason(f.id), `Asked ${first} for a reason`)}>Ask {first} for a reason</button>}
+    </div>
+  );
+}
+
+// HR asks the staff member why they came late or left early; their answer shows here and in Disputes
+function AskReason({ d, first, punch, kind, show, onAsked }: { d: PersonDetail; first: string; punch?: DayPunch; kind: 'late' | 'early_out'; show: boolean; onAsked: () => void }) {
+  const { toast } = useApp();
+  const [busy, setBusy] = useState(false);
+  if (!show || !punch?.id) return null;
+  const ask = d.asks?.find((a) => a.punch_id === punch.id && a.kind === kind);
+  const asked = ask && ['reason_asked', 'valid', 'violation'].includes(ask.status) || !!ask?.staff_reason;
+  const what = kind === 'late' ? `Late · ${fmtTime(punch.server_time)}` : `Left early · ${fmtTime(punch.server_time)}`;
+  return (
+    <div className="card row" style={{ marginTop: 10 }}>
+      <span className={`ri ${kind === 'late' ? 'c-warn' : 'c-bad'}`}><Icon n="clock" /></span>
+      <span className="t" style={{ whiteSpace: 'normal' }}><b>{what}</b><span style={{ whiteSpace: 'normal' }}>{ask?.staff_reason ? `“${ask.staff_reason}”` : asked ? `Asked ${first} for a reason` : 'No reason yet'}</span></span>
+      {!asked && <button className="chip c-od" disabled={busy} onClick={async () => { setBusy(true); try { await hr.askPunchReason(punch.id!, kind); toast(`Asked ${first} for a reason`); onAsked(); } catch { toast('Could not send. Try again.'); } setBusy(false); }}>{busy ? 'Sending' : 'Ask reason'}</button>}
     </div>
   );
 }

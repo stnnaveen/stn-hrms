@@ -24,9 +24,11 @@ export interface Flag {
 }
 export interface Hub { id: string; name: string; lat: number; lng: number; radius_m: number; maps_url: string | null; active: boolean; staff?: number; pin_set_at?: string | null }
 export interface Pin { server_time: string; lat: number; lng: number; accuracy_m: number | null }
-export interface DayPunch { kind: 'in' | 'out'; server_time: string; lat: number; lng: number; place_name: string | null; band: string | null; early_out: boolean; selfie_key: string | null; distance_m: number | null; inside?: boolean | null; accuracy_m?: number | null; target_type?: string | null; target_id?: string | null }
+export interface DayPunch { id?: string; kind: 'in' | 'out'; server_time: string; lat: number; lng: number; place_name: string | null; band: string | null; early_out: boolean; selfie_key: string | null; distance_m: number | null; inside?: boolean | null; accuracy_m?: number | null; target_type?: string | null; target_id?: string | null }
 export interface PersonDetail {
   punches: DayPunch[];
+  /** late / early-out asks on today's punches: whether a reason was asked and the staff answer */
+  asks?: { id: string; punch_id: string; kind: 'late' | 'early_out'; status: string; staff_reason: string | null }[];
   days: { day: string; band: string | null; status: string; early_out: boolean; in_time: string | null; out_time: string | null }[];
   ods: { id: string; subject: string; venue_name: string; starts_at: string; ends_at: string; status: string }[];
   leaves: { id: string; leave_type: string; starts_on: string; ends_on: string; status: string }[];
@@ -94,7 +96,7 @@ const real = {
       .select('id, kind, rule, details, status, staff_reason, created_at, user_id, punch:punches(server_time, lat, lng, accuracy_m, place_name, distance_m, quality_score, face_similarity, selfie_key, mocked, target_type, target_id, inside), p:profiles!flags_user_id_fkey(full_name, hub:hubs(name))')
       .in('status', ['open', 'reason_asked']).order('created_at', { ascending: false }).limit(100));
     return (r as unknown as (Flag & { p: { full_name: string; hub: { name: string } | null } })[])
-      .filter((f) => f.kind !== 'late' || f.staff_reason)
+      .filter((f) => f.kind !== 'late' || f.staff_reason || f.status === 'reason_asked')   // late shows once HR asked
       .map((f) => ({ ...f, who: f.p.full_name, hub: f.p.hub?.name ?? null }));
   },
   async pins(userId: string): Promise<Pin[]> {
@@ -141,18 +143,22 @@ const real = {
     const ist = new Date(Date.now() + 330 * 60000);
     const today = ist.toISOString().slice(0, 10), monthStart = today.slice(0, 8) + '01';
     const [punches, days, ods, leaves] = await Promise.all([
-      sb!.from('punches').select('kind, server_time, lat, lng, place_name, band, early_out, selfie_key, distance_m, inside, accuracy_m, target_type, target_id').eq('user_id', userId).gte('server_time', new Date(`${today}T00:00:00+05:30`).toISOString()).order('server_time'),
+      sb!.from('punches').select('id, kind, server_time, lat, lng, place_name, band, early_out, selfie_key, distance_m, inside, accuracy_m, target_type, target_id').eq('user_id', userId).gte('server_time', new Date(`${today}T00:00:00+05:30`).toISOString()).order('server_time'),
       sb!.from('attendance_days').select('day, band, status, early_out, in_time, out_time').eq('user_id', userId).gte('day', monthStart).order('day'),
       sb!.from('od_requests').select('id, subject, venue_name, starts_at, ends_at, status').eq('user_id', userId).order('starts_at', { ascending: false }).limit(10),
       sb!.from('leave_requests').select('id, leave_type, starts_on, ends_on, status').eq('user_id', userId).order('starts_on', { ascending: false }).limit(10)
     ]);
-    return { punches: (punches.data ?? []) as DayPunch[], days: (days.data ?? []) as PersonDetail['days'], ods: (ods.data ?? []) as PersonDetail['ods'], leaves: (leaves.data ?? []) as PersonDetail['leaves'] };
+    const ps = (punches.data ?? []) as DayPunch[];
+    const ids = ps.map((x) => x.id).filter(Boolean) as string[];
+    const asks = ids.length ? ((await sb!.from('flags').select('id, punch_id, kind, status, staff_reason').in('punch_id', ids).in('kind', ['late', 'early_out'])).data ?? []) : [];
+    return { asks: asks as PersonDetail['asks'], punches: ps, days: (days.data ?? []) as PersonDetail['days'], ods: (ods.data ?? []) as PersonDetail['ods'], leaves: (leaves.data ?? []) as PersonDetail['leaves'] };
   },
   async setActive(id: string, active: boolean) { const { error } = await sb!.from('profiles').update({ active }).eq('id', id); if (error) throw new ApiError('save_failed'); },
   async decideLeave(id: string, decision: 'approved' | 'returned', reason?: string) { const { error } = await sb!.rpc('decide_leave', { p_id: id, p_decision: decision, p_reason: reason ?? null }); if (error) throw new ApiError(error.message); },
   async decideOd(id: string, decision: 'approved' | 'returned', reason?: string) { const { error } = await sb!.rpc('decide_od', { p_id: id, p_decision: decision, p_reason: reason ?? null }); if (error) throw new ApiError(error.message); },
   async longLeave(user: string, type: string, from: string, to: string) { const { error } = await sb!.rpc('assign_long_leave', { p_user: user, p_type: type, p_from: from, p_to: to }); if (error) throw new ApiError('save_failed'); },
   async askReason(id: string) { const { error } = await sb!.rpc('ask_flag_reason', { p_flag: id }); if (error) throw new ApiError('save_failed'); },
+  async askPunchReason(punchId: string, kind: 'late' | 'early_out') { const { error } = await sb!.rpc('ask_punch_reason', { p_punch: punchId, p_kind: kind }); if (error) throw new ApiError('save_failed'); },
   async decideFlag(id: string, d: 'valid' | 'violation') { const { error } = await sb!.rpc('decide_flag', { p_flag: id, p_decision: d }); if (error) throw new ApiError('save_failed'); }
 };
 
@@ -186,6 +192,7 @@ const demo: typeof real = {
   async people() { await wait(); return D.people.map((p) => ({ ...p, geo: p.today?.in_time ? (p.full_name.startsWith('Vignesh') ? 'out' as const : 'in' as const) : null })); },
   async leaves() { await wait(); return D.leaves; },
   async ods() { await wait(); return D.ods; },
+  async askPunchReason() { await wait(); },
   async flags() { await wait(); return D.flags; },
   async pins(uid) {
     await wait();
@@ -205,7 +212,7 @@ const demo: typeof real = {
     const bands = ['ok', 'ok', 'warn', 'ok', 'ok', 'bad', 'ok'];
     const days = Array.from({ length: dnow - 1 }, (_, i) => i + 1).filter((d) => new Date(`${ym}${String(d).padStart(2, '0')}`).getUTCDay() % 6 !== 0)
       .map((d, i) => ({ day: `${ym}${String(d).padStart(2, '0')}`, band: i === 4 ? null : bands[i % 7], status: i === 4 ? 'od' : i === 9 ? 'absent' : 'present', early_out: i === 6, in_time: null, out_time: null }));
-    const punches = p?.today?.in_time ? [{ kind: 'in' as const, server_time: p.today.in_time, lat: 13.0108, lng: 80.2206, place_name: 'Guindy, Chennai', band: p.today.band, early_out: false, selfie_key: null, distance_m: 40 }] : [];
+    const punches = p?.today?.in_time ? [{ id: `pin-${uid}`, kind: 'in' as const, server_time: p.today.in_time, lat: 13.0108, lng: 80.2206, place_name: 'Guindy, Chennai', band: p.today.band, early_out: false, selfie_key: null, distance_m: 40 }] : [];
     return { punches, days, ods: [{ id: 'o9', subject: 'TIDCO policy meet', venue_name: 'Guindy, Chennai', starts_at: iso(-2880), ends_at: iso(-3000), status: 'approved' }, { id: 'o8', subject: 'Startup expo', venue_name: 'Codissia, Coimbatore', starts_at: iso(8000), ends_at: iso(7700), status: 'approved' }],
       leaves: [{ id: 'l9', leave_type: 'casual', starts_on: `${ym}03`, ends_on: `${ym}03`, status: 'approved' }] };
   },
