@@ -435,6 +435,19 @@ async function geocodeArea(q: string, deadline: number): Promise<{ lat: number; 
   return null;
 }
 
+// Places API (New) text search: Google finds the place it named in its own link. Needs GOOGLE_MAPS_KEY (or GOOGLE_GEOCODING_KEY).
+async function googlePlace(text: string): Promise<{ lat: number; lng: number } | null> {
+  const key = env('GOOGLE_MAPS_KEY') || env('GOOGLE_GEOCODING_KEY');
+  if (!key) return null;
+  try {
+    const r = await fetch('https://places.googleapis.com/v1/places:searchText', { method: 'POST', signal: AbortSignal.timeout(5000),
+      headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': key, 'X-Goog-FieldMask': 'places.location' },
+      body: JSON.stringify({ textQuery: text, regionCode: 'IN', pageSize: 1 }) });
+    const l = (await r.json())?.places?.[0]?.location;
+    return l ? { lat: l.latitude, lng: l.longitude } : null;
+  } catch { return null; }
+}
+
 // Google Maps "share list" links ("/maps/@/data=…!7m…") point at a saved-places list, not one place
 function isListLink(u: string): boolean { let d = u; try { d = decodeURIComponent(u); } catch { /* raw */ } return /\/maps\/@\/data=.*!7m/.test(d); }
 
@@ -483,9 +496,14 @@ async function resolveVenue(db: any, text: string): Promise<{ lat: number; lng: 
   } catch (e) { hops.push(`error ${String(e).slice(0, 80)}`); /* fall through to the name search */ }
   // link has only a place name (Google "?q=Leelavathi Nagar, Tharapakkam, Chennai"): look the name up (Google → Photon → OpenStreetMap)
   let approx = false;
+  // Google's own lookup of the text Google wrote into the link (exact place) - only when a Google Maps key is set
+  if (!c && name) { const g = await googlePlace(name); if (g) c = g; }
+  // otherwise only the area: the phone shows the map there and the person taps the exact venue (never a pin from a name)
   if (!c && name) {
     const parts = name.split(',').map((x) => x.trim()).filter(Boolean);
-    const tries = [...new Set([name, parts.slice(0, 3).join(', '), parts.slice(0, 2).join(', '), parts.slice(-3).join(', ')].filter(Boolean))];
+    // the map only opens on this area, so the locality and PIN (end of the address) beat the business name (start)
+    const pin = name.match(/\b\d{6}\b/)?.[0];
+    const tries = [...new Set([parts.slice(-3).join(', '), parts.slice(-2).join(', '), pin ? `${pin}, India` : '', name].filter(Boolean))];
     const deadline = Date.now() + 9000;
     for (const q of tries) { if (Date.now() > deadline) break; const g = await geocodeArea(q, deadline); if (g) { c = g; approx = true; break; } }
   }
@@ -494,7 +512,8 @@ async function resolveVenue(db: any, text: string): Promise<{ lat: number; lng: 
     return { error: isListLink(url) ? 'list_link' : 'no_pin' };
   }
   name = name?.replace(/^[23456789CFGHJMPQRVWX]{4,8}[+ ][23456789CFGHJMPQRVWX]{2,3}[\s,]*/i, '').trim() || null;   // drop the Plus Code from the name
-  return { lat: Number(c.lat.toFixed(6)), lng: Number(c.lng.toFixed(6)), name, place: await placeFor(db, c.lat, c.lng), url: start, ...(approx ? { approx: true } : {}) };
+  if (approx) return { lat: Number(c.lat.toFixed(6)), lng: Number(c.lng.toFixed(6)), name, place: null, url: start, approx: true };   // area only: the phone asks for a tap
+  return { lat: Number(c.lat.toFixed(6)), lng: Number(c.lng.toFixed(6)), name, place: await placeFor(db, c.lat, c.lng), url: start };
 }
 
 // Reverse geocode, cached by coordinates rounded to 4 decimals (~11 m) (PRD LC-09)

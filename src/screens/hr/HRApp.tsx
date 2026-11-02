@@ -548,6 +548,7 @@ function HubEdit({ h, onBack }: { h: Hub | null; onBack: () => void }) {
   const [pin, setPin] = useState<{ lat: number; lng: number; place: string | null; src: 'link' | 'tap' | 'saved'; url?: string } | null>(h?.pin_set_at ? { lat: h.lat, lng: h.lng, place: null, src: 'saved' } : null);
   const [lstate, setLstate] = useState<'idle' | 'checking' | 'error'>('idle');
   const [lerr, setLerr] = useState('');
+  const [area, setArea] = useState<{ lat: number; lng: number } | null>(null);   // link named only an area: tap the hub
   const [r, setR] = useState(h?.radius_m ?? 300);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -556,7 +557,12 @@ function HubEdit({ h, onBack }: { h: Hub | null; onBack: () => void }) {
     const t = link.trim(); if (!t) { setLstate('idle'); return; }
     setLstate('checking'); setLerr(''); setConfirmed(false);
     const k = setTimeout(async () => {
-      try { const v = await api.resolveVenue(t); setPin({ lat: v.lat, lng: v.lng, place: v.place, src: 'link', url: v.url }); setLstate('idle'); }
+      try {
+        const v = await api.resolveVenue(t);
+        // pin only from real coordinates or a tap, never from a name
+        if (v.approx) { setArea({ lat: v.lat, lng: v.lng }); setLstate('error'); setLerr('This link has no exact spot. Zoom in and tap the hub on the map.'); }
+        else { setArea(null); setPin({ lat: v.lat, lng: v.lng, place: v.place, src: 'link', url: v.url }); setLstate('idle'); }
+      }
       catch (e) { setLstate('error'); const code = e instanceof ApiError ? e.code : ''; setLerr(code === 'not_maps_link' ? 'Paste a Maps link or coordinates like 13.00623, 80.25241.' : code === 'list_link' ? 'That’s a saved-list link. Open the office itself in Maps → Share → Copy link. Or tap the map.' : 'Couldn’t read this link. Tap the hub on the map instead.'); }
     }, 450);
     return () => clearTimeout(k);
@@ -575,7 +581,7 @@ function HubEdit({ h, onBack }: { h: Hub | null; onBack: () => void }) {
     <div className="scr fade" style={{ paddingBottom: 40 }}>
       <Top small={h ? 'Edit' : 'New'} big={h ? `${h.name} hub` : 'Add hub'} onBack={onBack} />
       <Suspense fallback={<div className="mapv" style={{ height: 260 }} />}>
-        <MapView height={260} circle={pin ? { lat: pin.lat, lng: pin.lng, radius: r } : null} onTap={(lat, lng) => { setPin({ lat, lng, place: null, src: 'tap' }); setConfirmed(true); setErr(null); if (lstate === 'error') { setLstate('idle'); setLerr(''); } }} />
+        <MapView height={260} center={area && !pin ? { ...area, zoom: 15 } : area && pin?.src === 'saved' ? { ...area, zoom: 15 } : null} circle={pin && !(area && pin.src === 'saved') ? { lat: pin.lat, lng: pin.lng, radius: r } : null} onTap={(lat, lng) => { setPin({ lat, lng, place: null, src: 'tap' }); setConfirmed(true); setErr(null); if (lstate === 'error') { setLstate('idle'); setLerr(''); } }} />
       </Suspense>
       {pin && pin.src === 'link' && !confirmed ? (
         <div className="card" style={{ marginTop: 10, border: '1.5px solid var(--od, #2F62D9)' }}>

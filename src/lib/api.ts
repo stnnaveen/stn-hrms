@@ -210,6 +210,7 @@ const demo = {
     await wait(700);
     const typed = url.trim().match(/^(-?\d{1,2}\.\d{3,})\s*[,\s]\s*(-?\d{1,3}\.\d{3,})$/);
     if (typed) return { lat: +typed[1], lng: +typed[2], name: null, place: 'Typed coordinates', url: `https://www.google.com/maps?q=${typed[1]},${typed[2]}` };
+    if (/ftid=/.test(url)) return { lat: 13.0, lng: 80.1, name: 'SIDCO, Guindy', place: null, url, approx: true };   // place-id link: area only
     if (!/^https?:\/\/(maps\.app\.goo\.gl|goo\.gl|(www\.|maps\.)?google\.[a-z.]+|maps\.apple\.com|maps\.apple)\//i.test(url.trim().match(/https?:\/\/\S+/)?.[0] ?? '')) throw new ApiError('not_maps_link');
     const m = url.match(/(-?\d+\.\d+),(-?\d+\.\d+)/);
     return m ? { lat: +m[1], lng: +m[2], name: decodeURIComponent(url.match(/place\/([^/@]+)/)?.[1]?.replace(/\+/g, ' ') ?? '') || null, place: 'Guindy, Chennai', url }

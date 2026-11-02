@@ -13,9 +13,11 @@ export interface MapProps {
   points?: MapPoint[];
   onTap?: (lat: number, lng: number) => void;
   height?: number;
+  /** where to look when there is nothing to show yet (e.g. the area a venue link named) */
+  center?: { lat: number; lng: number; zoom?: number } | null;
 }
 
-export default function MapView({ circle, line, points = [], onTap, height = 280 }: MapProps) {
+export default function MapView({ circle, line, points = [], onTap, height = 280, center }: MapProps) {
   const el = useRef<HTMLDivElement>(null);
   const map = useRef<L.Map | null>(null);
   const layer = useRef<L.LayerGroup | null>(null);
@@ -54,7 +56,8 @@ export default function MapView({ circle, line, points = [], onTap, height = 280
       bounds.push([p.lat, p.lng]);
     }
     if (bounds.length) m.fitBounds(L.latLngBounds(bounds), { padding: [28, 28], maxZoom: 17 });
-  }, [circle?.lat, circle?.lng, circle?.radius, circle?.label, JSON.stringify(line), JSON.stringify(points)]); // eslint-disable-line react-hooks/exhaustive-deps
+    else if (center) m.setView([center.lat, center.lng], center.zoom ?? 15);
+  }, [circle?.lat, circle?.lng, circle?.radius, circle?.label, JSON.stringify(line), JSON.stringify(points), center?.lat, center?.lng]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return <div ref={el} className="mapv" style={{ height }} role="application" aria-label="Map. Tap to test a point." />;
 }
