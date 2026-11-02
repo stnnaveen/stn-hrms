@@ -14,6 +14,8 @@ import { evaluate, istMinutes, radiusCheck, type Settings, type PrevPunch } from
 import { firstUrl, isMapsHost, isMapsRedirect, coordsFrom, coordsFromHtml, nameFrom, coordsFromText, plusCodeIn, decodePlusCode } from '../_shared/maplink.ts';
 
 const env = (k: string) => Deno.env.get(k) ?? '';
+// one Google key (Places API (New) + Geocoding API enabled) under either name
+const gkeyOf = () => env('GOOGLE_MAPS_KEY') || env('GOOGLE_GEOCODING_KEY');
 const REGION = env('AWS_REGION') || 'ap-south-1';
 const BUCKET = env('S3_SELFIE_BUCKET');
 const aws = { region: REGION, credentials: { accessKeyId: env('AWS_ACCESS_KEY_ID'), secretAccessKey: env('AWS_SECRET_ACCESS_KEY') } };
@@ -116,7 +118,7 @@ Deno.serve(async (req) => {
         s3Ok = true;
       } catch (e) { s3Ok = false; s3Err = (e as { name?: string }).name ?? 'S3Error'; }
     }
-    return json({ ok: true, db_ms: dbMs, db_ok: !error, s3_ok: s3Ok, s3_error: s3Err, bucket: USE_S3 ? BUCKET : null, storage: USE_S3 ? 's3' : 'supabase', face_match: USE_S3, geocode: env('GOOGLE_GEOCODING_KEY') ? 'google' : env('OLA_MAPS_KEY') ? 'ola' : 'osm', region: REGION });
+    return json({ ok: true, db_ms: dbMs, db_ok: !error, s3_ok: s3Ok, s3_error: s3Err, bucket: USE_S3 ? BUCKET : null, storage: USE_S3 ? 's3' : 'supabase', face_match: USE_S3, geocode: gkeyOf() ? 'google' : env('OLA_MAPS_KEY') ? 'ola' : 'osm', region: REGION });
   }
   // ---- HR / Chairman / Tech: short-lived links (5 min) to view selfies, wherever each file lives
   if (body.action === 'selfie_urls') {
@@ -417,7 +419,7 @@ async function fromPlusCode(text: string, db: any): Promise<{ lat: number; lng: 
 }
 async function geocodeArea(q: string, deadline: number): Promise<{ lat: number; lng: number } | null> {
   const left = () => Math.max(500, Math.min(3000, deadline - Date.now()));
-  const gkey = env('GOOGLE_GEOCODING_KEY');
+  const gkey = gkeyOf();
   if (gkey) {
     try {
       const j = await (await fetch(`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(q)}&region=in&key=${gkey}`, { signal: AbortSignal.timeout(left()) })).json();
@@ -450,7 +452,7 @@ async function googleMapSearch(text: string): Promise<{ lat: number; lng: number
 
 // Places API (New) text search: Google finds the place it named in its own link. Needs GOOGLE_MAPS_KEY (or GOOGLE_GEOCODING_KEY).
 async function googlePlace(text: string): Promise<{ lat: number; lng: number } | null> {
-  const key = env('GOOGLE_MAPS_KEY') || env('GOOGLE_GEOCODING_KEY');
+  const key = gkeyOf();
   if (!key) return null;
   try {
     const r = await fetch('https://places.googleapis.com/v1/places:searchText', { method: 'POST', signal: AbortSignal.timeout(5000),
@@ -511,8 +513,9 @@ async function resolveVenue(db: any, text: string): Promise<{ lat: number; lng: 
   // Google's own map search for the exact text Google wrote into the link (name + address) gives Google's exact pin.
   // Then the Places API if a key is set. Never a pin from a third-party name search.
   let via = c ? 'link' : '';
-  if (!c && name) { const g = await googleMapSearch(name); if (g) { c = g; via = 'google-search'; } }
+  // with a key, Google's official Places API first; Google Maps' public search as the keyless fallback
   if (!c && name) { const g = await googlePlace(name); if (g) { c = g; via = 'google-places'; } }
+  if (!c && name) { const g = await googleMapSearch(name); if (g) { c = g; via = 'google-search'; } }
   // otherwise only the area: the phone shows the map there and the person taps the exact venue (never a pin from a name)
   if (!c && name) {
     const parts = name.split(',').map((x) => x.trim()).filter(Boolean);
@@ -539,7 +542,7 @@ async function placeFor(db: any, lat: number, lng: number): Promise<string | nul
   const { data: hit } = await db.from('geo_cache').select('place_name').eq('key', key).maybeSingle();
   if (hit) return hit.place_name;
   let name: string | null = null;
-  const gkey = env('GOOGLE_GEOCODING_KEY');
+  const gkey = gkeyOf();
   if (gkey) {
     // Google: the same names people see in Google Maps
     try {
