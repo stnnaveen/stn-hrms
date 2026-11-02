@@ -43,7 +43,7 @@ jobs:
       - name: One link
         if: ${{ inputs.link != '' }}
         env: { LINK: '${{ inputs.link }}' }
-        run: node tools/diag/linktest.mjs
+        run: node tools/diag/linktest.mjs && node tools/diag/cidtest.mjs
       - name: Live server answers
         if: ${{ inputs.resolve != '' }}
         env: { LINKS: '${{ inputs.resolve }}' }
