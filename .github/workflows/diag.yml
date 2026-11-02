@@ -27,6 +27,8 @@ jobs:
           keys=$(supabase projects api-keys --project-ref "$REF" -o json)
           svc=$(echo "$keys" | jq -r '.[] | select(.name=="service_role") | .api_key'); anon=$(echo "$keys" | jq -r '.[] | select(.name=="anon") | .api_key')
           echo "::add-mask::$svc"; echo "::add-mask::$anon"; echo "SERVICE=$svc" >> "$GITHUB_ENV"; echo "ANON=$anon" >> "$GITHUB_ENV"
+      - name: Which server secrets are set (names only)
+        run: supabase secrets list --project-ref "$REF" | awk '{print "SECRET " $1}'
       - name: Map link failures (server log)
         run: node tools/diag/venuelogs.mjs
       - name: Security check (live)
@@ -43,7 +45,7 @@ jobs:
       - name: One link
         if: ${{ inputs.link != '' }}
         env: { LINK: '${{ inputs.link }}' }
-        run: node tools/diag/linktest.mjs && node tools/diag/cidtest.mjs
+        run: node tools/diag/linktest.mjs && node tools/diag/cidtest.mjs && FTID=0x3a526153743c13cb:0x4ee7f1df6abac44f node tools/diag/cid2.mjs
       - name: Live server answers
         if: ${{ inputs.resolve != '' }}
         env: { LINKS: '${{ inputs.resolve }}' }
