@@ -41,8 +41,7 @@ export function SignIn() {
             onChange={(e) => setEmail(e.target.value)} aria-label="Work email" /></label>
         {err && <div className="err" role="alert">{err}</div>}
         <button className="btn dark" type="submit" disabled={!valid || busy}>{busy ? 'Sending' : 'Continue'}</button>
-        <div className="or">or</div>
-        <button className="btn light" type="button" onClick={() => api.google()}><span className="gmark">G</span>Continue with Google</button>
+        {/* Google sign-in hidden for now; api.google() stays ready to switch back on */}
       </form>
     </div>
   );
