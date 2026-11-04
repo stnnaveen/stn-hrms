@@ -65,7 +65,7 @@ jobs:
             adb install -r out/*.apk
             adb shell pm grant in.startuptn.hr android.permission.ACCESS_FINE_LOCATION || true
             adb shell am start -n in.startuptn.hr/.MainActivity
-            sleep 30
+            sleep 40
             adb exec-out screencap -p > shot-start.png
             adb shell input text 'naveenflop+staff@gmail.com' || true
             sleep 3
@@ -73,5 +73,9 @@ jobs:
             adb logcat -d | grep -i -E "capacitor|chromium|console|AndroidRuntime|FATAL" | tail -120 > logcat.txt || true
       - uses: actions/upload-artifact@v4
         if: always()
-        with: { name: android-smoke, path: 'shot-*.png
-logcat.txt', retention-days: 14 }
+        with:
+          name: android-smoke
+          retention-days: 14
+          path: |
+            shot-*.png
+            logcat.txt
