@@ -25,6 +25,9 @@ export interface Flag {
 export interface Hub { id: string; name: string; lat: number; lng: number; radius_m: number; maps_url: string | null; active: boolean; staff?: number; pin_set_at?: string | null }
 export interface Pin { server_time: string; lat: number; lng: number; accuracy_m: number | null }
 export interface DayPunch { id?: string; kind: 'in' | 'out'; server_time: string; lat: number; lng: number; place_name: string | null; band: string | null; early_out: boolean; selfie_key: string | null; distance_m: number | null; inside?: boolean | null; accuracy_m?: number | null; target_type?: string | null; target_id?: string | null }
+export interface PresenceDay { tracked: boolean; reason?: string; from?: string; to?: string; inside_min: number; outside_min: number; od_min: number; no_signal_min: number;
+  trips: { from: string; to: string; min: number; max_m: number; ongoing?: boolean }[]; samples: number; last_at?: string | null; last_inside?: boolean | null }
+export interface PresenceNow { user_id: string; outside_min: number; no_signal_min: number; trips: number; last_at: string | null; last_inside: boolean | null }
 export interface PersonDetail {
   punches: DayPunch[];
   /** late / early-out asks on today's punches: whether a reason was asked and the staff answer */
@@ -158,6 +161,8 @@ const real = {
   async decideOd(id: string, decision: 'approved' | 'returned', reason?: string) { const { error } = await sb!.rpc('decide_od', { p_id: id, p_decision: decision, p_reason: reason ?? null }); if (error) throw new ApiError(error.message); },
   async longLeave(user: string, type: string, from: string, to: string) { const { error } = await sb!.rpc('assign_long_leave', { p_user: user, p_type: type, p_from: from, p_to: to }); if (error) throw new ApiError('save_failed'); },
   async askReason(id: string) { const { error } = await sb!.rpc('ask_flag_reason', { p_flag: id }); if (error) throw new ApiError('save_failed'); },
+  async presenceDay(uid: string): Promise<PresenceDay> { return must(await sb!.rpc('presence_day', { p_user: uid })) as PresenceDay; },
+  async presenceToday(): Promise<PresenceNow[]> { return must(await sb!.rpc('presence_today')) as PresenceNow[]; },
   async askPunchReason(punchId: string, kind: 'late' | 'early_out') { const { error } = await sb!.rpc('ask_punch_reason', { p_punch: punchId, p_kind: kind }); if (error) throw new ApiError('save_failed'); },
   async decideFlag(id: string, d: 'valid' | 'violation') { const { error } = await sb!.rpc('decide_flag', { p_flag: id, p_decision: d }); if (error) throw new ApiError('save_failed'); }
 };
@@ -192,6 +197,9 @@ const demo: typeof real = {
   async people() { await wait(); return D.people.map((p) => ({ ...p, geo: p.today?.in_time ? (p.full_name.startsWith('Vignesh') ? 'out' as const : 'in' as const) : null })); },
   async leaves() { await wait(); return D.leaves; },
   async ods() { await wait(); return D.ods; },
+  async presenceDay(uid: string): Promise<PresenceDay> { await wait(); const t = (h: number, m: number) => { const d = new Date(); d.setUTCHours(h - 5, m - 30, 0, 0); return d.toISOString(); };
+    return uid.endsWith('1') ? { tracked: true, from: t(10, 2), to: t(16, 30), inside_min: 312, outside_min: 48, od_min: 0, no_signal_min: 28, samples: 90, trips: [{ from: t(11, 40), to: t(12, 5), min: 25, max_m: 640 }, { from: t(15, 10), to: t(15, 33), min: 23, max_m: 1300 }] } : { tracked: false, inside_min: 0, outside_min: 0, od_min: 0, no_signal_min: 0, trips: [], samples: 0 }; },
+  async presenceToday() { await wait(); return []; },
   async askPunchReason() { await wait(); },
   async flags() { await wait(); return D.flags; },
   async pins(uid) {

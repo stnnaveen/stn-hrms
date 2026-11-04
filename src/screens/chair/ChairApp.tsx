@@ -1,3 +1,4 @@
+import { WorkHours } from '../../ui/WorkHours';
 import { DiwaliBanner, SkyCrackers } from '../../ui/Festive';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useApp } from '../../App';
@@ -507,6 +508,7 @@ function PersonSheet({ s, onClose }: { s: Staff; onClose: () => void }) {
         {s.cat !== 'lv' && (!d ? <Spin /> : <div className="dayc" style={{ marginTop: 16 }}>{tile('in')}{tile('out')}</div>)}
         {(() => { const pi = d?.punches.find((x) => x.kind === 'in'), po = d?.punches.find((x) => x.kind === 'out');
           return pi ? <PunchMap height={220} main={{ ...pi, label: `In ${fmtTime(pi.server_time)}` }} extra={po ? [{ ...po, label: `Out ${fmtTime(po.server_time)}` }] : []} /> : null; })()}
+        {s.cat !== 'lv' && <WorkHours userId={s.id} />}
         <p className="to" style={{ marginBottom: 0 }}><Icon n="eye" size={14} style={{ verticalAlign: -2 }} /> View only. Changes go through HR.</p>
       </div>
       <button className="btn ghost" style={{ marginTop: 6 }} onClick={onClose}>Close</button></div></>);

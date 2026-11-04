@@ -12,6 +12,7 @@ import { AccountSheet } from '../../ui/AccountSheet';
 import { VenueLink } from '../../ui/VenueLink';
 import { GeoFlag } from '../../ui/GeoFlag';
 import { PunchMap } from '../../ui/PunchMap';
+import { WorkHours } from '../../ui/WorkHours';
 import { RefreshButton } from '../../ui/RefreshButton';
 
 type Tab = 'home' | 'staff' | 'approvals' | 'disputes';
@@ -139,6 +140,9 @@ function usePeople() {
 function Today({ onBack, open }: { onBack: () => void; open: (s: Sub) => void }) {
   const people = usePeople();
   const [f, setF] = useState<'in' | 'late' | 'out' | 'od'>('in');
+  // store app: who is outside the radius right now, and for how long today
+  const [away, setAway] = useState<Map<string, { outside_min: number; last_inside: boolean | null }>>(new Map());
+  useEffect(() => { hr.presenceToday().then((r) => setAway(new Map(r.map((x) => [x.user_id, x])))).catch(() => undefined); }, []);
   const lab = { in: 'Checked in', late: 'Late', out: 'Not in', od: 'OD' };
   const list = (people ?? []).filter((p) => p.active && !p.invited && (
     f === 'in' ? !!p.today?.in_time : f === 'late' ? ['warn', 'bad'].includes(p.today?.band ?? '') : f === 'od' ? p.today?.status === 'od' : !p.today?.in_time));
@@ -147,7 +151,7 @@ function Today({ onBack, open }: { onBack: () => void; open: (s: Sub) => void })
       <Top small="Today" big="Attendance" onBack={onBack} />
       <div className="pillrow" role="group" aria-label="Filter">{(Object.keys(lab) as (keyof typeof lab)[]).map((k) => <button key={k} className={`pill ${f === k ? 'on' : ''}`} onClick={() => setF(k)}>{lab[k]}</button>)}</div>
       {!people ? <Spin /> : <div className="list">{list.map((p) => (
-        <button key={p.id} className="card row" onClick={() => open({ name: 'person', p })}><Av n={p.full_name} /><div className="t"><b className={p.geo ? 'nmf' : undefined}>{p.full_name}<GeoFlag geo={p.geo} /></b><span>{p.hub ?? 'No hub'} hub</span></div>{dayChip(p)}</button>
+        <button key={p.id} className="card row" onClick={() => open({ name: 'person', p })}><Av n={p.full_name} /><div className="t"><b className={p.geo ? 'nmf' : undefined}>{p.full_name}<GeoFlag geo={p.geo} /></b><span>{p.hub ?? 'No hub'} hub{away.get(p.id)?.outside_min ? ` · out ${away.get(p.id)!.outside_min} min today` : ''}</span></div>{away.get(p.id)?.last_inside === false ? <span className="chip c-bad">Out now</span> : dayChip(p)}</button>
       ))}{list.length === 0 && <div className="empty"><b>No one here</b>Try another filter.</div>}</div>}
     </div>
   );
@@ -275,6 +279,7 @@ function PersonView({ p: p0, onBack, open }: { p: Person; onBack: () => void; op
             {punch('out')?.distance_m != null && <span className={`chip ${punch('out')!.inside === false ? 'c-bad' : 'c-ok'}`}><Icon n="flag" size={12} />Out {punch('out')!.inside === false ? 'outside' : 'inside'} · {fmtDistance(punch('out')!.distance_m!)}</span>}
             {punch('out')?.early_out && <span className="chip c-bad">Early out</span>}
           </div>}
+          <WorkHours userId={p.id} />
           <AskReason d={d} first={first} punch={punch('in')} kind="late" show={!!punch('in') && ['warn', 'bad'].includes(punch('in')!.band ?? '')} onAsked={reloadDetail} />
           <AskReason d={d} first={first} punch={punch('out')} kind="early_out" show={!!punch('out')?.early_out} onAsked={reloadDetail} />
         </>)}
