@@ -1,4 +1,5 @@
 import { DiwaliBanner, SkyCrackers, crackers, diwaliOn } from '../ui/Festive';
+import { isStoreApp } from '../device/presence';
 import { useEffect, useState } from 'react';
 import { useApp } from '../App';
 import { api, type Notif } from '../lib/api';
@@ -17,6 +18,9 @@ const STATUS_CHIP: Record<string, string> = { approved: 'c-ok', pending: 'c-pend
 export function Home() {
   const { today, reload, go, setCamMode, setOdPrefill, setLeaveOd, toast } = useApp();
   const festive = diwaliOn();
+  // store app: ask once for work-hours location (check-in → check-out, office hours). Never in the browser app.
+  const [needPresence, setNeedPresence] = useState(false);
+  useEffect(() => { if (isStoreApp()) api.presenceConsent().then((ok) => setNeedPresence(!ok)).catch(() => undefined); }, []);
   const [fab, setFab] = useState(false);
   const [sheet, setSheet] = useState<null | 'early' | 'early1h' | 'out'>(null);
   const [notifs, setNotifs] = useState<Notif[]>([]);
@@ -65,6 +69,10 @@ export function Home() {
         {due && (
           <div className="banner"><span className="pulse" /><div className="t"><b>Time to check out</b><span>Office closed at 6:00 PM</span></div>
             <button className="sbtn" onClick={() => { setCamMode('out'); go('camera'); }}>Check out</button></div>
+        )}
+        {needPresence && (
+          <div className="banner"><span className="ri c-od" style={{ width: 36, height: 36 }}><Icon n="pin" size={18} /></span><div className="t"><b>Work-hours location</b><span>Check-in to check-out, office hours only.</span></div>
+            <button className="sbtn" onClick={async () => { try { await api.givePresenceConsent(); setNeedPresence(false); toast('Location on for work hours'); void reload(); } catch { toast('Could not save. Try again.'); } }}>Agree</button></div>
         )}
         <DiwaliBanner name={first} />
         <div className="dark"><SkyCrackers />

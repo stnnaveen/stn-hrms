@@ -103,6 +103,8 @@ const real = {
       : await sb!.auth.verifyOtp({ email, token, type: 'email' });
     if (error) throw new ApiError('bad_code');
   },
+  async presenceConsent(): Promise<boolean> { const { data: u } = await sb!.auth.getUser(); const { data } = await sb!.from('profiles').select('presence_consent_at').eq('id', u.user?.id ?? '').maybeSingle(); return !!data?.presence_consent_at; },
+  async givePresenceConsent() { const { error } = await sb!.rpc('give_presence_consent'); if (error) throw new ApiError('save_failed'); },
   /** Store app: send queued work-hours samples. Native HTTP, because Android slows WebView requests in the background. */
   async sendPresence(samples: { lat: number; lng: number; accuracy: number | null; time: number; source: string }[]): Promise<boolean> {
     const { data } = await sb!.auth.getSession();
@@ -184,6 +186,8 @@ const demo = {
   async sendCode(email: string) { await wait(400); if (!/@/.test(email)) throw new ApiError('unknown_email'); demoState.email = email.toLowerCase(); },
   async verifyCode(_e: string, code: string) { await wait(400); if (code.length < 6) throw new ApiError('bad_code'); demoState.signedIn = true; listeners.forEach((l) => l(true)); },
   async sendPresence() { return true; },
+  async presenceConsent() { return true; },
+  async givePresenceConsent() { /* demo */ },
   async google() { demoState.signedIn = true; listeners.forEach((l) => l(true)); },
   async signOut() { demoState.signedIn = false; listeners.forEach((l) => l(false)); },
   async today(): Promise<Today> {

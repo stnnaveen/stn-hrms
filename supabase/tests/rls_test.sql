@@ -488,3 +488,13 @@ do $$ declare j jsonb; begin
   raise notice 'PASS a day without check-in is not tracked';
 end $$;
 select pg_temp.reset();
+
+-- ---------- 23. work-hours location consent ----------
+select pg_temp.as_user('00000000-0000-0000-0000-000000000002');
+do $$ begin
+  perform give_presence_consent();
+  if (select presence_consent_at from profiles where id = '00000000-0000-0000-0000-000000000002') is null then raise exception 'FAIL consent not recorded'; end if;
+  if (select count(*) from profiles where presence_consent_at is not null) <> 1 then raise exception 'FAIL consent touched other rows'; end if;
+  raise notice 'PASS staff records their own work-hours location consent';
+end $$;
+select pg_temp.reset();

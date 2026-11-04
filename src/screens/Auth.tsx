@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useApp } from '../App';
 import { api, ApiError, errorText, CODE_LOGINS } from '../lib/api';
+import { isStoreApp } from '../device/presence';
 import { fmtDay, greeting, istMinutesNow } from '../lib/time';
 import { Icon, Logo } from '../ui/Icon';
 import { PermHelp } from '../ui/PermHelp';
@@ -96,7 +97,7 @@ export function Consent() {
       <div className="card" style={{ marginTop: 22 }}>
         <div className="row"><div className="ri c-od"><Icon n="cam" /></div><div className="t"><b>Selfie</b><span>Each check-in. Kept 90 days.</span></div></div>
         <div className="row"><div className="ri c-lv"><Icon n="scan" /></div><div className="t"><b>Face match</b><span>Compared with your approved photo.</span></div></div>
-        <div className="row"><div className="ri c-ok"><Icon n="pin" /></div><div className="t"><b>Location</b><span>Only when you check in or out.</span></div></div>
+        <div className="row"><div className="ri c-ok"><Icon n="pin" /></div><div className="t"><b>Location</b><span>{isStoreApp() ? 'Check-in to check-out, office hours only.' : 'Only when you check in or out.'}</span></div></div>
         <div className="row"><div className="ri c-pend"><Icon n="shield" /></div><div className="t"><b>Stored in India</b><span>Seen by HR and admins only.</span></div></div>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 22 }}>

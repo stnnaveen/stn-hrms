@@ -475,12 +475,12 @@ async function googlePlace(text: string): Promise<{ lat: number; lng: number } |
 async function presence(db: any, uid: string, raw: NonNullable<Body['samples']>): Promise<{ ok: true; stored: number }> {
   const today = istDay(new Date());
   const [{ data: prof }, { data: day }, { data: cfg }] = await Promise.all([
-    db.from('profiles').select('active, role, hub_id').eq('id', uid).single(),
+    db.from('profiles').select('active, role, hub_id, presence_consent_at').eq('id', uid).single(),
     db.from('attendance_days').select('in_time, out_time, status').eq('user_id', uid).eq('day', today).maybeSingle(),
     db.from('settings').select('key, value').in('key', ['presence_enabled', 'presence_alert_minutes', 'office_start', 'office_end'])
   ]);
   const set = Object.fromEntries((cfg ?? []).map((r: { key: string; value: unknown }) => [r.key, r.value]));
-  if (!prof?.active || !['staff', 'intern'].includes(prof.role) || set.presence_enabled === false || !day?.in_time || day.status === 'leave') return { ok: true, stored: 0 };
+  if (!prof?.active || !prof.presence_consent_at || !['staff', 'intern'].includes(prof.role) || set.presence_enabled === false || !day?.in_time || day.status === 'leave') return { ok: true, stored: 0 };
   const hhmm = (v: unknown, d: string) => (typeof v === 'string' ? v : d);
   const open = Date.parse(`${today}T${hhmm(set.office_start, '10:00')}:00+05:30`) - 15 * 60000;
   const close = Date.parse(`${today}T${hhmm(set.office_end, '18:00')}:00+05:30`) + 5 * 60000;

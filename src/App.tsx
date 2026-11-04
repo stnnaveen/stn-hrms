@@ -114,8 +114,9 @@ export default function App() {
     const staff = today && ['staff', 'intern'].includes(today.profile.role);
     if (!staff || !t?.in_time || t.out_time) { void stopPresence(); return; }
     const day = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
-    void startPresence((s) => api.sendPresence(s), Date.parse(`${day}T18:05:00+05:30`));
-  }, [today?.today?.in_time, today?.today?.out_time, today?.profile.role]); // eslint-disable-line react-hooks/exhaustive-deps
+    // only after the staff member agreed to work-hours location (asked once on Home)
+    void api.presenceConsent().then((ok) => { if (ok) void startPresence((s) => api.sendPresence(s), Date.parse(`${day}T18:05:00+05:30`)); });
+  }, [today]); // re-checked on every reload (start is idempotent)
 
   const ctx: Ctx = { screen, go, back, toast, email, setEmail, today, reload, camMode, setCamMode, result, setResult, odPrefill, setOdPrefill, leaveOd, setLeaveOd };
   const view = {
