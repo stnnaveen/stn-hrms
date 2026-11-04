@@ -552,6 +552,17 @@ async function presence(db: any, uid: string, raw: Record<string, unknown>[]): P
   });
   await db.from('presence_samples').insert(rows);
 
+  // fake GPS (mock location app) reported by the phone: one dispute a day, HR told
+  const fake = rows.find((r) => r.mock === true);
+  if (fake) {
+    const { data: seen } = await db.from('flags').select('id').eq('user_id', uid).eq('kind', 'mock_location').gte('created_at', `${today}T00:00:00+05:30`).limit(1).maybeSingle();
+    if (!seen) {
+      const { data: me } = await db.from('profiles').select('full_name').eq('id', uid).single();
+      await db.from('flags').insert({ user_id: uid, kind: 'mock_location', rule: 'R-03 fake GPS app detected (store app, work hours)', details: { at: fake.at, lat: fake.lat, lng: fake.lng } });
+      await db.rpc('notify_role', { p_role: 'hr', p_kind: 'mock_location', p_title: 'Fake GPS detected', p_body: me?.full_name ?? 'Staff', p_data: { user_id: uid } });
+    }
+  }
+
   // long time outside: from the first outside sample after the last inside one
   const last = rows[rows.length - 1];
   if (!last.inside && last.target_type === 'hub' && last.source !== 'off') {
