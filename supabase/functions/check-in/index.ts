@@ -26,16 +26,17 @@ const rek = new RekognitionClient(aws);
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-presence-token',
   'Access-Control-Allow-Methods': 'POST, OPTIONS'
 };
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
 
 interface Body {
-  action: 'start' | 'complete' | 'punch' | 'ping' | 'timing' | 'presence' | 'reset_test_day' | 'health' | 'selfie_urls' | 'resolve_venue' | 'radius_test' | 'purge' | 'delete_person' | 'remove_selfie';
+  action: 'start' | 'complete' | 'punch' | 'ping' | 'timing' | 'presence' | 'presence_token' | 'reset_test_day' | 'health' | 'selfie_urls' | 'resolve_venue' | 'radius_test' | 'purge' | 'delete_person' | 'remove_selfie';
   timings?: Record<string, number>; total_ms?: number; keys?: string[]; leave_for_od?: string | null;
-  samples?: { lat: number; lng: number; accuracy?: number | null; time: number; source?: string }[];
+  // our own shape, or the background-location SDK's record shape (coords, timestamp, is_moving, event, provider)
+  samples?: Record<string, unknown>[];
   kind: 'in' | 'out' | 'visit';
   url?: string;
   // radius_test (Tech): a point to test against a hub, or against a pin + radius
@@ -73,6 +74,13 @@ Deno.serve(async (req) => {
   } catch { return json({ error: 'bad_json' }, 400); }
   // warm-up when the camera opens, so the real save doesn't wait for a cold start
   if (body.action === 'ping') return json({ ok: true });
+
+  // ---- store app, background: the location SDK posts with a long-lived phone token (no app session needed)
+  if (body.action === 'presence' && req.headers.get('x-presence-token')) {
+    const uid = await verifyPresenceToken(req.headers.get('x-presence-token')!);
+    if (!uid) return json({ error: 'not_signed_in' }, 401);
+    return json(await presence(createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY')), uid, body.samples ?? []));
+  }
 
   const authHeader = req.headers.get('Authorization') ?? '';
   const asUser = createClient(env('SUPABASE_URL'), env('SUPABASE_ANON_KEY'), { global: { headers: { Authorization: authHeader } } });
@@ -178,6 +186,8 @@ Deno.serve(async (req) => {
   // ---- store app: work-hours location samples sent in the background. The server decides inside/outside;
   //      the reply says nothing about it (rule 2).
   if (body.action === 'presence') return json(await presence(db, user.id, body.samples ?? []));
+  // the phone's background-location token: 30 days, renewed whenever the app opens
+  if (body.action === 'presence_token') return json({ token: await signPresenceToken(user.id), expires_in: 30 * 86400 });
 
   // ---- OD venue: read a Google or Apple Maps link on the server (short links need redirects the phone can't follow)
   if (body.action === 'resolve_venue') {
@@ -468,11 +478,37 @@ async function googlePlace(text: string): Promise<{ lat: number; lng: number } |
   } catch { return null; }
 }
 
+// Phone token for background location: base64url({u, e}).HMAC-SHA256, key derived from the service key (never leaves
+// the server). Holds only the user id and expiry; every use re-checks the profile (active, consent) in presence().
+const b64u = (b: Uint8Array) => btoa(String.fromCharCode(...b)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const unb64u = (s: string) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4)), (c) => c.charCodeAt(0));
+let presenceKey: CryptoKey | null = null;
+async function pkey() {
+  if (presenceKey) return presenceKey;
+  const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(env('SUPABASE_SERVICE_ROLE_KEY')), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const raw = new Uint8Array(await crypto.subtle.sign('HMAC', base, new TextEncoder().encode('stn-presence-v1')));
+  presenceKey = await crypto.subtle.importKey('raw', raw, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify']);
+  return presenceKey;
+}
+async function signPresenceToken(uid: string): Promise<string> {
+  const payload = b64u(new TextEncoder().encode(JSON.stringify({ u: uid, e: Math.floor(Date.now() / 1000) + 30 * 86400 })));
+  return `${payload}.${b64u(new Uint8Array(await crypto.subtle.sign('HMAC', await pkey(), new TextEncoder().encode(payload))))}`;
+}
+async function verifyPresenceToken(token: string): Promise<string | null> {
+  try {
+    const [payload, sig] = token.split('.');
+    if (!payload || !sig || token.length > 400) return null;
+    if (!(await crypto.subtle.verify('HMAC', await pkey(), unb64u(sig), new TextEncoder().encode(payload)))) return null;
+    const p = JSON.parse(new TextDecoder().decode(unb64u(payload)));
+    return typeof p.u === 'string' && typeof p.e === 'number' && p.e > Date.now() / 1000 ? p.u : null;
+  } catch { return null; }
+}
+
 // Work-hours presence: keep samples between check-in and check-out inside office hours, judge each against the hub
 // (or the venue of an approved OD at that time), store them, and raise one 'away' dispute + tell HR when someone has
 // been outside longer than the alert setting.
 // deno-lint-ignore no-explicit-any
-async function presence(db: any, uid: string, raw: NonNullable<Body['samples']>): Promise<{ ok: true; stored: number }> {
+async function presence(db: any, uid: string, raw: Record<string, unknown>[]): Promise<{ ok: true; stored: number }> {
   const today = istDay(new Date());
   const [{ data: prof }, { data: day }, { data: cfg }] = await Promise.all([
     db.from('profiles').select('active, role, hub_id, presence_consent_at').eq('id', uid).single(),
@@ -485,9 +521,20 @@ async function presence(db: any, uid: string, raw: NonNullable<Body['samples']>)
   const open = Date.parse(`${today}T${hhmm(set.office_start, '10:00')}:00+05:30`) - 15 * 60000;
   const close = Date.parse(`${today}T${hhmm(set.office_end, '18:00')}:00+05:30`) + 5 * 60000;
   const from = Math.max(open, Date.parse(day.in_time) - 5 * 60000), to = Math.min(close, day.out_time ? Date.parse(day.out_time) : Date.now() + 60000);
-  const num = (v: unknown) => typeof v === 'number' && Number.isFinite(v);
-  const samples = (Array.isArray(raw) ? raw : []).slice(0, 200)
-    .filter((x) => x && num(x.lat) && num(x.lng) && Math.abs(x.lat) <= 90 && Math.abs(x.lng) <= 180 && num(x.time) && x.time >= from && x.time <= to)
+  const num = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+  // accept our shape {lat,lng,accuracy,time,source} and the SDK's {coords:{latitude,…}, timestamp, is_moving, event, mock, provider}
+  // deno-lint-ignore no-explicit-any
+  const norm = (x: any) => {
+    if (!x || typeof x !== 'object') return null;
+    const c = x.coords ?? x;
+    const lat = c.latitude ?? c.lat, lng = c.longitude ?? c.lng;
+    const time = num(x.time) ? x.time : typeof x.timestamp === 'string' ? Date.parse(x.timestamp) : num(x.timestamp) ? x.timestamp : NaN;
+    const off = x.event === 'providerchange' && x.provider && x.provider.enabled === false;
+    return { lat, lng, accuracy: c.accuracy ?? null, time, source: off ? 'off' : x.source === 'beat' || x.extras?.beat ? 'beat' : 'watch',
+      moving: typeof x.is_moving === 'boolean' ? x.is_moving : null, event: typeof x.event === 'string' ? x.event.slice(0, 30) : null, mock: x.mock === true ? true : null };
+  };
+  const samples = (Array.isArray(raw) ? raw : []).slice(0, 200).map(norm)
+    .filter((x): x is NonNullable<ReturnType<typeof norm>> => !!x && num(x.lat) && num(x.lng) && Math.abs(x.lat) <= 90 && Math.abs(x.lng) <= 180 && num(x.time) && x.time >= from && x.time <= to)
     .sort((a, b) => a.time - b.time);
   if (!samples.length) return { ok: true, stored: 0 };
   const [{ data: hub }, { data: ods }] = await Promise.all([
@@ -500,14 +547,14 @@ async function presence(db: any, uid: string, raw: NonNullable<Body['samples']>)
     const t = od ? { type: 'od', id: od.id, lat: od.venue_lat, lng: od.venue_lng, radiusM: od.venue_radius_m } : hub ? { type: 'hub', id: hub.id, lat: hub.lat, lng: hub.lng, radiusM: hub.radius_m } : null;
     const acc = num(x.accuracy) && (x.accuracy as number) >= 0 ? (x.accuracy as number) : null;
     const rc = t ? radiusCheck({ lat: x.lat, lng: x.lng, accuracy: acc }, t) : null;
-    return { user_id: uid, at: new Date(x.time).toISOString(), source: x.source === 'beat' ? 'beat' : 'watch', lat: x.lat, lng: x.lng, accuracy_m: acc,
+    return { user_id: uid, at: new Date(x.time).toISOString(), source: x.source, moving: x.moving, event: x.event, mock: x.mock, lat: x.lat, lng: x.lng, accuracy_m: acc,
       target_type: t?.type ?? 'hub', target_id: t?.id ?? null, distance_m: rc ? Math.round(rc.distanceM) : null, inside: rc ? rc.inside : true, edge: rc ? rc.inside && rc.distanceM > t!.radiusM : false };
   });
   await db.from('presence_samples').insert(rows);
 
   // long time outside: from the first outside sample after the last inside one
   const last = rows[rows.length - 1];
-  if (!last.inside && last.target_type === 'hub') {
+  if (!last.inside && last.target_type === 'hub' && last.source !== 'off') {
     const { data: lastIn } = await db.from('presence_samples').select('at').eq('user_id', uid).eq('inside', true).gte('at', new Date(from).toISOString()).order('at', { ascending: false }).limit(1).maybeSingle();
     const { data: firstOut } = await db.from('presence_samples').select('at, distance_m').eq('user_id', uid).eq('inside', false)
       .gt('at', lastIn?.at ?? new Date(from).toISOString()).order('at').limit(1).maybeSingle();

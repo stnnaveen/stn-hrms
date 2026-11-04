@@ -72,9 +72,17 @@
 	<string>Record where you check in, and your work-hours location until check-out.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>Keep your work-hours location on between check-in and check-out, even when the phone is locked.</string>
+	<key>NSMotionUsageDescription</key>
+	<string>Detects when the phone is moving, so location turns off while you are still and saves battery.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>location</string>
+		<string>fetch</string>
+		<string>processing</string>
+	</array>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.transistorsoft.fetch</string>
 	</array>
 </dict>
 </plist>

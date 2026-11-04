@@ -498,3 +498,20 @@ do $$ begin
   raise notice 'PASS staff records their own work-hours location consent';
 end $$;
 select pg_temp.reset();
+
+-- ---------- 24. standing still keeps the place; location off is no signal ----------
+select pg_temp.reset();
+insert into attendance_days (user_id, day, in_time, out_time, status)
+values ('00000000-0000-0000-0000-000000000002', '2026-11-03', '2026-11-03 10:00+05:30', '2026-11-03 13:00+05:30', 'present')
+on conflict (user_id, day) do update set in_time = excluded.in_time, out_time = excluded.out_time;
+insert into presence_samples (user_id, at, source, lat, lng, accuracy_m, target_type, distance_m, inside, moving) values
+ ('00000000-0000-0000-0000-000000000002', '2026-11-03 10:00+05:30', 'watch', 13.08, 80.27, 10, 'hub', 20, true, false),   -- at desk, still, silent 2 h
+ ('00000000-0000-0000-0000-000000000002', '2026-11-03 12:00+05:30', 'watch', 13.09, 80.27, 10, 'hub', 900, false, true),  -- moved out
+ ('00000000-0000-0000-0000-000000000002', '2026-11-03 12:10+05:30', 'off',   13.09, 80.27, 10, 'hub', 900, false, null);  -- location off
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000a1');
+do $$ declare j jsonb; begin
+  j := presence_day('00000000-0000-0000-0000-000000000002', '2026-11-03');
+  if (j->>'inside_min')::int <> 120 or (j->>'outside_min')::int <> 10 or (j->>'no_signal_min')::int <> 50 then raise exception 'FAIL stationary/off minutes %', j; end if;
+  raise notice 'PASS standing still at the desk counts as inside (120 min); location off counts as no signal';
+end $$;
+select pg_temp.reset();
