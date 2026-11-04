@@ -44,5 +44,14 @@ for (const a of ['selfie_urls', 'purge', 'delete_person', 'remove_selfie', 'radi
 // clean refusals never mention checks
 { const [c, t] = await fn(st, { action: 'punch' }); out(!/radius|distance|inside|outside|flag|face/i.test(t), `staff: error replies never mention checks (${c} ${t.slice(0, 40)})`); }
 { const [c, t] = await fn(st, { action: 'presence', samples: [{ lat: 13.0, lng: 80.2, accuracy: 10, time: Date.now(), source: 'watch' }] }); out(c === 200 && !/inside|outside|distance|radius/i.test(t), `staff: presence reply says nothing about inside/outside (${c} ${t.slice(0, 40)})`); }
+{ const [c, t] = await fn(st, { action: 'presence_token' }); const tok = (() => { try { return JSON.parse(t).token; } catch { return null; } })();
+  out(c === 200 && !!tok, `staff: gets a phone token for background location (${c})`);
+  const post = (token) => fetch(`${SUPA_URL}/functions/v1/check-in`, { method: 'POST', headers: { ...anonH, 'x-presence-token': token }, body: JSON.stringify({ action: 'presence', samples: [{ coords: { latitude: 13, longitude: 80.2, accuracy: 10 }, timestamp: new Date().toISOString(), is_moving: false }] }) }).then(async (r) => [r.status, (await r.text()).slice(0, 80)]);
+  if (tok) {
+    const [ok, okt] = await post(tok); out(ok === 200 && !/inside|outside|distance/i.test(okt), `background post with the phone token accepted, says nothing (${ok} ${okt})`);
+    const bad = tok.slice(0, -3) + (tok.endsWith('AAA') ? 'BBB' : 'AAA'); const [no] = await post(bad); out(no === 401, `forged phone token refused (${no})`);
+    const [no2] = await post('eyJ1IjoieCIsImUiOjk5OTk5OTk5OTl9.abc'); out(no2 === 401, `made-up phone token refused (${no2})`);
+  } }
+{ const [c] = await fn(anonH, { action: 'presence_token' }); out(c === 401, `signed out: no phone token (${c})`); }
 console.log(`SEC done: ${fails} failed`);
 process.exit(fails ? 1 : 0);
