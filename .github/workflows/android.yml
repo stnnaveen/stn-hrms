@@ -42,3 +42,36 @@ jobs:
           mkdir -p ../out && cp app/build/outputs/apk/debug/app-debug.apk "../out/StartupTN-HR-$(date +%Y%m%d)-${GITHUB_SHA::7}.apk"
       - uses: actions/upload-artifact@v4
         with: { name: startuptn-hr-android, path: out/*.apk, retention-days: 30 }
+  smoke:
+    # opens the built APK on an Android emulator and saves screenshots + log, to prove it starts
+    needs: apk
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: startuptn-hr-android, path: out }
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          script: |
+            adb install -r out/*.apk
+            adb shell pm grant in.startuptn.hr android.permission.ACCESS_FINE_LOCATION || true
+            adb shell am start -n in.startuptn.hr/.MainActivity
+            sleep 30
+            adb exec-out screencap -p > shot-start.png
+            adb shell input text 'naveenflop+staff@gmail.com' || true
+            sleep 3
+            adb exec-out screencap -p > shot-email.png
+            adb logcat -d | grep -i -E "capacitor|chromium|console|AndroidRuntime|FATAL" | tail -120 > logcat.txt || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: android-smoke, path: 'shot-*.png
+logcat.txt', retention-days: 14 }
