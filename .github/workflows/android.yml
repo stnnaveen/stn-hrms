@@ -1,0 +1,44 @@
+# Store app (v2), Android: builds an installable APK of the current app for the pilot phones.
+# Debug-signed for direct install; Play Store builds (signed .aab) come later from the same project.
+name: Android app
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths: ['src/**', 'android/**', 'capacitor.config.ts', 'package.json', 'package-lock.json', 'public/**', '.github/workflows/android.yml']
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '21' }
+      - name: Clean project ref
+        run: |
+          ref=$(printf '%s' "$PROJECT_REF" | tr -d '[:space:]"' | sed -E 's#^https?://##; s#\.supabase\.co.*$##')
+          echo "REF=$ref" >> "$GITHUB_ENV"; echo "SUPA_URL=https://$ref.supabase.co" >> "$GITHUB_ENV"
+      - uses: supabase/setup-cli@v1
+        with: { version: 2.121.0 }
+      - name: Public app key (masked)
+        run: |
+          anon=$(supabase projects api-keys --project-ref "$REF" -o json | jq -r '.[] | select(.name=="anon") | .api_key')
+          test -n "$anon"; echo "::add-mask::$anon"; echo "ANON=$anon" >> "$GITHUB_ENV"
+      - name: Build web app
+        run: |
+          npm ci
+          VITE_SUPABASE_URL="$SUPA_URL" VITE_SUPABASE_ANON_KEY="$ANON" npx vite build
+          npx cap sync android
+      - name: Build APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleDebug
+          mkdir -p ../out && cp app/build/outputs/apk/debug/app-debug.apk "../out/StartupTN-HR-$(date +%Y%m%d)-${GITHUB_SHA::7}.apk"
+      - uses: actions/upload-artifact@v4
+        with: { name: startuptn-hr-android, path: out/*.apk, retention-days: 30 }

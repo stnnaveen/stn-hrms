@@ -1,6 +1,7 @@
 // One API surface for the screens. Real mode talks to Supabase; demo mode (no env set) uses sample data
 // so the app can be clicked through before the backend exists.
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { CapacitorHttp } from '@capacitor/core';
 import { enqueue, pending, remove, type QueuedPunch } from '../device/queue';
 import { deviceKey, platform } from '../device';
 
@@ -102,6 +103,13 @@ const real = {
       : await sb!.auth.verifyOtp({ email, token, type: 'email' });
     if (error) throw new ApiError('bad_code');
   },
+  /** Store app: send queued work-hours samples. Native HTTP, because Android slows WebView requests in the background. */
+  async sendPresence(samples: { lat: number; lng: number; accuracy: number | null; time: number; source: string }[]): Promise<boolean> {
+    const { data } = await sb!.auth.getSession();
+    if (!data.session) return false;
+    const r = await CapacitorHttp.post({ url: `${URL}/functions/v1/check-in`, headers: { apikey: KEY!, Authorization: `Bearer ${data.session.access_token}`, 'Content-Type': 'application/json' }, data: { action: 'presence', samples } });
+    return r.status >= 200 && r.status < 300;
+  },
   async google() { await sb!.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: location.origin } }); },
   async signOut() { await sb!.auth.signOut(); },
   async today(): Promise<Today> { const { data, error } = await sb!.rpc('my_today'); if (error) throw new ApiError('load_failed'); return data as Today; },
@@ -175,6 +183,7 @@ const demo = {
   onAuth(cb: (b: boolean) => void) { listeners.add(cb); return () => { listeners.delete(cb); }; },
   async sendCode(email: string) { await wait(400); if (!/@/.test(email)) throw new ApiError('unknown_email'); demoState.email = email.toLowerCase(); },
   async verifyCode(_e: string, code: string) { await wait(400); if (code.length < 6) throw new ApiError('bad_code'); demoState.signedIn = true; listeners.forEach((l) => l(true)); },
+  async sendPresence() { return true; },
   async google() { demoState.signedIn = true; listeners.forEach((l) => l(true)); },
   async signOut() { demoState.signedIn = false; listeners.forEach((l) => l(false)); },
   async today(): Promise<Today> {

@@ -1,12 +1,14 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { registerSW } from 'virtual:pwa-register';
+import { Capacitor } from '@capacitor/core';
 import App from './App';
 import './styles/app.css';
 
 // Home-screen app: look for a new version on open, whenever it comes back to the front, and every 30 min.
 // autoUpdate then swaps it in and reloads, so phones never stay on an old build.
-registerSW({
+// Store app (Capacitor): the build ships inside the app, no service worker.
+if (!Capacitor.isNativePlatform()) registerSW({
   immediate: true,
   onRegisteredSW(_url, reg) {
     if (!reg) return;

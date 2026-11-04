@@ -1,5 +1,6 @@
 import { firstViewToday, permsDone, permState } from './device';
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { isStoreApp, startPresence, stopPresence } from './device/presence';
 import { api, DEMO, type PunchResult, type Today } from './lib/api';
 import { Icon } from './ui/Icon';
 import { Splash, SignIn, Code, Consent, Permissions, Welcome } from './screens/Auth';
@@ -105,6 +106,16 @@ export default function App() {
     flush();
     return () => { removeEventListener('online', flush); document.removeEventListener('visibilitychange', vis); clearInterval(t); };
   }, [toast, reload]);
+
+  // Store app only: work-hours location between check-in and check-out (ends at office close + 5 min)
+  useEffect(() => {
+    if (!isStoreApp()) return;
+    const t = today?.today;
+    const staff = today && ['staff', 'intern'].includes(today.profile.role);
+    if (!staff || !t?.in_time || t.out_time) { void stopPresence(); return; }
+    const day = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+    void startPresence((s) => api.sendPresence(s), Date.parse(`${day}T18:05:00+05:30`));
+  }, [today?.today?.in_time, today?.today?.out_time, today?.profile.role]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const ctx: Ctx = { screen, go, back, toast, email, setEmail, today, reload, camMode, setCamMode, result, setResult, odPrefill, setOdPrefill, leaveOd, setLeaveOd };
   const view = {

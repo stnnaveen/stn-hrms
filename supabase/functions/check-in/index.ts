@@ -33,8 +33,9 @@ const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
 
 interface Body {
-  action: 'start' | 'complete' | 'punch' | 'ping' | 'timing' | 'reset_test_day' | 'health' | 'selfie_urls' | 'resolve_venue' | 'radius_test' | 'purge' | 'delete_person' | 'remove_selfie';
+  action: 'start' | 'complete' | 'punch' | 'ping' | 'timing' | 'presence' | 'reset_test_day' | 'health' | 'selfie_urls' | 'resolve_venue' | 'radius_test' | 'purge' | 'delete_person' | 'remove_selfie';
   timings?: Record<string, number>; total_ms?: number; keys?: string[]; leave_for_od?: string | null;
+  samples?: { lat: number; lng: number; accuracy?: number | null; time: number; source?: string }[];
   kind: 'in' | 'out' | 'visit';
   url?: string;
   // radius_test (Tech): a point to test against a hub, or against a pin + radius
@@ -173,6 +174,10 @@ Deno.serve(async (req) => {
     const photos = await removeSelfies(db, res?.selfie_keys ?? []);
     return json({ ok: true, ...res, selfie_keys: undefined, photos_removed: photos });
   }
+
+  // ---- store app: work-hours location samples sent in the background. The server decides inside/outside;
+  //      the reply says nothing about it (rule 2).
+  if (body.action === 'presence') return json(await presence(db, user.id, body.samples ?? []));
 
   // ---- OD venue: read a Google or Apple Maps link on the server (short links need redirects the phone can't follow)
   if (body.action === 'resolve_venue') {
@@ -461,6 +466,63 @@ async function googlePlace(text: string): Promise<{ lat: number; lng: number } |
     const l = (await r.json())?.places?.[0]?.location;
     return l ? { lat: l.latitude, lng: l.longitude } : null;
   } catch { return null; }
+}
+
+// Work-hours presence: keep samples between check-in and check-out inside office hours, judge each against the hub
+// (or the venue of an approved OD at that time), store them, and raise one 'away' dispute + tell HR when someone has
+// been outside longer than the alert setting.
+// deno-lint-ignore no-explicit-any
+async function presence(db: any, uid: string, raw: NonNullable<Body['samples']>): Promise<{ ok: true; stored: number }> {
+  const today = istDay(new Date());
+  const [{ data: prof }, { data: day }, { data: cfg }] = await Promise.all([
+    db.from('profiles').select('active, role, hub_id').eq('id', uid).single(),
+    db.from('attendance_days').select('in_time, out_time, status').eq('user_id', uid).eq('day', today).maybeSingle(),
+    db.from('settings').select('key, value').in('key', ['presence_enabled', 'presence_alert_minutes', 'office_start', 'office_end'])
+  ]);
+  const set = Object.fromEntries((cfg ?? []).map((r: { key: string; value: unknown }) => [r.key, r.value]));
+  if (!prof?.active || !['staff', 'intern'].includes(prof.role) || set.presence_enabled === false || !day?.in_time || day.status === 'leave') return { ok: true, stored: 0 };
+  const hhmm = (v: unknown, d: string) => (typeof v === 'string' ? v : d);
+  const open = Date.parse(`${today}T${hhmm(set.office_start, '10:00')}:00+05:30`) - 15 * 60000;
+  const close = Date.parse(`${today}T${hhmm(set.office_end, '18:00')}:00+05:30`) + 5 * 60000;
+  const from = Math.max(open, Date.parse(day.in_time) - 5 * 60000), to = Math.min(close, day.out_time ? Date.parse(day.out_time) : Date.now() + 60000);
+  const num = (v: unknown) => typeof v === 'number' && Number.isFinite(v);
+  const samples = (Array.isArray(raw) ? raw : []).slice(0, 200)
+    .filter((x) => x && num(x.lat) && num(x.lng) && Math.abs(x.lat) <= 90 && Math.abs(x.lng) <= 180 && num(x.time) && x.time >= from && x.time <= to)
+    .sort((a, b) => a.time - b.time);
+  if (!samples.length) return { ok: true, stored: 0 };
+  const [{ data: hub }, { data: ods }] = await Promise.all([
+    prof.hub_id ? db.from('hubs').select('id, lat, lng, radius_m').eq('id', prof.hub_id).single() : Promise.resolve({ data: null }),
+    db.from('od_requests').select('id, venue_lat, venue_lng, venue_radius_m, starts_at, ends_at').eq('user_id', uid).eq('status', 'approved')
+      .lte('starts_at', new Date(samples[samples.length - 1].time + 30 * 60000).toISOString()).gte('ends_at', new Date(samples[0].time).toISOString()).not('venue_lat', 'is', null)
+  ]);
+  const rows = samples.map((x) => {
+    const od = (ods ?? []).find((o: { starts_at: string; ends_at: string }) => x.time >= Date.parse(o.starts_at) - 30 * 60000 && x.time <= Date.parse(o.ends_at));
+    const t = od ? { type: 'od', id: od.id, lat: od.venue_lat, lng: od.venue_lng, radiusM: od.venue_radius_m } : hub ? { type: 'hub', id: hub.id, lat: hub.lat, lng: hub.lng, radiusM: hub.radius_m } : null;
+    const acc = num(x.accuracy) && (x.accuracy as number) >= 0 ? (x.accuracy as number) : null;
+    const rc = t ? radiusCheck({ lat: x.lat, lng: x.lng, accuracy: acc }, t) : null;
+    return { user_id: uid, at: new Date(x.time).toISOString(), source: x.source === 'beat' ? 'beat' : 'watch', lat: x.lat, lng: x.lng, accuracy_m: acc,
+      target_type: t?.type ?? 'hub', target_id: t?.id ?? null, distance_m: rc ? Math.round(rc.distanceM) : null, inside: rc ? rc.inside : true, edge: rc ? rc.inside && rc.distanceM > t!.radiusM : false };
+  });
+  await db.from('presence_samples').insert(rows);
+
+  // long time outside: from the first outside sample after the last inside one
+  const last = rows[rows.length - 1];
+  if (!last.inside && last.target_type === 'hub') {
+    const { data: lastIn } = await db.from('presence_samples').select('at').eq('user_id', uid).eq('inside', true).gte('at', new Date(from).toISOString()).order('at', { ascending: false }).limit(1).maybeSingle();
+    const { data: firstOut } = await db.from('presence_samples').select('at, distance_m').eq('user_id', uid).eq('inside', false)
+      .gt('at', lastIn?.at ?? new Date(from).toISOString()).order('at').limit(1).maybeSingle();
+    const alertMin = Number(set.presence_alert_minutes ?? 30);
+    if (firstOut && Date.parse(last.at) - Date.parse(firstOut.at) >= alertMin * 60000) {
+      const { data: already } = await db.from('flags').select('id').eq('user_id', uid).eq('kind', 'away').gte('created_at', firstOut.at).limit(1).maybeSingle();
+      if (!already) {
+        const mins = Math.round((Date.parse(last.at) - Date.parse(firstOut.at)) / 60000);
+        const { data: me } = await db.from('profiles').select('full_name').eq('id', uid).single();
+        await db.from('flags').insert({ user_id: uid, kind: 'away', rule: `R-12 outside the radius ${mins}+ min in work hours`, details: { since: firstOut.at, minutes: mins, distance_m: last.distance_m } });
+        await db.rpc('notify_role', { p_role: 'hr', p_kind: 'away', p_title: 'Away from hub', p_body: `${me?.full_name ?? 'Staff'} · outside ${mins} min`, p_data: { user_id: uid } });
+      }
+    }
+  }
+  return { ok: true, stored: rows.length };
 }
 
 // Google Maps "share list" links ("/maps/@/data=…!7m…") point at a saved-places list, not one place

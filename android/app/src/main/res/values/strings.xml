@@ -1,0 +1,8 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">StartupTN HR</string>
+    <string name="title_activity_main">StartupTN HR</string>
+    <string name="package_name">in.startuptn.hr</string>
+    <string name="custom_url_scheme">in.startuptn.hr</string>
+    <string name="capacitor_background_geolocation_notification_channel_name">Work-hours location</string>
+</resources>

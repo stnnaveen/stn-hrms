@@ -455,3 +455,36 @@ do $$ declare f uuid; begin
   raise notice 'PASS staff gets the ask and answers it';
 end $$;
 select pg_temp.reset();
+
+-- ---------- 22. work-hours presence (store app) ----------
+select pg_temp.reset();
+insert into attendance_days (user_id, day, in_time, out_time, status)
+values ('00000000-0000-0000-0000-000000000001', '2026-11-03', '2026-11-03 10:05+05:30', '2026-11-03 18:00+05:30', 'present')
+on conflict (user_id, day) do update set in_time = excluded.in_time, out_time = excluded.out_time;
+insert into presence_samples (user_id, at, source, lat, lng, accuracy_m, target_type, distance_m, inside) values
+ ('00000000-0000-0000-0000-000000000001', '2026-11-03 10:05+05:30', 'watch', 13.08, 80.27, 10, 'hub', 20, true),
+ ('00000000-0000-0000-0000-000000000001', '2026-11-03 10:20+05:30', 'beat',  13.08, 80.27, 10, 'hub', 20, true),
+ ('00000000-0000-0000-0000-000000000001', '2026-11-03 10:35+05:30', 'watch', 13.083, 80.27, 10, 'hub', 300, false),
+ ('00000000-0000-0000-0000-000000000001', '2026-11-03 10:50+05:30', 'beat',  13.084, 80.27, 10, 'hub', 420, false),
+ ('00000000-0000-0000-0000-000000000001', '2026-11-03 11:05+05:30', 'watch', 13.08, 80.27, 10, 'hub', 25, true),
+ ('00000000-0000-0000-0000-000000000001', '2026-11-03 12:00+05:30', 'watch', 13.08, 80.27, 10, 'hub', 25, true),
+ ('00000000-0000-0000-0000-000000000001', '2026-11-03 12:10+05:30', 'beat',  13.08, 80.27, 10, 'hub', 25, true);
+select pg_temp.as_user('00000000-0000-0000-0000-000000000001');
+do $$ begin
+  if (select count(*) from presence_samples) <> 0 then raise exception 'FAIL staff reads presence samples'; end if;
+  begin perform presence_day('00000000-0000-0000-0000-000000000001', '2026-11-03'); raise exception 'FAIL staff called presence_day';
+  exception when others then if sqlerrm like 'FAIL%' then raise; end if; end;
+  begin insert into presence_samples (user_id, at, source, lat, lng, target_type, inside) values ('00000000-0000-0000-0000-000000000001', now(), 'watch', 1, 1, 'hub', true); raise exception 'FAIL staff wrote a presence sample';
+  exception when others then if sqlerrm like 'FAIL%' then raise; end if; end;
+  raise notice 'PASS staff cannot read, compute or write presence';
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000a1');
+do $$ declare j jsonb; begin
+  j := presence_day('00000000-0000-0000-0000-000000000001', '2026-11-03');
+  if (j->>'inside_min')::int <> 55 or (j->>'outside_min')::int <> 30 or (j->>'no_signal_min')::int <> 390 then raise exception 'FAIL presence minutes %', j; end if;
+  if jsonb_array_length(j->'trips') <> 1 or (j->'trips'->0->>'min')::int <> 30 or (j->'trips'->0->>'max_m')::int <> 420 then raise exception 'FAIL presence trip %', j->'trips'; end if;
+  raise notice 'PASS HR sees 55 min inside, one 30-min trip outside (max 420 m), 390 min no signal';
+  if (presence_day('00000000-0000-0000-0000-000000000002', '2026-11-03')->>'tracked')::boolean then raise exception 'FAIL not-checked-in day tracked'; end if;
+  raise notice 'PASS a day without check-in is not tracked';
+end $$;
+select pg_temp.reset();
