@@ -5,8 +5,8 @@ let fails = 0;
 const out = (ok, what) => { if (!ok) fails++; console.log(`SEC ${ok ? 'PASS' : 'FAIL'} ${what}`); };
 const svc = { apikey: SERVICE, Authorization: `Bearer ${SERVICE}`, 'Content-Type': 'application/json' };
 const anonH = { apikey: ANON, Authorization: `Bearer ${ANON}`, 'Content-Type': 'application/json' };
-const TABLES = ['attendance_days', 'audit_log', 'chairman_availability', 'custom_roles', 'devices', 'flags', 'geo_cache', 'hubs', 'leave_requests', 'notifications', 'od_requests', 'profiles', 'punches', 'settings', 'staff_roster', 'hub_directory', 'my_punches'];
-const RPCS = { my_today: {}, hr_today: {}, setting: { p_key: 'radius_m' }, purge_records: { p_scope: 'all', p_dry: true }, delete_staff_full: { p_email: 'x@y.z' }, add_role_login: { p_email: 'x@y.z', p_role: 'tech' }, set_setting: { p_key: 'x', p_value: '1' }, verify_audit_chain: {}, bulk_upsert_staff: { rows: [] }, set_test_mode: { p_email: 'x', p_on: false }, notify_role: { p_role: 'hr', p_kind: 'x', p_title: 'x', p_body: 'x', p_data: {} }, append_audit: {} };
+const TABLES = ['attendance_days', 'audit_log', 'chairman_availability', 'custom_roles', 'devices', 'flags', 'geo_cache', 'hubs', 'leave_requests', 'notifications', 'od_requests', 'profiles', 'punches', 'settings', 'staff_roster', 'hub_directory', 'my_punches', 'presence_samples'];
+const RPCS = { my_today: {}, hr_today: {}, setting: { p_key: 'radius_m' }, purge_records: { p_scope: 'all', p_dry: true }, delete_staff_full: { p_email: 'x@y.z' }, add_role_login: { p_email: 'x@y.z', p_role: 'tech' }, set_setting: { p_key: 'x', p_value: '1' }, verify_audit_chain: {}, presence_day: { p_user: '00000000-0000-0000-0000-000000000000' }, presence_today: {}, ask_punch_reason: { p_punch: '00000000-0000-0000-0000-000000000000', p_kind: 'late' }, bulk_upsert_staff: { rows: [] }, set_test_mode: { p_email: 'x', p_on: false }, notify_role: { p_role: 'hr', p_kind: 'x', p_title: 'x', p_body: 'x', p_data: {} }, append_audit: {} };
 const sel = (h, t) => fetch(`${SUPA_URL}/rest/v1/${t}?select=*&limit=5`, { headers: h }).then(async (r) => [r.status, await r.json().catch(() => null)]);
 const rpc = (h, f, b) => fetch(`${SUPA_URL}/rest/v1/rpc/${f}`, { method: 'POST', headers: h, body: JSON.stringify(b) }).then(async (r) => [r.status, (await r.text()).slice(0, 120)]);
 const fn = (h, b) => fetch(`${SUPA_URL}/functions/v1/check-in`, { method: 'POST', headers: h, body: JSON.stringify(b) }).then(async (r) => [r.status, (await r.text()).slice(0, 160)]);
@@ -22,7 +22,7 @@ for (const [f, b] of Object.entries(RPCS)) { const [st] = await rpc(anonH, f, b)
 const g = await (await fetch(`${SUPA_URL}/auth/v1/admin/generate_link`, { method: 'POST', headers: svc, body: JSON.stringify({ type: 'magiclink', email: 'naveenflop+staff@gmail.com' }) })).json();
 const s = await (await fetch(`${SUPA_URL}/auth/v1/verify`, { method: 'POST', headers: { apikey: ANON, 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'magiclink', token_hash: g.hashed_token ?? g.properties?.hashed_token }) })).json();
 const me = s.user?.id, st = { apikey: ANON, Authorization: `Bearer ${s.access_token}`, 'Content-Type': 'application/json' };
-for (const t of ['audit_log', 'staff_roster', 'settings', 'geo_cache', 'custom_roles']) { const [c, j] = await sel(st, t); out(c >= 400 || (Array.isArray(j) && j.length === 0), `staff: ${t} hidden (${c}, ${Array.isArray(j) ? j.length : '-'})`); }
+for (const t of ['presence_samples', 'audit_log', 'staff_roster', 'settings', 'geo_cache', 'custom_roles']) { const [c, j] = await sel(st, t); out(c >= 400 || (Array.isArray(j) && j.length === 0), `staff: ${t} hidden (${c}, ${Array.isArray(j) ? j.length : '-'})`); }
 for (const t of ['devices', 'punches', 'attendance_days', 'flags', 'od_requests', 'leave_requests', 'notifications', 'profiles']) {
   const [c, j] = await sel(st, `${t}`); const others = Array.isArray(j) ? j.filter((x) => (x.user_id ?? x.id) !== me).length : 0;
   out(c >= 400 || others === 0, `staff: ${t} shows only own rows (${c}, others ${others})`);
@@ -31,7 +31,7 @@ for (const t of ['devices', 'punches', 'attendance_days', 'flags', 'od_requests'
 { const [c, j] = await sel(st, 'my_punches'); const leak = Array.isArray(j) && j.some((x) => Object.keys(x).some((k) => /distance|inside|radius|face|flag|accuracy|quality/.test(k))); out(!leak, `staff: my_punches has no hidden-check fields (${c})`); }
 { const [c, j] = await sel(st, 'hub_directory'); const leak = Array.isArray(j) && j.some((x) => Object.keys(x).some((k) => /lat|lng|radius/.test(k))); out(!leak, `staff: hub_directory has no pin or radius (${c})`); }
 { const [c, j] = await rpc(st, 'my_today', {}); out(c === 200 && !/distance|inside|radius|face_sim|flag/.test(j), `staff: my_today has no hidden-check fields (${c})`); }
-for (const f of ['hr_today', 'purge_records', 'delete_staff_full', 'add_role_login', 'set_setting', 'verify_audit_chain', 'bulk_upsert_staff', 'set_test_mode', 'decide_od', 'decide_flag']) {
+for (const f of ['presence_day', 'presence_today', 'ask_punch_reason', 'hr_today', 'purge_records', 'delete_staff_full', 'add_role_login', 'set_setting', 'verify_audit_chain', 'bulk_upsert_staff', 'set_test_mode', 'decide_od', 'decide_flag']) {
   const b = RPCS[f] ?? (f === 'decide_od' ? { p_id: '00000000-0000-0000-0000-000000000000', p_decision: 'approved' } : { p_flag: '00000000-0000-0000-0000-000000000000', p_decision: 'valid' });
   const [c, t] = await rpc(st, f, b); out(c >= 400, `staff: rpc ${f} refused (${c} ${t.slice(0, 50)})`);
 }
@@ -43,5 +43,6 @@ for (const a of ['selfie_urls', 'purge', 'delete_person', 'remove_selfie', 'radi
 { const r = await fetch(`${SUPA_URL}/storage/v1/object/list/selfies`, { method: 'POST', headers: st, body: JSON.stringify({ prefix: '' }) }); const j = await r.json().catch(() => null); out(r.status >= 400 || (Array.isArray(j) && j.length === 0), `staff: cannot list selfie files (${r.status})`); }
 // clean refusals never mention checks
 { const [c, t] = await fn(st, { action: 'punch' }); out(!/radius|distance|inside|outside|flag|face/i.test(t), `staff: error replies never mention checks (${c} ${t.slice(0, 40)})`); }
+{ const [c, t] = await fn(st, { action: 'presence', samples: [{ lat: 13.0, lng: 80.2, accuracy: 10, time: Date.now(), source: 'watch' }] }); out(c === 200 && !/inside|outside|distance|radius/i.test(t), `staff: presence reply says nothing about inside/outside (${c} ${t.slice(0, 40)})`); }
 console.log(`SEC done: ${fails} failed`);
 process.exit(fails ? 1 : 0);
