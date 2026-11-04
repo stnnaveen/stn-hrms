@@ -71,6 +71,10 @@ jobs:
             sleep 3
             adb exec-out screencap -p > shot-email.png
             adb logcat -d | grep -i -E "capacitor|chromium|console|AndroidRuntime|FATAL" | tail -120 > logcat.txt || true
+            adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 || true
+            adb shell cat /sdcard/ui.xml | grep -o 'text="[^"]*"' | grep -v 'text=""' | sed 's/^/SCREEN /' || true
+            adb shell dumpsys activity activities | grep -E 'mResumedActivity|topResumedActivity' | sed 's/^/ACTIVITY /' || true
+            grep -i -E "FATAL|Exception|Uncaught|error" logcat.txt | head -20 | sed 's/^/LOG /' || true
       - uses: actions/upload-artifact@v4
         if: always()
         with:
