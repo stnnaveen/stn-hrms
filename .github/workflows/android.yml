@@ -64,10 +64,12 @@ jobs:
           script: |
             adb install -r out/*.apk
             adb shell pm grant in.startuptn.hr android.permission.ACCESS_FINE_LOCATION || true
+            adb logcat -c || true
             adb shell am start -n in.startuptn.hr/.MainActivity
-            sleep 40
+            sleep 15
             adb exec-out screencap -p > shot-start.png
-            adb shell input text 'naveenflop+staff@gmail.com' || true
+            adb shell dumpsys activity activities | grep -E 'topResumedActivity' | sed 's/^/ACT15 /' || true
+            sleep 25
             sleep 3
             adb exec-out screencap -p > shot-email.png
             adb logcat -d | grep -i -E "capacitor|chromium|console|AndroidRuntime|FATAL" | tail -120 > logcat.txt || true
@@ -77,6 +79,7 @@ jobs:
             adb shell cat /sdcard/ui.xml | grep -o 'text="[^"]*"' | grep -v 'text=""' | sed 's/^/SCREEN /' || true
             adb shell dumpsys activity activities | grep -E 'mResumedActivity|topResumedActivity' | sed 's/^/ACTIVITY /' || true
             grep -i -E "FATAL|Exception|Uncaught|error" logcat.txt | head -20 | sed 's/^/LOG /' || true
+            adb logcat -d | grep -E "in\.startuptn\.hr|AndroidRuntime|FATAL|ActivityTaskManager|libc |DEBUG  " | tail -80 | sed 's/^/SYS /' || true
       - uses: actions/upload-artifact@v4
         if: always()
         with:
