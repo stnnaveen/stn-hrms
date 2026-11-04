@@ -71,6 +71,8 @@ jobs:
             sleep 3
             adb exec-out screencap -p > shot-email.png
             adb logcat -d | grep -i -E "capacitor|chromium|console|AndroidRuntime|FATAL" | tail -120 > logcat.txt || true
+            base64 -w 0 shot-start.png | fold -w 8000 | sed 's/^/IMG1 /' || true
+            base64 -w 0 shot-email.png | fold -w 8000 | sed 's/^/IMG2 /' || true
             adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 || true
             adb shell cat /sdcard/ui.xml | grep -o 'text="[^"]*"' | grep -v 'text=""' | sed 's/^/SCREEN /' || true
             adb shell dumpsys activity activities | grep -E 'mResumedActivity|topResumedActivity' | sed 's/^/ACTIVITY /' || true
