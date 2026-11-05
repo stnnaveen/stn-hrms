@@ -7,9 +7,7 @@
 //   kind 'visit' = OD venue check-in during an approved OD; never changes the day's check-in or check-out
 // The reply to the phone never contains distance, radius, inside/outside, flags or face score.
 import { createClient } from 'npm:@supabase/supabase-js@2.45.4';
-import { S3Client, PutObjectCommand, DeleteObjectsCommand, GetObjectCommand, DeleteObjectCommand } from 'npm:@aws-sdk/client-s3@3.654.0';
-import { getSignedUrl } from 'npm:@aws-sdk/s3-request-presigner@3.654.0';
-import { RekognitionClient, CompareFacesCommand } from 'npm:@aws-sdk/client-rekognition@3.654.0';
+import { makeAws } from '../_shared/aws.ts';
 import { evaluate, istMinutes, radiusCheck, type Settings, type PrevPunch } from '../_shared/rules.ts';
 import { firstUrl, isMapsHost, isMapsRedirect, coordsFrom, coordsFromHtml, nameFrom, coordsFromText, plusCodeIn, decodePlusCode } from '../_shared/maplink.ts';
 
@@ -18,12 +16,10 @@ const env = (k: string) => Deno.env.get(k) ?? '';
 const gkeyOf = () => env('GOOGLE_MAPS_KEY') || env('GOOGLE_GEOCODING_KEY');
 const REGION = env('AWS_REGION') || 'ap-south-1';
 const BUCKET = env('S3_SELFIE_BUCKET');
-const aws = { region: REGION, credentials: { accessKeyId: env('AWS_ACCESS_KEY_ID'), secretAccessKey: env('AWS_SECRET_ACCESS_KEY') } };
-const s3 = new S3Client(aws);
+const aws = makeAws({ region: REGION, bucket: BUCKET, accessKeyId: env('AWS_ACCESS_KEY_ID'), secretAccessKey: env('AWS_SECRET_ACCESS_KEY') });
 // Until StartupTN's AWS keys are set, selfies go to private Supabase Storage and face match is skipped.
 // S3_ON=1 turns it on once the AWS path is proven (5 Nov: the AWS SDK ran out of compute on first use, so it stays off until fixed)
 const USE_S3 = !!(BUCKET && env('AWS_ACCESS_KEY_ID') && env('AWS_SECRET_ACCESS_KEY')) && env('S3_ON') === '1';
-const rek = new RekognitionClient(aws);
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -35,7 +31,7 @@ const json = (body: unknown, status = 200) =>
 
 interface Body {
   action: 'start' | 'complete' | 'punch' | 'ping' | 'timing' | 'presence' | 'presence_token' | 'reset_test_day' | 'health' | 'selfie_urls' | 'resolve_venue' | 'radius_test' | 'purge' | 'delete_person' | 'remove_selfie';
-  timings?: Record<string, number>; total_ms?: number; keys?: string[]; leave_for_od?: string | null;
+  timings?: Record<string, number>; total_ms?: number; keys?: string[]; leave_for_od?: string | null; test_s3?: boolean;
   // our own shape, or the background-location SDK's record shape (coords, timestamp, is_moving, event, provider)
   samples?: Record<string, unknown>[];
   kind: 'in' | 'out' | 'visit';
@@ -120,11 +116,14 @@ Deno.serve(async (req) => {
     const dbMs = Date.now() - t0;
     // with AWS keys set, prove the bucket really accepts a write and a delete (names the error, never the keys)
     let s3Ok: boolean | null = null, s3Err: string | null = null;
-    if (USE_S3) {
+    if (USE_S3 || (BUCKET && body.test_s3)) {
       try {
         const k = `selfies/_health/${crypto.randomUUID()}.txt`;
-        await s3.send(new PutObjectCommand({ Bucket: BUCKET, Key: k, Body: 'ok', ContentType: 'text/plain' }));
-        await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: k }));
+        await aws.put(k, 'ok', 'text/plain');
+        // the private view link must open the file (proves link signing), then the file is removed
+        const got = await fetch(await aws.presign(k, 'GET', 60));
+        if (!got.ok || (await got.text()) !== 'ok') throw Object.assign(new Error('view link'), { name: `ViewLink${got.status}` });
+        await aws.del(k);
         s3Ok = true;
       } catch (e) { s3Ok = false; s3Err = (e as { name?: string }).name ?? 'S3Error'; }
     }
@@ -146,7 +145,7 @@ Deno.serve(async (req) => {
       sbKeys.length ? db.storage.from('selfies').createSignedUrls(sbKeys.map((k) => k.slice('selfies/'.length)), 300).then(({ data }: { data: { path: string | null; signedUrl: string | null }[] | null }) => {
         for (const k of sbKeys) urls[k] = data?.find((d) => d.path === k.slice('selfies/'.length))?.signedUrl ?? null;
       }).catch(() => { for (const k of sbKeys) urls[k] = null; }) : null,
-      ...s3Keys.map(async (k) => { try { urls[k] = await getSignedUrl(s3, new GetObjectCommand({ Bucket: BUCKET, Key: k }), { expiresIn: 300 }); } catch { urls[k] = null; } })
+      ...s3Keys.map(async (k) => { try { urls[k] = await aws.presign(k, 'GET', 300); } catch { urls[k] = null; } })
     ]);
     return json({ ok: true, urls });
   }
@@ -229,7 +228,7 @@ Deno.serve(async (req) => {
       if (error || !data) return json({ error: 'upload_unavailable' }, 500);
       return json({ store: 'supabase', upload_path: path, upload_token: data.token, selfie_key: key });
     }
-    const url = await getSignedUrl(s3, new PutObjectCommand({ Bucket: BUCKET, Key: key, ContentType: 'image/jpeg' }), { expiresIn: 120 });
+    const url = await aws.presign(key, 'PUT', 120);
     return json({ store: 's3', upload_url: url, selfie_key: key });
   }
 
@@ -285,7 +284,7 @@ Deno.serve(async (req) => {
   const uploadP: Promise<boolean> = body.action !== 'punch' ? Promise.resolve(true) : (async () => {
     const key = body.selfie_key!;
     if (USE_S3) {
-      try { await s3.send(new PutObjectCommand({ Bucket: BUCKET, Key: key, ContentType: 'image/jpeg', Body: new Uint8Array(await selfie!.arrayBuffer()) })); return true; } catch { return false; }
+      try { await aws.put(key, new Uint8Array(await selfie!.arrayBuffer()), 'image/jpeg'); return true; } catch { return false; }
     }
     const { error } = await db.storage.from('selfies').upload(key.slice('selfies/'.length), selfie!, { contentType: 'image/jpeg', upsert: true });
     return !error;
@@ -327,12 +326,7 @@ Deno.serve(async (req) => {
   let faceError: string | null = null;
   if (USE_S3 && profile.face_status === 'approved' && profile.reference_photo_key) {
     try {
-      const r = await rek.send(new CompareFacesCommand({
-        SourceImage: { S3Object: { Bucket: BUCKET, Name: profile.reference_photo_key } },
-        TargetImage: { S3Object: { Bucket: BUCKET, Name: body.selfie_key } },
-        SimilarityThreshold: 0
-      }));
-      faceSimilarity = Math.max(0, ...(r.FaceMatches ?? []).map((m) => m.Similarity ?? 0));
+      faceSimilarity = await aws.compareFaces(profile.reference_photo_key, body.selfie_key);
     } catch (e) { faceError = String(e).slice(0, 200); }
   }
 
@@ -400,7 +394,7 @@ async function removeSelfies(db: any, keys: string[]): Promise<number> {
   for (let i = 0; i < keys.length; i += 100) {
     const chunk = keys.slice(i, i + 100).filter(Boolean);
     if (!chunk.length) continue;
-    if (USE_S3) { try { await s3.send(new DeleteObjectsCommand({ Bucket: BUCKET, Delete: { Objects: chunk.map((Key) => ({ Key })) } })); n += chunk.length; } catch { /* keep going */ } }
+    if (USE_S3) n += await aws.delMany(chunk);
     const { data: gone } = await db.storage.from('selfies').remove(chunk.map((k) => k.replace(/^selfies\//, '')));
     if (!USE_S3) n += gone?.length ?? 0;
   }
