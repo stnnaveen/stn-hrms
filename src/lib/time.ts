@@ -42,3 +42,9 @@ export function stamp(d: Date): string {
   const day = d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', timeZone: IST });
   return `${day} · ${fmtTime(d)} IST`;
 }
+
+/** Colour for a check-out time (HR, 5 Nov): before 18:00 red, from 18:00 green, from 20:00 dark green. */
+export function outChip(iso: string): 'c-bad' | 'c-ok' | 'c-great' {
+  const d = new Date(new Date(iso).getTime() + 330 * 60000), m = d.getUTCHours() * 60 + d.getUTCMinutes();
+  return m < 18 * 60 ? 'c-bad' : m < 20 * 60 ? 'c-ok' : 'c-great';
+}

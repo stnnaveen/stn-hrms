@@ -4,7 +4,7 @@ import { useApp } from '../../App';
 import { api, errorText, ApiError } from '../../lib/api';
 import { hr, FLAG_LABEL, type Flag, type HrToday, type Hub, type LeaveReq, type OdReq, type Person, type PersonDetail, type Pin, type DayPunch } from '../../lib/hr';
 import { placeLabel, googleMapsUrl, appleMapsUrl, fmtDistance } from '../../lib/geo';
-import { fmtShortDay, fmtTime, greeting } from '../../lib/time';
+import { fmtShortDay, fmtTime, greeting, outChip } from '../../lib/time';
 const MapView = lazy(() => import('../../ui/MapView'));
 import { Icon } from '../../ui/Icon';
 import { Notifications } from '../Notifications';
@@ -43,7 +43,7 @@ function dayChip(p: Person) {
   if (!t?.in_time) return <span className="chip c-pend">Not in</span>;
   if (t.status === 'od') return <span className="chip c-od">OD</span>;
   const c = t.band === 'ok' ? 'c-ok' : t.band === 'warn' ? 'c-warn' : 'c-bad';
-  return <span className="io"><span className={`chip ${c}`}>In {fmtTime(t.in_time)}</span>{t.out_time && <small>Out {fmtTime(t.out_time)}</small>}</span>;
+  return <span className="io"><span className={`chip ${c}`}>In {fmtTime(t.in_time)}</span>{t.out_time && <span className={`chip sm ${outChip(t.out_time)}`}>Out {fmtTime(t.out_time)}</span>}</span>;
 }
 const hubsOf = (ps: Person[] | null) => [...new Set((ps ?? []).map((p) => p.hub).filter((h): h is string => !!h))].sort();
 

@@ -4,7 +4,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useApp } from '../../App';
 import { bio, type BioDayRow, type BioCheck } from '../../lib/bio';
-import { fmtShortDay, fmtTime } from '../../lib/time';
+import { fmtShortDay, fmtTime, outChip } from '../../lib/time';
 import { toCsv, download } from '../../lib/csv';
 import { Icon } from '../../ui/Icon';
 
@@ -12,6 +12,7 @@ const istToday = () => new Date(Date.now() + 330 * 60000).toISOString().slice(0,
 const dayName = (d: string) => (d === istToday() ? 'Today' : fmtShortDay(new Date(`${d}T12:00:00+05:30`)));
 const mins = (a: string, b: string) => Math.round((new Date(b).getTime() - new Date(a).getTime()) / 60000);
 const BAND = { ok: { c: 'var(--ok-ink)', l: 'On time' }, warn: { c: 'var(--warn-ink)', l: 'Slightly late' }, bad: { c: 'var(--bad-ink)', l: 'Late' } } as const;
+const OUTC = { 'c-bad': 'var(--bad-ink)', 'c-ok': 'var(--ok-ink)', 'c-great': '#0B4F2A' } as const;
 const dur = (m: number) => `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')} m`;
 
 export function Fingerprint({ onBack }: { onBack: () => void }) {
@@ -71,10 +72,10 @@ export function Fingerprint({ onBack }: { onBack: () => void }) {
                 <b>{r.name ?? r.esslName ?? r.code}{!r.email && <span className="chip c-warn" style={{ marginLeft: 6, fontSize: 11, display: 'inline-flex', width: 'auto', verticalAlign: 'middle' }}>Not matched</span>}</b>
                 <span style={{ whiteSpace: 'normal' }}>{day === 'all' ? `${dayName(r.day)} · ` : ''}eSSL {r.esslCode ?? r.code}{r.email && r.esslName ? ` · ${r.esslName}` : ''} · {r.punches} punch{r.punches === 1 ? '' : 'es'}{r.appIn ? ` · app in ${fmtTime(r.appIn)}` : ''}{r.appOut ? `, out ${fmtTime(r.appOut)}` : ''}{diff.get(`${r.day}|${r.code}`) && <b style={{ display: 'inline', fontSize: 13, color: 'var(--bad-ink)' }}> · eSSL says {diff.get(`${r.day}|${r.code}`)!.essl_in ?? '—'}–{diff.get(`${r.day}|${r.code}`)!.essl_out ?? '—'}</b>}</span>
               </span>
-              <span className="v"><b><span style={{ color: BAND[r.band].c, fontSize: 15 }}>{fmtTime(r.first)}</span>{r.last ? ` – ${fmtTime(r.last)}` : ''}</b><span>{r.last ? dur(mins(r.first, r.last)) : 'No out punch'}</span></span>
+              <span className="v"><b><span style={{ color: BAND[r.band].c, fontSize: 15 }}>{fmtTime(r.first)}</span>{r.last && <> – <span style={{ color: OUTC[outChip(r.last)], fontSize: 15 }}>{fmtTime(r.last)}</span></>}</b><span>{r.last ? dur(mins(r.first, r.last)) : 'No out punch'}</span></span>
             </div>);
         })}
-        <p className="to">First punch = in. A punch 20+ min later = out; repeats inside 20 min are ignored. In time: green to 10:00, yellow to 10:05, red after.</p>
+        <p className="to">First punch = in. A punch 20+ min later = out; repeats inside 20 min are ignored. In: green to 10:00, yellow to 10:05, red after. Out: red before 6 PM, green from 6, dark green from 8.</p>
       </>}
     </div>
   );

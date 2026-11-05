@@ -578,3 +578,5 @@ button.gcard{width:100%}   /* HR summary card is a button: fill the card like th
 .seg{display:flex;background:var(--ph-surface);border-radius:12px;padding:3px;flex:none}
 .seg button{padding:7px 12px;border-radius:9px;font-size:13.5px;font-weight:600;color:var(--ph-ink2)}
 .seg button.on{background:var(--ph-card);color:var(--ph-ink);box-shadow:0 2px 6px rgba(13,19,33,.08)}
+.c-great{background:#17703F;color:#fff}
+.io .chip.sm{padding:3px 9px;font-size:12px}

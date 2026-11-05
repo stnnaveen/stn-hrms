@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { bio, type BioPersonDay } from '../lib/bio';
-import { fmtShortDay, fmtTime } from '../lib/time';
+import { fmtShortDay, fmtTime, outChip } from '../lib/time';
 
 const istToday = () => new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
 const CHIP: Record<string, string> = { ok: 'c-ok', warn: 'c-warn', bad: 'c-bad' };
@@ -16,8 +16,11 @@ export function BioPunches({ email }: { email: string }) {
       <div className="qhd"><span>Fingerprint · 7 days</span><b style={{ fontSize: 15 }}>eSSL</b></div>
       {rows.map((r) => (
         <div key={r.day} className="row" style={{ padding: '6px 0', fontSize: 14 }}>
-          <span className="t"><b style={{ fontSize: 14 }}>{r.day === istToday() ? 'Today' : fmtShortDay(new Date(`${r.day}T12:00:00+05:30`))}</b><span>{r.out_at ? `Out ${fmtTime(r.out_at)}` : 'No out punch'}</span></span>
-          <span className={`chip ${CHIP[r.band] ?? 'c-pend'}`}>In {fmtTime(r.in_at)}</span>
+          <span className="t"><b style={{ fontSize: 14 }}>{r.day === istToday() ? 'Today' : fmtShortDay(new Date(`${r.day}T12:00:00+05:30`))}</b></span>
+          <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            <span className={`chip ${CHIP[r.band] ?? 'c-pend'}`}>In {fmtTime(r.in_at)}</span>
+            {r.out_at ? <span className={`chip ${outChip(r.out_at)}`}>Out {fmtTime(r.out_at)}</span> : <span className="chip c-pend">No out</span>}
+          </span>
         </div>))}
     </div>
   );
