@@ -48,6 +48,9 @@ jobs:
       - name: eSSL one-off match fix
         if: ${{ inputs.biofix == 'yes' }}
         run: node tools/diag/biofix.mjs
+      - name: Check-in actions probe
+        if: ${{ inputs.awscheck == 'yes' }}
+        run: node tools/diag/fnprobe.mjs
       - name: Function logs (last hour)
         if: ${{ inputs.awscheck == 'yes' }}
         run: node tools/diag/fnlogs.mjs
