@@ -36,6 +36,8 @@ jobs:
       - name: Security check (live)
         run: node tools/diag/security.mjs
         continue-on-error: true
+      - name: Employee code shapes
+        run: node tools/diag/codes.mjs
       - name: Disputes (7 days)
         run: node tools/diag/flags.mjs
       - name: Selfies today
