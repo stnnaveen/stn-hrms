@@ -38,12 +38,14 @@ function Head({ small, big, right }: { small: string; big: string; right?: React
 function Spin() { return <div className="center" style={{ height: 240 }}><span className="spin dark" /></div>; }
 function dayChip(p: Person) {
   const t = p.today;
+  if (p.leaveToday && !t?.in_time) return <span className="chip c-lv">Leave</span>;
   if (p.invited && !t?.in_time) return <span className="chip c-warn">Invited</span>;
   if (!t?.in_time) return <span className="chip c-pend">Not in</span>;
   if (t.status === 'od') return <span className="chip c-od">OD</span>;
   const c = t.band === 'ok' ? 'c-ok' : t.band === 'warn' ? 'c-warn' : 'c-bad';
-  return <span className={`chip ${c}`}>{fmtTime(t.in_time)}</span>;
+  return <span className="io"><span className={`chip ${c}`}>In {fmtTime(t.in_time)}</span>{t.out_time && <small>Out {fmtTime(t.out_time)}</small>}</span>;
 }
+const hubsOf = (ps: Person[] | null) => [...new Set((ps ?? []).map((p) => p.hub).filter((h): h is string => !!h))].sort();
 
 export function HRApp() {
   const { toast } = useApp();
@@ -108,8 +110,9 @@ function Home({ c, open, setTab }: { c: HrToday | null; open: (s: Sub) => void; 
       <DiwaliBanner name="HR team" />
       <div className="dark"><SkyCrackers />
         <div className="top"><div><div className="hi">{greeting()}, HR team</div><div className="day">Today, {fmtShortDay()}</div></div><span className="chip c-mute"><i />{c.staff} staff</span></div>
-        <button className="gcard" onClick={() => open({ name: 'today' })} aria-label="Open today's attendance">
-          <span><small>Checked in</small><b>{c.checked_in}</b><em>{c.late} late{c.checked_out ? ` · ${c.checked_out} out` : ''}</em></span>
+        <button className="gcard gc4h" onClick={() => open({ name: 'today' })} aria-label="Open today's attendance">
+          <span><small>Checked in</small><b>{c.checked_in}</b><em>{c.late} late</em></span>
+          <span><small>Checked out</small><b>{c.checked_out ?? 0}</b><em>Of {c.checked_in}</em></span>
           <span><small>OD · Leave</small><b>{c.od + c.leave}</b><em>{c.od} · {c.leave}</em></span>
           <span><small>Not in</small><b>{notIn}</b><em>Of {c.staff}</em></span>
         </button>
@@ -145,20 +148,31 @@ function usePeople() {
 
 function Today({ onBack, open }: { onBack: () => void; open: (s: Sub) => void }) {
   const people = usePeople();
-  const [f, setF] = useState<'in' | 'late' | 'out' | 'od'>('in');
+  const [f, setF] = useState<'in' | 'outd' | 'late' | 'notin' | 'radius' | 'odlv'>('in');
+  const [hub, setHub] = useState('');
+  const [sort, setSort] = useState<'time' | 'name'>('time');
   // store app: who is outside the radius right now, and for how long today
   const [away, setAway] = useState<Map<string, { outside_min: number; last_inside: boolean | null }>>(new Map());
   useEffect(() => { hr.presenceToday().then((r) => setAway(new Map(r.map((x) => [x.user_id, x])))).catch(() => undefined); }, []);
-  const lab = { in: 'Checked in', late: 'Late', out: 'Not in', od: 'OD' };
-  const list = (people ?? []).filter((p) => p.active && !p.test && (
-    f === 'in' ? !!p.today?.in_time : f === 'late' ? ['warn', 'bad'].includes(p.today?.band ?? '') : f === 'od' ? p.today?.status === 'od' : !p.today?.in_time));
+  const lab = { in: 'Checked in', outd: 'Checked out', late: 'Late', notin: 'Not in', radius: 'Out of radius', odlv: 'OD · Leave' };
+  const base = (people ?? []).filter((p) => p.active && !p.test && (!hub || p.hub === hub));
+  const is = (p: Person, k: keyof typeof lab) => k === 'in' ? !!p.today?.in_time : k === 'outd' ? !!p.today?.out_time
+    : k === 'late' ? !!p.today?.in_time && ['warn', 'bad'].includes(p.today?.band ?? '')
+    : k === 'radius' ? p.geo === 'out' || away.get(p.id)?.last_inside === false
+    : k === 'odlv' ? !!(p.odToday || p.leaveToday) : !p.today?.in_time && !p.leaveToday && !p.odToday;
+  const at = (p: Person) => (f === 'outd' ? p.today?.out_time : p.today?.in_time) ?? '9999';
+  const list = base.filter((p) => is(p, f)).sort((a, b) => (sort === 'name' ? a.full_name.localeCompare(b.full_name) : at(a).localeCompare(at(b)) || a.full_name.localeCompare(b.full_name)));
   return (
     <div className="scr fade" style={{ paddingBottom: 40 }}>
       <Top small="Today" big="Attendance" onBack={onBack} />
-      <div className="pillrow" role="group" aria-label="Filter">{(Object.keys(lab) as (keyof typeof lab)[]).map((k) => <button key={k} className={`pill ${f === k ? 'on' : ''}`} onClick={() => setF(k)}>{lab[k]}</button>)}</div>
+      <div className="pillrow" role="group" aria-label="Filter">{(Object.keys(lab) as (keyof typeof lab)[]).map((k) => <button key={k} className={`pill ${f === k ? 'on' : ''}`} onClick={() => setF(k)}>{lab[k]} <span style={{ opacity: 0.6 }}>{base.filter((p) => is(p, k)).length}</span></button>)}</div>
+      <div className="tools">
+        <select className="inp" aria-label="Hub" value={hub} onChange={(e) => setHub(e.target.value)}><option value="">All hubs</option>{hubsOf(people).map((h) => <option key={h}>{h}</option>)}</select>
+        <div className="seg" role="group" aria-label="Sort"><button className={sort === 'time' ? 'on' : ''} onClick={() => setSort('time')}>Time</button><button className={sort === 'name' ? 'on' : ''} onClick={() => setSort('name')}>Name</button></div>
+      </div>
       {!people ? <Spin /> : <div className="list">{list.map((p) => (
-        <button key={p.id} className="card row" onClick={() => open({ name: 'person', p })}><Av n={p.full_name} /><div className="t"><b className={p.geo ? 'nmf' : undefined}>{p.full_name}<GeoFlag geo={p.geo} /></b><span>{p.hub ?? 'No hub'} hub{p.bio ? ` · finger ${fmtTime(p.bio.in_at)}${p.bio.out_at ? `–${fmtTime(p.bio.out_at)}` : ''}` : ''}{away.get(p.id)?.outside_min ? ` · out ${away.get(p.id)!.outside_min} min today` : ''}</span></div>{away.get(p.id)?.last_inside === false ? <span className="chip c-bad">Out now</span> : dayChip(p)}</button>
-      ))}{list.length === 0 && <div className="empty"><b>No one here</b>Try another filter.</div>}</div>}
+        <button key={p.id} className="card row" onClick={() => open({ name: 'person', p })}><Av n={p.full_name} /><div className="t"><b className={p.geo ? 'nmf' : undefined}>{p.full_name}<GeoFlag geo={p.geo} /></b><span>{p.hub ?? 'No hub'} hub{p.bio ? ` · finger` : ''}{p.odToday ? ' · OD' : ''}{p.leaveToday ? ' · leave' : ''}{away.get(p.id)?.outside_min ? ` · out ${away.get(p.id)!.outside_min} min today` : ''}</span></div>{away.get(p.id)?.last_inside === false ? <span className="chip c-bad">Out now</span> : dayChip(p)}</button>
+      ))}{list.length === 0 && <div className="empty"><b>No one here</b>Try another filter or hub.</div>}</div>}
     </div>
   );
 }
@@ -167,15 +181,20 @@ function StaffList({ open }: { open: (s: Sub) => void }) {
   const people = usePeople();
   const [q, setQ] = useState('');
   const [f, setF] = useState('All');
-  const list = (people ?? []).filter((p) => (f === 'All' ? p.active : f === 'Interns' ? p.role === 'intern' && p.active : f === 'Late' ? ['warn', 'bad'].includes(p.today?.band ?? '') : f === 'Invited' ? !!p.invited : !p.active)
-    && (!q || `${p.full_name} ${p.hub}`.toLowerCase().includes(q.toLowerCase())));
+  const [hub, setHub] = useState('');
+  const test = (p: Person, k: string) => (k === 'All' ? p.active : k === 'Interns' ? p.role === 'intern' && p.active
+    : k === 'Late today' ? !!p.today?.in_time && ['warn', 'bad'].includes(p.today?.band ?? '') : k === 'Dispute today' ? (p.disputesToday ?? 0) > 0
+    : k === 'Invited' ? !!p.invited : !p.active);
+  const inHub = (people ?? []).filter((p) => !hub || p.hub === hub);
+  const list = inHub.filter((p) => test(p, f) && (!q || `${p.full_name} ${p.hub}`.toLowerCase().includes(q.toLowerCase())));
   return (
     <div className="scr fade">
       <Head small={`${people?.filter((p) => p.active).length ?? '–'} people`} big="Staff" right={<button className="rbtn" onClick={() => open({ name: 'add' })} aria-label="Add staff"><Icon n="userplus" /></button>} />
       <label className="search" htmlFor="q"><Icon n="search" /><input id="q" placeholder="Search name or hub" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search staff" /></label>
-      <div className="pillrow" role="group" aria-label="Filter">{['All', 'Late', 'Interns', 'Invited', 'Inactive'].map((k) => <button key={k} className={`pill ${f === k ? 'on' : ''}`} onClick={() => setF(k)}>{k}</button>)}</div>
+      <div className="pillrow" role="group" aria-label="Filter">{['All', 'Late today', 'Dispute today', 'Interns', 'Invited', 'Inactive'].map((k) => <button key={k} className={`pill ${f === k ? 'on' : ''}`} onClick={() => setF(k)}>{k} <span style={{ opacity: 0.6 }}>{inHub.filter((p) => test(p, k)).length}</span></button>)}</div>
+      <div className="tools"><select className="inp" aria-label="Hub" value={hub} onChange={(e) => setHub(e.target.value)}><option value="">All hubs</option>{hubsOf(people).map((h) => <option key={h}>{h}</option>)}</select></div>
       {!people ? <Spin /> : <div className="list">{list.map((p) => (
-        <button key={p.id} className="card row" onClick={() => open({ name: 'person', p })}><Av n={p.full_name} /><div className="t"><b className={p.geo || p.test ? 'nmf' : undefined}>{p.full_name}<GeoFlag geo={p.geo} />{p.test && <span className="chip c-warn" style={{ marginLeft: 6, padding: '2px 8px', fontSize: 11 }}>Test</span>}</b><span>{p.designation ?? cap(p.role)} · {p.hub ?? 'No hub'}</span></div>{p.active ? dayChip(p) : <span className="chip c-pend">Inactive</span>}</button>
+        <button key={p.id} className="card row" onClick={() => open({ name: 'person', p })}><Av n={p.full_name} /><div className="t"><b className={p.geo || p.test ? 'nmf' : undefined}>{p.full_name}<GeoFlag geo={p.geo} />{p.test && <span className="chip c-warn" style={{ marginLeft: 6, padding: '2px 8px', fontSize: 11 }}>Test</span>}</b><span>{p.designation ?? cap(p.role)} · {p.hub ?? 'No hub'}{p.disputesToday ? ` · ${p.disputesToday} dispute${p.disputesToday > 1 ? 's' : ''} today` : ''}</span></div>{p.active ? dayChip(p) : <span className="chip c-pend">Inactive</span>}</button>
       ))}{list.length === 0 && <div className="empty"><b>No match</b>Try another name or hub.</div>}</div>}
     </div>
   );

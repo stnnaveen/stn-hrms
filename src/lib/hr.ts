@@ -13,6 +13,7 @@ export interface Person {
   geo?: 'in' | 'out' | null;   // today's check-in inside / outside the radius (HR only)
   test?: boolean;              // Tech admin's test staff (left out of HR numbers)
   bio?: { in_at: string; out_at: string | null; band: string } | null;   // today's fingerprint (HR only)
+  odToday?: boolean; leaveToday?: boolean; disputesToday?: number;      // approved OD / leave today, disputes raised today
 }
 export interface LeaveReq { id: string; who: string; hub: string | null; leave_type: string; starts_on: string; ends_on: string; half_day: string | null; reason: string | null; status: string; created_at: string }
 export interface OdReq { id: string; who: string; hub: string | null; subject: string; note: string | null; venue_name: string; venue_place?: string | null; venue_url?: string | null; venue_lat?: number | null; venue_lng?: number | null; starts_at: string; ends_at: string; status: string; created_at: string }
@@ -103,7 +104,20 @@ const real = {
       return { ...p, bio: { in_at: b.in_at, out_at: b.out_at, band: b.band },
         today: { in_time: appFirst ? t!.in_time : b.in_at, out_time: out, band: appFirst ? t!.band : b.band, status: t?.status ?? 'present' } };
     });
-    return all.sort((a, b) => a.full_name.localeCompare(b.full_name));
+    // approved OD / leave today and disputes raised today (signed-in staff only: requests and flags need an account)
+    const t0 = new Date(`${istToday()}T00:00:00+05:30`).toISOString(), t1 = new Date(`${istToday()}T23:59:59+05:30`).toISOString();
+    const [odR, lvR, flR] = await Promise.all([
+      sb!.from('od_requests').select('user_id').eq('status', 'approved').lte('starts_at', t1).gte('ends_at', t0),
+      sb!.from('leave_requests').select('user_id').eq('status', 'approved').lte('starts_on', istToday()).gte('ends_on', istToday()),
+      sb!.from('flags').select('user_id, kind, status, staff_reason').gte('created_at', t0)
+    ]);
+    const odSet = new Set(((odR.data ?? []) as { user_id: string }[]).map((x) => x.user_id));
+    const lvSet = new Set(((lvR.data ?? []) as { user_id: string }[]).map((x) => x.user_id));
+    const flN = new Map<string, number>();
+    for (const f of (flR.data ?? []) as { user_id: string; kind: string; status: string; staff_reason: string | null }[])
+      if (f.kind !== 'late' || f.staff_reason || f.status === 'reason_asked') flN.set(f.user_id, (flN.get(f.user_id) ?? 0) + 1);
+    return all.map((p) => ({ ...p, odToday: odSet.has(p.id) || p.today?.status === 'od', leaveToday: lvSet.has(p.id) || p.today?.status === 'leave', disputesToday: flN.get(p.id) ?? 0 }))
+      .sort((a, b) => a.full_name.localeCompare(b.full_name));
   },
   /** HR calendar by email, app and fingerprint days merged (works before the person signs in). */
   async personDays(email: string): Promise<PersonDetail['days']> { return personDaysByEmail(email); },

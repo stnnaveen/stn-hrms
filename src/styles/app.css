@@ -566,3 +566,15 @@ button.gcard{width:100%}   /* HR summary card is a button: fill the card like th
 @keyframes skyrk{0%{opacity:0;transform:translateY(0)}15%{opacity:1}100%{opacity:0;transform:translateY(calc(-1 * var(--h)))}}
 @keyframes skybs{0%{opacity:1;transform:translate(0,0) scale(1.3)}60%{opacity:.9}100%{opacity:0;transform:translate(var(--x),calc(var(--y) + 8px)) scale(.5)}}
 @media (prefers-reduced-motion: reduce){.sky{display:none}}
+
+/* HR: in + out on list rows, 4-figure home card, list tools (hub + sort) */
+.io{display:flex;flex-direction:column;align-items:flex-end;gap:3px;flex:none}
+.io small{font-size:12px;color:var(--ph-ink3);font-variant-numeric:tabular-nums;white-space:nowrap}
+.gcard.gc4h{grid-template-columns:repeat(4,minmax(0,1fr));padding:18px 10px}
+.gcard.gc4h>span{padding:0 4px}
+.gcard.gc4h small{font-size:11.5px;white-space:nowrap}
+.tools{display:flex;gap:8px;align-items:center;margin:-6px 0 14px}
+.tools .inp{flex:1;min-width:0;height:40px;padding-top:0;padding-bottom:0}
+.seg{display:flex;background:var(--ph-surface);border-radius:12px;padding:3px;flex:none}
+.seg button{padding:7px 12px;border-radius:9px;font-size:13.5px;font-weight:600;color:var(--ph-ink2)}
+.seg button.on{background:var(--ph-card);color:var(--ph-ink);box-shadow:0 2px 6px rgba(13,19,33,.08)}
