@@ -13,6 +13,8 @@ import { VenueLink } from '../../ui/VenueLink';
 import { GeoFlag } from '../../ui/GeoFlag';
 import { PunchMap } from '../../ui/PunchMap';
 import { WorkHours } from '../../ui/WorkHours';
+import { BioPunches } from '../../ui/BioPunches';
+import { bio } from '../../lib/bio';
 import { RefreshButton } from '../../ui/RefreshButton';
 
 type Tab = 'home' | 'staff' | 'approvals' | 'disputes';
@@ -143,6 +145,12 @@ function Today({ onBack, open }: { onBack: () => void; open: (s: Sub) => void })
   // store app: who is outside the radius right now, and for how long today
   const [away, setAway] = useState<Map<string, { outside_min: number; last_inside: boolean | null }>>(new Map());
   useEffect(() => { hr.presenceToday().then((r) => setAway(new Map(r.map((x) => [x.user_id, x])))).catch(() => undefined); }, []);
+  // eSSL fingerprint: first punch today per person, refreshed every 30 s (evidence only)
+  const [finger, setFinger] = useState<Map<string, string>>(new Map());
+  useEffect(() => {
+    const load = () => bio.day().then((r) => { const m = new Map<string, string>(); for (const x of r) if (x.userId && (!m.has(x.userId) || x.at < m.get(x.userId)!)) m.set(x.userId, x.at); setFinger(m); }).catch(() => undefined);
+    load(); const t = setInterval(load, 30000); return () => clearInterval(t);
+  }, []);
   const lab = { in: 'Checked in', late: 'Late', out: 'Not in', od: 'OD' };
   const list = (people ?? []).filter((p) => p.active && !p.invited && (
     f === 'in' ? !!p.today?.in_time : f === 'late' ? ['warn', 'bad'].includes(p.today?.band ?? '') : f === 'od' ? p.today?.status === 'od' : !p.today?.in_time));
@@ -151,7 +159,7 @@ function Today({ onBack, open }: { onBack: () => void; open: (s: Sub) => void })
       <Top small="Today" big="Attendance" onBack={onBack} />
       <div className="pillrow" role="group" aria-label="Filter">{(Object.keys(lab) as (keyof typeof lab)[]).map((k) => <button key={k} className={`pill ${f === k ? 'on' : ''}`} onClick={() => setF(k)}>{lab[k]}</button>)}</div>
       {!people ? <Spin /> : <div className="list">{list.map((p) => (
-        <button key={p.id} className="card row" onClick={() => open({ name: 'person', p })}><Av n={p.full_name} /><div className="t"><b className={p.geo ? 'nmf' : undefined}>{p.full_name}<GeoFlag geo={p.geo} /></b><span>{p.hub ?? 'No hub'} hub{away.get(p.id)?.outside_min ? ` · out ${away.get(p.id)!.outside_min} min today` : ''}</span></div>{away.get(p.id)?.last_inside === false ? <span className="chip c-bad">Out now</span> : dayChip(p)}</button>
+        <button key={p.id} className="card row" onClick={() => open({ name: 'person', p })}><Av n={p.full_name} /><div className="t"><b className={p.geo ? 'nmf' : undefined}>{p.full_name}<GeoFlag geo={p.geo} /></b><span>{p.hub ?? 'No hub'} hub{finger.get(p.id) ? ` · finger ${fmtTime(finger.get(p.id)!)}` : ''}{away.get(p.id)?.outside_min ? ` · out ${away.get(p.id)!.outside_min} min today` : ''}</span></div>{away.get(p.id)?.last_inside === false ? <span className="chip c-bad">Out now</span> : dayChip(p)}</button>
       ))}{list.length === 0 && <div className="empty"><b>No one here</b>Try another filter.</div>}</div>}
     </div>
   );
@@ -280,6 +288,7 @@ function PersonView({ p: p0, onBack, open }: { p: Person; onBack: () => void; op
             {punch('out')?.early_out && <span className="chip c-bad">Early out</span>}
           </div>}
           <WorkHours userId={p.id} />
+          <BioPunches userId={p.id} />
           <AskReason d={d} first={first} punch={punch('in')} kind="late" show={!!punch('in') && ['warn', 'bad'].includes(punch('in')!.band ?? '')} onAsked={reloadDetail} />
           <AskReason d={d} first={first} punch={punch('out')} kind="early_out" show={!!punch('out')?.early_out} onAsked={reloadDetail} />
         </>)}

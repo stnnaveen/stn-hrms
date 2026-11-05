@@ -134,6 +134,11 @@ export async function readClipboard(): Promise<string | null> {
   try { return await navigator.clipboard.readText(); } catch { return null; }
 }
 
+/** Copy text to the clipboard (Tech: biometric link key). */
+export async function copyText(text: string): Promise<boolean> {
+  try { await navigator.clipboard.writeText(text); return true; } catch { return false; }
+}
+
 /** Set once location and camera were allowed on this phone, so the permission step shows only once. */
 export function permsDone(set?: boolean): boolean {
   try { if (set) localStorage.setItem('stn-perms', '1'); return localStorage.getItem('stn-perms') === '1'; } catch { return false; }

@@ -10,6 +10,7 @@ import { AccountSheet } from '../../ui/AccountSheet';
 import { RefreshButton } from '../../ui/RefreshButton';
 import { PunchMap } from '../../ui/PunchMap';
 import { Notifications } from '../Notifications';
+import { Biometric } from './Biometric';
 import { bestFix, firstViewToday } from '../../device';
 import { parseCsv, pick, normDate, toCsv, download } from '../../lib/csv';
 import { buildReport } from '../../lib/report';
@@ -18,7 +19,7 @@ import { hr as hrApi, type Hub, type Person } from '../../lib/hr';
 const MapView = lazy(() => import('../../ui/MapView'));
 
 type Tab = 'home' | 'audit' | 'alerts' | 'accuracy' | 'setup';
-type Sub = { name: 'roles' } | { name: 'devices' } | { name: 'rules' } | { name: 'integrations' } | { name: 'radius' } | { name: 'purge' } | { name: 'selfies' } | { name: 'bulk' } | { name: 'report' } | { name: 'alert'; f: Flag } | { name: 'notifs' };
+type Sub = { name: 'roles' } | { name: 'devices' } | { name: 'rules' } | { name: 'integrations' } | { name: 'radius' } | { name: 'purge' } | { name: 'selfies' } | { name: 'bulk' } | { name: 'report' } | { name: 'alert'; f: Flag } | { name: 'notifs' } | { name: 'biometric' };
 type Sheet = null | { t: 'account' } | { t: 'entry'; e: AuditRow } | { t: 'addlogin' } | { t: 'login'; l: RoleLogin } | { t: 'rule'; k: string; v: string }
   | { t: 'device'; d: Device } | { t: 'exports' } | { t: 'privacy' } | { t: 'addtest' };
 
@@ -165,6 +166,7 @@ export function TechApp() {
     if (sub.name === 'bulk') body = <BulkUpload onBack={back} onDone={refresh} />;
     if (sub.name === 'report') body = <Report onBack={back} />;
     if (sub.name === 'purge') body = <Purge onBack={back} onDone={refresh} />;
+    if (sub.name === 'biometric') body = <Biometric onBack={back} />;
     if (sub.name === 'integrations') body = <Integrations svc={svc} health={health} onBack={back} />;
     if (sub.name === 'alert') body = <AlertView f={sub.f} onBack={back} />;
     if (sub.name === 'notifs') body = <div style={{ position: 'absolute', inset: 0 }}><Notifications onBackOverride={back} /></div>;
@@ -390,6 +392,7 @@ function Setup({ roles, ov, health, open, setSheet }: { roles: Roles | null; ov:
         {row(() => open({ name: 'roles' }), 'key', 'c-od', 'Roles', 'Who signs in as HR, Chairman, Tech', roles ? String(roles.logins.length) : '')}
         {row(() => open({ name: 'devices' }), 'phone', 'c-pend', 'Devices', 'Phones, new requests, flags', ov?.newPhones ? `${ov.newPhones} new` : '')}
         {row(() => open({ name: 'rules' }), 'sliders', 'c-warn', 'Rules', 'Office hours, face, location')}
+        {row(() => open({ name: 'biometric' }), 'scan', 'c-ok', 'Biometric', 'eSSL sync PC, devices, staff codes')}
       </div>
       <div className="sec">Testing</div>
       <div className="card" style={{ padding: '4px 16px' }}>

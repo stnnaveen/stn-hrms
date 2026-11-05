@@ -31,5 +31,23 @@ for (const [name, fn] of Object.entries(targets)) {
   console.log(`UP ${name}: ${ok}/${n} up · p50 ${pct(ms, 0.5)} ms · p95 ${pct(ms, 0.95)} ms · max ${Math.max(...ms)} ms`);
 }
 console.log(`UP site ${site || 'not found'}`);
+// eSSL sync PC: it reports every 30 s; quiet for 10+ minutes counts as down and tells the Tech admin (once in 2 hours)
+try {
+  const links = await (await fetch(`${SUPA_URL}/rest/v1/bio_links?select=id,name&revoked_at=is.null`, { headers: svc })).json();
+  for (const l of Array.isArray(links) ? links : []) {
+    const [st] = await (await fetch(`${SUPA_URL}/rest/v1/bio_status?select=last_seen,info&link_id=eq.${l.id}`, { headers: svc })).json();
+    if (!st) { console.log(`UP eSSL sync (${l.name}): not installed yet`); md += `| eSSL sync PC (${l.name}) | not installed yet | | | |\n`; continue; }
+    const age = Math.round((Date.now() - new Date(st.last_seen).getTime()) / 1000);
+    const ok = age <= 600;
+    console.log(`UP eSSL sync (${l.name}): last report ${age} s ago${st.info?.last_error ? ` · error: ${st.info.last_error}` : ''}`);
+    md += `| eSSL sync PC (${l.name}) | ${ok ? 'yes' : 'NO'} | last report ${age} s ago | | |\n`;
+    if (!ok) {
+      down++;
+      const since = new Date(Date.now() - 2 * 3600e3).toISOString();
+      const recent = await (await fetch(`${SUPA_URL}/rest/v1/notifications?select=id&kind=eq.bio_down&created_at=gte.${since}&limit=1`, { headers: svc })).json();
+      if (!recent.length) await fetch(`${SUPA_URL}/rest/v1/rpc/notify_role`, { method: 'POST', headers: svc, body: JSON.stringify({ p_role: 'tech', p_kind: 'bio_down', p_title: 'Biometric sync stopped', p_body: `${st.info?.pc ?? l.name} last reported ${Math.round(age / 60)} min ago`, p_data: {} }) });
+    }
+  }
+} catch (e) { console.log(`UP eSSL sync check skipped: ${e.message}`); }
 if (process.env.GITHUB_STEP_SUMMARY) (await import('node:fs')).appendFileSync(process.env.GITHUB_STEP_SUMMARY, md);
 process.exit(down ? 1 : 0);
