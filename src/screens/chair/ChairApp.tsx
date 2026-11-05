@@ -5,12 +5,13 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useApp } from '../../App';
 import { ApiError } from '../../lib/api';
 import { chair, istMin, isRed, type Slot, type LeaveItem, type OdItem, type Snapshot, type Staff } from '../../lib/chair';
-import { hr, FLAG_LABEL, type Flag, type PersonDetail } from '../../lib/hr';
+import { hr, FLAG_LABEL, type Flag, type PersonDetail, type Person } from '../../lib/hr';
 import { placeLabel, googleMapsUrl, appleMapsUrl, fmtDistance } from '../../lib/geo';
 import { fmtDay, fmtShortDay, fmtTime, greeting, outChip } from '../../lib/time';
 import { Icon, Logo } from '../../ui/Icon';
 import { AccountSheet } from '../../ui/AccountSheet';
 import { Notifications } from '../Notifications';
+import { Today, PersonView, type AttFilter } from '../hr/HRApp';
 import { firstViewToday } from '../../device';
 import { VenueLink } from '../../ui/VenueLink';
 import { GeoFlag } from '../../ui/GeoFlag';
@@ -19,7 +20,7 @@ import { RefreshButton } from '../../ui/RefreshButton';
 
 type Tab = 'home' | 'people' | 'approvals';
 type ListKind = 'red' | 'in' | 'late' | 'notin' | 'out' | 'od' | 'lv' | 'early' | 'last';
-type Sub = { name: 'list'; kind: ListKind } | { name: 'hub'; hub: string } | { name: 'alerts' } | { name: 'alert'; f: Flag } | { name: 'notifs' };
+type Sub = { name: 'list'; kind: ListKind } | { name: 'hub'; hub: string } | { name: 'alerts' } | { name: 'alert'; f: Flag } | { name: 'notifs' } | { name: 'person'; p: Person };
 type Sheet = null | { t: 'od'; o: OdItem } | { t: 'ret'; o: OdItem } | { t: 'person'; s: Staff } | { t: 'account' };
 
 const TINTS = ['#3B4A6B', '#5B4AA8', '#2F62D9', '#1F7A55', '#9C3F5A', '#7A5A2E', '#4E5464'];
@@ -29,7 +30,6 @@ const Av = ({ n }: { n: string }) => <span className="av sm" style={{ background
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
 const RF = () => <span className="rf" role="img" aria-label="Red flag: outside radius"><Icon n="flag" size={13} /></span>;
 const Nm = ({ s }: { s: Staff }) => <b className={isRed(s) || s.geo ? 'nmf' : undefined}>{s.name}{isRed(s) ? <RF /> : <GeoFlag geo={s.geo} />}</b>;
-const LABELS: Record<ListKind, string> = { red: 'Red flags', in: 'Checked in', late: 'Late', notin: 'Not in', out: 'Checked out', od: 'On OD', lv: 'On leave', early: 'Early out', last: 'Last out' };
 const STC: Record<string, string> = { approved: 'c-ok', pending: 'c-pend', returned: 'c-bad', cancelled: 'c-pend' };
 
 function Top({ small, big, onBack, right }: { small: string; big: string; onBack: () => void; right?: React.ReactNode }) {
@@ -70,6 +70,14 @@ function statusChip(s: Staff) {
     {s.outTime && <span className={`chip sm ${outChip(s.outTime)}`}>Out {fmtTime(s.outTime)}</span>}</span>;
 }
 
+// Chairman dashboard tiles -> the HR attendance filters
+const ATT: Record<ListKind, AttFilter> = { red: 'radius', in: 'in', late: 'late', notin: 'notin', out: 'outd', od: 'odlv', lv: 'odlv', early: 'early', last: 'outd' };
+/** A Chairman row as the HR person screen expects it. */
+const asPerson = (s: Staff): Person => ({ id: s.id, full_name: s.name, email: s.email, role: 'staff', designation: s.designation, hub: s.hub === 'No hub' ? null : s.hub,
+  phone: null, employee_code: null, active: true, face_status: 'none', invited: s.invited,
+  today: s.inTime || s.outTime ? { in_time: s.inTime, out_time: s.outTime, band: s.band, status: s.cat === 'od' ? 'od' : s.cat === 'lv' ? 'leave' : 'present' } : null,
+  geo: s.geo ?? null, odToday: !!s.od, leaveToday: s.cat === 'lv' });
+
 // ---------------- app shell ----------------
 export function ChairApp() {
   const { toast } = useApp();
@@ -107,8 +115,10 @@ export function ChairApp() {
   const sheets = <ChairSheets sheet={sheet} setSheet={setSheet} away={!!snap?.away} decide={decide} />;
   if (sub) {
     let body: React.ReactNode = null;
-    if (sub.name === 'list') body = <ListView kind={sub.kind} staff={view} hub={hub} onBack={back} onKind={(k) => setStack((x) => [...x.slice(0, -1), { name: 'list', kind: k }])} onPerson={(s) => setSheet({ t: 'person', s })} />;
-    if (sub.name === 'hub') body = <HubView hub={sub.hub} staff={snap?.staff ?? []} onBack={back} onPerson={(s) => setSheet({ t: 'person', s })} />;
+    // same attendance and person screens as HR, read-only
+    if (sub.name === 'list') body = <Today initial={ATT[sub.kind]} initialHub={hub === 'All' ? '' : hub} initialSort={{ k: 'time', dir: sub.kind === 'last' || sub.kind === 'out' ? -1 : 1 }} onBack={back} onPerson={(p) => open({ name: 'person', p })} />;
+    if (sub.name === 'person') body = <PersonView p={sub.p} onBack={back} readOnly />;
+    if (sub.name === 'hub') body = <HubView hub={sub.hub} staff={snap?.staff ?? []} onBack={back} onPerson={(s) => open({ name: 'person', p: asPerson(s) })} />;
     if (sub.name === 'alerts') body = <Alerts onBack={back} onOpen={(f) => open({ name: 'alert', f })} />;
     if (sub.name === 'alert') body = <AlertView f={sub.f} onBack={back} />;
     if (sub.name === 'notifs') body = <div style={{ position: 'absolute', inset: 0 }}><Notifications onBackOverride={back} /></div>;
@@ -121,7 +131,7 @@ export function ChairApp() {
   return (
     <>
       {tab === 'home' && <Home snap={snap} view={view} hub={hub} setHub={setHub} ods={ods} open={open} setSheet={setSheet} setAway={setAway} goApprovals={(seg) => { setAseg(seg); setTab('approvals'); }} />}
-      {tab === 'people' && <People snap={snap} hub={hub} setHub={setHub} open={open} onPerson={(s) => setSheet({ t: 'person', s })} />}
+      {tab === 'people' && <People snap={snap} hub={hub} setHub={setHub} open={open} onPerson={(s) => open({ name: 'person', p: asPerson(s) })} />}
       {tab === 'approvals' && <Approvals seg={aseg} setSeg={setAseg} ods={ods} away={away} setAway={setAway} setSheet={setSheet} />}
       <nav className="tabs t3" aria-label="Main">{t('home', 'chart', 'Dashboard')}{t('people', 'users', 'People')}{t('approvals', 'inbox', 'Approvals', pend > 0 && !away)}</nav>
       {sheets}
@@ -319,31 +329,6 @@ function Availability() {
 }
 
 // ---------------- lists ----------------
-function ListView({ kind, staff, hub, onBack, onKind, onPerson }: { kind: ListKind; staff: Staff[]; hub: string; onBack: () => void; onKind: (k: ListKind) => void; onPerson: (s: Staff) => void }) {
-  const row = (s: Staff, sub: string, right: React.ReactNode) => <button key={s.id} className="lrow" onClick={() => onPerson(s)}><Av n={s.name} /><span className="t"><Nm s={s} /><span>{sub}</span></span><span className="v">{right}</span></button>;
-  let rows: React.ReactNode[] = [];
-  const inn = staff.filter((s) => s.cat === 'in');
-  switch (kind) {
-    case 'red': rows = staff.filter(isRed).map((s) => row(s, `${s.outside!.distance != null ? `${fmtDistance(s.outside!.distance)} from hub` : 'Outside radius'} · ${s.outside!.place ?? s.hub}`, <span className="chip c-bad">{s.outside!.status === 'reason_asked' ? 'Reason asked' : 'Open'}</span>)); break;
-    case 'in': rows = [...inn].sort((a, b) => (a.inTime ?? '').localeCompare(b.inTime ?? '')).map((s) => row(s, `${s.hub} hub`, statusChip(s))); break;
-    case 'late': rows = inn.filter((s) => s.band !== 'ok').sort((a, b) => (b.inTime ?? '').localeCompare(a.inTime ?? '')).map((s) => row(s, `${s.hub} hub`, statusChip(s))); break;
-    case 'notin': rows = staff.filter((s) => s.cat === 'notin').map((s) => row(s, `${s.hub} hub`, <span className="chip c-pend">Not in</span>)); break;
-    case 'out': rows = staff.filter((s) => s.outTime).sort((a, b) => (b.outTime ?? '').localeCompare(a.outTime ?? '')).map((s) => row(s, `${s.hub} hub`, <span className={`chip ${s.early ? 'c-bad' : 'c-pend'}`}>{fmtTime(s.outTime)}</span>)); break;
-    case 'od': rows = staff.filter((s) => s.od).map((s) => row(s, `${s.od!.subject} · ${s.od!.venue}`, venueChip(s))); break;
-    case 'lv': rows = staff.filter((s) => s.cat === 'lv').map((s) => row(s, `${s.hub} hub`, <span className="chip c-lv">{s.leaveType ? cap(s.leaveType) : 'Leave'}</span>)); break;
-    case 'early': rows = staff.filter((s) => s.early).sort((a, b) => (a.outTime ?? '').localeCompare(b.outTime ?? '')).map((s) => row(s, `${s.hub} hub`, <span className="chip c-bad">{fmtTime(s.outTime)}</span>)); break;
-    case 'last': rows = [...inn.filter((s) => !s.outTime).map((s) => row(s, `${s.hub} hub`, <span className="chip c-ok">Still in</span>)),
-      ...staff.filter((s) => s.outTime).sort((a, b) => (b.outTime ?? '').localeCompare(a.outTime ?? '')).map((s) => row(s, `${s.hub} hub`, <span className="chip c-pend">{fmtTime(s.outTime)}</span>))]; break;
-  }
-  return (
-    <div className="scr fade" style={{ paddingBottom: 40 }}>
-      <Top small={hub === 'All' ? 'All hubs' : `${hub} hub`} big={LABELS[kind]} onBack={onBack} />
-      <div className="pillrow" style={{ marginTop: 0 }} role="group" aria-label="Filter">{(Object.keys(LABELS) as ListKind[]).map((k) => <button key={k} className={`pill ${kind === k ? 'on' : ''}`} onClick={() => onKind(k)}>{LABELS[k]}</button>)}</div>
-      {rows.length ? rows : <div className="empty"><b>No one here</b>Check back later.</div>}
-    </div>
-  );
-}
-
 // ---------------- people ----------------
 function hubStats(staff: Staff[]) {
   const inn = staff.filter((s) => s.cat === 'in'), late = inn.filter((s) => s.band !== 'ok').length;

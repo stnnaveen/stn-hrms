@@ -146,7 +146,7 @@ function usePeople(day?: string) {
   return list;
 }
 const istToday = () => new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
-type SortBy = { k: 'time' | 'name'; dir: 1 | -1 };
+export type SortBy = { k: 'time' | 'name'; dir: 1 | -1 };
 function SortSeg({ v, set }: { v: SortBy; set: (s: SortBy) => void }) {
   const b = (k: SortBy['k'], l: string) => (
     <button className={v.k === k ? 'on' : ''} aria-label={`Sort by ${l}${v.k === k ? (v.dir === 1 ? ', ascending' : ', descending') : ''}`}
@@ -154,21 +154,26 @@ function SortSeg({ v, set }: { v: SortBy; set: (s: SortBy) => void }) {
   return <div className="seg" role="group" aria-label="Sort">{b('time', 'Time')}{b('name', 'Name')}</div>;
 }
 
-function Today({ onBack, open }: { onBack: () => void; open: (s: Sub) => void }) {
+export type AttFilter = 'in' | 'outd' | 'late' | 'early' | 'notin' | 'radius' | 'odlv';
+/** Today's attendance (HR, and the Chairman read-only): filters, hub, sort, any day. */
+export function Today({ onBack, open, onPerson, initial = 'in', initialHub = '', initialSort = { k: 'time', dir: 1 } }: {
+  onBack: () => void; open?: (s: Sub) => void; onPerson?: (p: Person) => void; initial?: AttFilter; initialHub?: string; initialSort?: SortBy }) {
   const [day, setDay] = useState(istToday());
   const isToday = day === istToday();
   const people = usePeople(day);
-  const [f, setF] = useState<'in' | 'outd' | 'late' | 'notin' | 'radius' | 'odlv'>('in');
-  const [hub, setHub] = useState('');
-  const [sort, setSort] = useState<SortBy>({ k: 'time', dir: 1 });
+  const [f, setF] = useState<AttFilter>(initial);
+  const [hub, setHub] = useState(initialHub);
+  const [sort, setSort] = useState<SortBy>(initialSort);
+  const go = (p: Person) => (onPerson ? onPerson(p) : open?.({ name: 'person', p }));
   const pick = useRef<HTMLInputElement>(null);
   // store app: who is outside the radius right now, and for how long today (today only)
   const [away, setAway] = useState<Map<string, { outside_min: number; last_inside: boolean | null }>>(new Map());
   useEffect(() => { if (!isToday) { setAway(new Map()); return; } hr.presenceToday().then((r) => setAway(new Map(r.map((x) => [x.user_id, x])))).catch(() => undefined); }, [isToday]);
-  const lab = { in: 'Checked in', outd: 'Checked out', late: 'Late', notin: 'Not in', radius: 'Out of radius', odlv: 'OD · Leave' };
+  const lab: Record<AttFilter, string> = { in: 'Checked in', outd: 'Checked out', late: 'Late', early: 'Early out', notin: 'Not in', radius: 'Out of radius', odlv: 'OD · Leave' };
   const base = (people ?? []).filter((p) => p.active && !p.test && (!hub || p.hub === hub));
-  const is = (p: Person, k: keyof typeof lab) => k === 'in' ? !!p.today?.in_time : k === 'outd' ? !!p.today?.out_time
+  const is = (p: Person, k: AttFilter) => k === 'in' ? !!p.today?.in_time : k === 'outd' ? !!p.today?.out_time
     : k === 'late' ? !!p.today?.in_time && ['warn', 'bad'].includes(p.today?.band ?? '')
+    : k === 'early' ? !!p.today?.out_time && outChip(p.today.out_time) === 'c-bad'
     : k === 'radius' ? p.geo === 'out' || away.get(p.id)?.last_inside === false
     : k === 'odlv' ? !!(p.odToday || p.leaveToday) : !p.today?.in_time && !p.leaveToday && !p.odToday;
   const at = (p: Person) => (f === 'outd' ? p.today?.out_time : p.today?.in_time) ?? '9999';
@@ -180,13 +185,13 @@ function Today({ onBack, open }: { onBack: () => void; open: (s: Sub) => void })
           <input ref={pick} type="date" value={day} max={istToday()} onChange={(e) => e.target.value && setDay(e.target.value)}
             onClick={(e) => { try { (e.currentTarget as HTMLInputElement & { showPicker?: () => void }).showPicker?.(); } catch { /* opens anyway */ } }}
             style={{ position: 'absolute', inset: 0, opacity: 0, width: '100%', height: '100%', cursor: 'pointer' }} /></label>} />
-      <div className="pillrow" role="group" aria-label="Filter">{(Object.keys(lab) as (keyof typeof lab)[]).map((k) => <button key={k} className={`pill ${f === k ? 'on' : ''}`} onClick={() => setF(k)}>{lab[k]} <span style={{ opacity: 0.6 }}>{base.filter((p) => is(p, k)).length}</span></button>)}</div>
+      <div className="pillrow" role="group" aria-label="Filter">{(Object.keys(lab) as AttFilter[]).map((k) => <button key={k} className={`pill ${f === k ? 'on' : ''}`} onClick={() => setF(k)}>{lab[k]} <span style={{ opacity: 0.6 }}>{base.filter((p) => is(p, k)).length}</span></button>)}</div>
       <div className="tools">
         <select className="inp" aria-label="Hub" value={hub} onChange={(e) => setHub(e.target.value)}><option value="">All hubs</option>{hubsOf(people).map((h) => <option key={h}>{h}</option>)}</select>
         <SortSeg v={sort} set={setSort} />
       </div>
       {!people ? <Spin /> : <div className="list">{list.map((p) => (
-        <button key={p.id} className="card row" onClick={() => open({ name: 'person', p })}><Av n={p.full_name} /><div className="t"><b className={p.geo ? 'nmf' : undefined}>{p.full_name}<GeoFlag geo={p.geo} /></b><span>{p.hub ?? 'No hub'} hub{p.bio ? ` · finger` : ''}{p.odToday ? ' · OD' : ''}{p.leaveToday ? ' · leave' : ''}{away.get(p.id)?.outside_min ? ` · out ${away.get(p.id)!.outside_min} min today` : ''}</span></div>{away.get(p.id)?.last_inside === false ? <span className="chip c-bad">Out now</span> : dayChip(p)}</button>
+        <button key={p.id} className="card row" onClick={() => go(p)}><Av n={p.full_name} /><div className="t"><b className={p.geo ? 'nmf' : undefined}>{p.full_name}<GeoFlag geo={p.geo} /></b><span>{p.hub ?? 'No hub'} hub{p.bio ? ` · finger` : ''}{p.odToday ? ' · OD' : ''}{p.leaveToday ? ' · leave' : ''}{away.get(p.id)?.outside_min ? ` · out ${away.get(p.id)!.outside_min} min today` : ''}</span></div>{away.get(p.id)?.last_inside === false ? <span className="chip c-bad">Out now</span> : dayChip(p)}</button>
       ))}{list.length === 0 && <div className="empty"><b>No one here</b>Try another filter or hub.</div>}</div>}
     </div>
   );
@@ -263,7 +268,8 @@ function MonthCalendar({ d }: { d: PersonDetail }) {
   );
 }
 
-function PersonView({ p: p0, onBack, open }: { p: Person; onBack: () => void; open: (s: Sub) => void }) {
+/** One person (HR; the Chairman read-only: no edit, ask-reason, leave, deactivate or delete). */
+export function PersonView({ p: p0, onBack, open, readOnly = false }: { p: Person; onBack: () => void; open?: (s: Sub) => void; readOnly?: boolean }) {
   const { toast } = useApp();
   const [p, setP] = useState<Person>(p0);
   const [delTyped, setDelTyped] = useState(''); const [delBusy, setDelBusy] = useState(false);
@@ -324,8 +330,8 @@ function PersonView({ p: p0, onBack, open }: { p: Person; onBack: () => void; op
           </div>}
           <WorkHours userId={p.id} />
           <BioPunches email={p.email} />
-          <AskReason d={d} first={first} punch={punch('in')} kind="late" show={!!punch('in') && ['warn', 'bad'].includes(punch('in')!.band ?? '')} onAsked={reloadDetail} />
-          <AskReason d={d} first={first} punch={punch('out')} kind="early_out" show={!!punch('out')?.early_out} onAsked={reloadDetail} />
+          <AskReason d={d} first={first} punch={punch('in')} kind="late" show={!readOnly && !!punch('in') && ['warn', 'bad'].includes(punch('in')!.band ?? '')} onAsked={reloadDetail} />
+          <AskReason d={d} first={first} punch={punch('out')} kind="early_out" show={!readOnly && !!punch('out')?.early_out} onAsked={reloadDetail} />
         </>)}
 
         <div className="sec">This month</div>
@@ -354,16 +360,16 @@ function PersonView({ p: p0, onBack, open }: { p: Person; onBack: () => void; op
         )}
       </>)}
 
-      <div className="sec">Details <button onClick={() => setSheet('edit')}>Edit</button></div>
+      <div className="sec">Details {!readOnly && <button onClick={() => setSheet('edit')}>Edit</button>}</div>
       <div className="card"><dl className="kv" style={{ margin: 0 }}><dt>Designation</dt><dd>{p.designation ?? '—'}</dd><dt>Type</dt><dd>{cap(p.role)}</dd><dt>Email</dt><dd>{p.email}</dd><dt>Code</dt><dd>{p.employee_code ?? '—'}</dd><dt>Phone</dt><dd>{p.phone ?? '—'}</dd><dt>Status</dt><dd>{p.invited ? 'Invited' : active ? 'Active' : 'Inactive'}</dd></dl></div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 20 }}>
+      {!readOnly && <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 20 }}>
         <button className="btn light" onClick={() => setSheet('edit')}><Icon n="building" />Move hub or edit</button>
-        {!p.invited && <button className="btn light" onClick={() => open({ name: 'long', p })}><Icon n="leaf" />Assign long leave</button>}
+        {!p.invited && <button className="btn light" onClick={() => open?.({ name: 'long', p })}><Icon n="leaf" />Assign long leave</button>}
         {!p.invited && (active ? <button className="btn light" onClick={() => setSheet('deact')}>Deactivate</button>
           : <button className="btn light" onClick={async () => { await hr.setActive(p.id, true); setActive(true); toast('Reactivated'); }}>Reactivate</button>)}
         <button className="btn danger" onClick={() => setSheet('delete')}>Delete</button>
-      </div>
+      </div>}
     </div>
       {sheet === 'edit' && <EditStaff p={p} onClose={() => setSheet(null)} onSaved={(np, moved) => { setP(np); setSheet(null); toast(moved ? `${first} moved to ${np.hub} hub · told` : 'Saved'); }} />}
       {sheet === 'deact' && (<><div className="scrim" onClick={() => setSheet(null)} />
