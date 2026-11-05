@@ -47,7 +47,12 @@ Deno.serve(async (req) => {
     agent: typeof body.agent === 'object' && body.agent ? body.agent : {},
     devices: Array.isArray(body.devices) ? body.devices.slice(0, 200) : undefined,
     people: Array.isArray(body.people) ? body.people.slice(0, 5000) : undefined,
-    punches
+    punches,
+    // eSSL's own numbers (sync v1.1+): row counts per day and eTimeTrackLite's in/out per person per day
+    audit: typeof body.audit === 'object' && body.audit ? {
+      tables: Array.isArray((body.audit as Record<string, unknown>).tables) ? ((body.audit as Record<string, unknown>).tables as unknown[]).slice(0, 24) : undefined,
+      attendance: Array.isArray((body.audit as Record<string, unknown>).attendance) ? ((body.audit as Record<string, unknown>).attendance as unknown[]).slice(0, 20000) : undefined
+    } : undefined
   };
   const t0 = Date.now();
   const { data, error } = await db.rpc('bio_ingest', { p_link: link, p: payload });
