@@ -11,6 +11,7 @@ import { Icon } from '../../ui/Icon';
 const istToday = () => new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
 const dayName = (d: string) => (d === istToday() ? 'Today' : fmtShortDay(new Date(`${d}T12:00:00+05:30`)));
 const mins = (a: string, b: string) => Math.round((new Date(b).getTime() - new Date(a).getTime()) / 60000);
+const BAND = { ok: { c: 'var(--ok-ink)', l: 'On time' }, warn: { c: 'var(--warn-ink)', l: 'Slightly late' }, bad: { c: 'var(--bad-ink)', l: 'Late' } } as const;
 const dur = (m: number) => `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')} m`;
 
 export function Fingerprint({ onBack }: { onBack: () => void }) {
@@ -28,8 +29,8 @@ export function Fingerprint({ onBack }: { onBack: () => void }) {
   const people = new Set(inDay.map((r) => r.code)).size, matched = new Set(inDay.filter((r) => r.email).map((r) => r.code)).size;
 
   const csv = () => download(`fingerprint-${first}-to-${today}.csv`, toCsv(
-    ['date', 'essl_code', 'essl_name', 'staff_name', 'staff_email', 'first_punch', 'last_punch', 'punches', 'hours', 'app_check_in', 'app_check_out'],
-    (rows ?? []).map((r) => [r.day, r.esslCode ?? r.code, r.esslName, r.name, r.email, fmtTime(r.first), r.punches > 1 ? fmtTime(r.last) : '', r.punches, r.punches > 1 ? dur(mins(r.first, r.last)) : '', r.appIn ? fmtTime(r.appIn) : '', r.appOut ? fmtTime(r.appOut) : ''])));
+    ['date', 'essl_code', 'essl_name', 'staff_name', 'staff_email', 'in', 'colour', 'out', 'punches', 'hours', 'app_check_in', 'app_check_out'],
+    (rows ?? []).map((r) => [r.day, r.esslCode ?? r.code, r.esslName, r.name, r.email, fmtTime(r.first), BAND[r.band].l, r.last ? fmtTime(r.last) : '', r.punches, r.last ? dur(mins(r.first, r.last)) : '', r.appIn ? fmtTime(r.appIn) : '', r.appOut ? fmtTime(r.appOut) : ''])));
 
   return (
     <div className="scr fade" style={{ paddingBottom: 40 }}>
@@ -46,17 +47,16 @@ export function Fingerprint({ onBack }: { onBack: () => void }) {
           <button className="tile" onClick={() => setF('none')} style={{ outline: f === 'none' ? '2px solid var(--ph-navy)' : 'none' }}><b style={{ color: people - matched ? 'var(--bad-ink)' : undefined }}>{people - matched}</b><span>Not matched</span></button>
         </div>
         {list.length === 0 ? <div className="empty"><b>No punches</b>Try another day or filter.</div> : list.map((r) => {
-          const one = r.punches === 1;
           return (
             <div className="lrow" key={`${r.day}-${r.code}`}>
               <span className="t">
                 <b>{r.name ?? r.esslName ?? r.code}{!r.email && <span className="chip c-warn" style={{ marginLeft: 6, fontSize: 11, display: 'inline-flex', width: 'auto', verticalAlign: 'middle' }}>Not matched</span>}</b>
-                <span style={{ whiteSpace: 'normal' }}>{day === 'all' ? `${dayName(r.day)} · ` : ''}eSSL {r.esslCode ?? r.code}{r.email && r.esslName ? ` · ${r.esslName}` : ''} · {r.punches} punch{one ? '' : 'es'}{r.appIn ? ` · app in ${fmtTime(r.appIn)}` : ''}{r.appOut ? `, out ${fmtTime(r.appOut)}` : ''}</span>
+                <span style={{ whiteSpace: 'normal' }}>{day === 'all' ? `${dayName(r.day)} · ` : ''}eSSL {r.esslCode ?? r.code}{r.email && r.esslName ? ` · ${r.esslName}` : ''} · {r.punches} punch{r.punches === 1 ? '' : 'es'}{r.appIn ? ` · app in ${fmtTime(r.appIn)}` : ''}{r.appOut ? `, out ${fmtTime(r.appOut)}` : ''}</span>
               </span>
-              <span className="v"><b>{fmtTime(r.first)}{one ? '' : ` – ${fmtTime(r.last)}`}</b><span>{one ? 'No out punch' : dur(mins(r.first, r.last))}</span></span>
+              <span className="v"><b><span style={{ color: BAND[r.band].c, fontSize: 15 }}>{fmtTime(r.first)}</span>{r.last ? ` – ${fmtTime(r.last)}` : ''}</b><span>{r.last ? dur(mins(r.first, r.last)) : 'No out punch'}</span></span>
             </div>);
         })}
-        <p className="to">First punch = in, last punch = out. From the eSSL device, for testing; attendance is unchanged.</p>
+        <p className="to">First punch = in. A punch 20+ min later = out; repeats inside 20 min are ignored. In time: green to 10:00, yellow to 10:05, red after.</p>
       </>}
     </div>
   );

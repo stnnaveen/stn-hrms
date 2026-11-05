@@ -364,7 +364,7 @@ do $$ begin
 end $$;
 select pg_temp.as_user('00000000-0000-0000-0000-0000000000a1');
 do $$ begin
-  if (hr_today()->>'staff')::int <> (select count(*) from profiles where role in ('staff','intern') and active and email <> 'naveenflop+staff@gmail.com') then raise exception 'FAIL test staff counted'; end if;
+  if (hr_today()->>'staff')::int <> (select count(*) from staff_roster r left join profiles pr on pr.email = r.email where r.role in ('staff','intern') and not r.is_test and coalesce(pr.active, true)) then raise exception 'FAIL test staff counted'; end if;
   begin perform set_test_mode('naveenflop+staff@gmail.com', false); raise exception 'FAIL HR changed test mode'; exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
   raise notice 'PASS 17c test staff left out of HR numbers; only Tech switches test mode';
 end $$;
@@ -575,5 +575,45 @@ do $$ declare k text; begin
   if (select count(*) from bio_links where name = 'Test office' and revoked_at is null) <> 1 then raise exception 'FAIL old key not revoked'; end if;
   if (select key_hash from bio_links where name = 'Test office' and revoked_at is null) <> encode(digest(k, 'sha256'), 'hex') then raise exception 'FAIL key hash'; end if;
   raise notice 'PASS Tech makes a link key (only its hash stored; the old key with the same name is revoked)';
+end $$;
+select pg_temp.reset();
+
+-- ---------- 26. fingerprint feeds HR: 20-minute double-punch rule, 5-minute grace, staff not yet signed in ----------
+select pg_temp.reset();
+update settings set value = '"10:00"' where key = 'office_start';   -- an earlier test moved it to 09:30
+update settings set value = '"10:05"' where key = 'late_until';
+insert into staff_roster (email, full_name, role, hub_name, employee_code) values ('meena@startuptn.in', 'Meena S', 'staff', 'Chennai', 'STN950') on conflict do nothing;
+do $$ declare j jsonb; t text := to_char(now() at time zone 'Asia/Kolkata', 'YYYY-MM-DD'); begin
+  j := bio_ingest('00000000-0000-0000-0000-0000000000b1', jsonb_build_object(
+    'people', '[{"code": "950", "essl_code": "STN950", "name": "Meena S"}]'::jsonb,
+    'punches', jsonb_build_array(
+      jsonb_build_object('t', 'DeviceLogs_11_2026', 'id', 10, 'dev', '14', 'code', '901', 'at', '2026-11-05T09:50:00+05:30'),   -- Kavya again 9 min later: ignored
+      jsonb_build_object('t', 'DeviceLogs_11_2026', 'id', 11, 'dev', '14', 'code', '901', 'at', '2026-11-05T18:05:00+05:30'),   -- Kavya out
+      jsonb_build_object('t', 'DeviceLogs_11_2026', 'id', 12, 'dev', '14', 'code', '950', 'at', '2026-11-03T10:03:00+05:30'),   -- Meena 10:03: yellow
+      jsonb_build_object('t', 'DeviceLogs_11_2026', 'id', 13, 'dev', '14', 'code', '950', 'at', '2026-11-03T10:15:00+05:30'),   -- 12 min later: not an out
+      jsonb_build_object('t', 'DeviceLogs_11_2026', 'id', 14, 'dev', '14', 'code', '016', 'at', '2026-11-04T10:06:00+05:30'),   -- Arun 10:06: red
+      jsonb_build_object('t', 'DeviceLogs_11_2026', 'id', 15, 'dev', '14', 'code', '950', 'at', t || 'T09:30:00+05:30'))));     -- Meena today
+  if (j->>'saved')::int <> 6 then raise exception 'FAIL bio feed ingest %', j; end if;
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000a1');
+do $$ declare r record; begin
+  select * into r from bio_attendance('2026-11-05', '2026-11-05') where email = 'kavya@startuptn.in';
+  if r.in_at <> '2026-11-05 09:41:12+05:30' or r.out_at <> '2026-11-05 18:05:00+05:30' or r.band <> 'ok' then raise exception 'FAIL kavya in/out %', r; end if;
+  select * into r from bio_attendance('2026-11-03', '2026-11-03') where email = 'meena@startuptn.in';
+  if r.band <> 'warn' or r.out_at is not null then raise exception 'FAIL 10:03 yellow, repeat within 20 min not an out %', r; end if;
+  select * into r from bio_attendance('2026-11-04', '2026-11-04') where email = 'arun@startuptn.in';
+  if r.band <> 'bad' then raise exception 'FAIL 10:06 should be red %', r; end if;
+  raise notice 'PASS fingerprint: first punch = in, out only after 20 min, 10:00 green / 10:03 yellow / 10:06 red';
+  if (select count(*) from hr_person_days('meena@startuptn.in', '2026-11-01', '2026-11-30') where day = '2026-11-03' and band = 'warn' and source = 'bio') <> 1 then raise exception 'FAIL calendar for staff not signed in'; end if;
+  if (select (hr_today()->>'checked_in')::int) < 1 or (select (hr_today()->>'staff')::int) < 3 or hr_today()->'checked_out' is null then raise exception 'FAIL hr_today with fingerprint %', hr_today(); end if;
+  if (select r2.last_at from bio_range('2026-11-03', '2026-11-03') r2 where r2.device_code = '950') is not null then raise exception 'FAIL report out within 20 min'; end if;
+  raise notice 'PASS HR calendar and home numbers include fingerprint days, also for staff who have not signed in';
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-000000000001');
+do $$ begin
+  if (select count(*) from bio_attendance('2026-11-01', '2026-11-30')) <> 0 then raise exception 'FAIL staff reads bio_attendance'; end if;
+  begin perform hr_person_days('meena@startuptn.in', '2026-11-01', '2026-11-30'); raise exception 'FAIL staff called hr_person_days';
+  exception when others then if sqlerrm like 'FAIL%' then raise; end if; end;
+  raise notice 'PASS staff cannot read fingerprint attendance';
 end $$;
 select pg_temp.reset();

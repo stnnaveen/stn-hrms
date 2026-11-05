@@ -15,7 +15,6 @@ import { PunchMap } from '../../ui/PunchMap';
 import { WorkHours } from '../../ui/WorkHours';
 import { BioPunches } from '../../ui/BioPunches';
 import { Fingerprint } from './Fingerprint';
-import { bio } from '../../lib/bio';
 import { RefreshButton } from '../../ui/RefreshButton';
 
 type Tab = 'home' | 'staff' | 'approvals' | 'disputes';
@@ -38,8 +37,8 @@ function Head({ small, big, right }: { small: string; big: string; right?: React
 }
 function Spin() { return <div className="center" style={{ height: 240 }}><span className="spin dark" /></div>; }
 function dayChip(p: Person) {
-  if (p.invited) return <span className="chip c-warn">Invited</span>;
   const t = p.today;
+  if (p.invited && !t?.in_time) return <span className="chip c-warn">Invited</span>;
   if (!t?.in_time) return <span className="chip c-pend">Not in</span>;
   if (t.status === 'od') return <span className="chip c-od">OD</span>;
   const c = t.band === 'ok' ? 'c-ok' : t.band === 'warn' ? 'c-warn' : 'c-bad';
@@ -110,7 +109,7 @@ function Home({ c, open, setTab }: { c: HrToday | null; open: (s: Sub) => void; 
       <div className="dark"><SkyCrackers />
         <div className="top"><div><div className="hi">{greeting()}, HR team</div><div className="day">Today, {fmtShortDay()}</div></div><span className="chip c-mute"><i />{c.staff} staff</span></div>
         <button className="gcard" onClick={() => open({ name: 'today' })} aria-label="Open today's attendance">
-          <span><small>Checked in</small><b>{c.checked_in}</b><em>{c.late} late</em></span>
+          <span><small>Checked in</small><b>{c.checked_in}</b><em>{c.late} late{c.checked_out ? ` · ${c.checked_out} out` : ''}</em></span>
           <span><small>OD · Leave</small><b>{c.od + c.leave}</b><em>{c.od} · {c.leave}</em></span>
           <span><small>Not in</small><b>{notIn}</b><em>Of {c.staff}</em></span>
         </button>
@@ -150,21 +149,15 @@ function Today({ onBack, open }: { onBack: () => void; open: (s: Sub) => void })
   // store app: who is outside the radius right now, and for how long today
   const [away, setAway] = useState<Map<string, { outside_min: number; last_inside: boolean | null }>>(new Map());
   useEffect(() => { hr.presenceToday().then((r) => setAway(new Map(r.map((x) => [x.user_id, x])))).catch(() => undefined); }, []);
-  // eSSL fingerprint: first punch today per person, refreshed every 30 s (evidence only)
-  const [finger, setFinger] = useState<Map<string, string>>(new Map());
-  useEffect(() => {
-    const load = () => bio.day().then((r) => { const m = new Map<string, string>(); for (const x of r) if (x.userId && (!m.has(x.userId) || x.at < m.get(x.userId)!)) m.set(x.userId, x.at); setFinger(m); }).catch(() => undefined);
-    load(); const t = setInterval(load, 30000); return () => clearInterval(t);
-  }, []);
   const lab = { in: 'Checked in', late: 'Late', out: 'Not in', od: 'OD' };
-  const list = (people ?? []).filter((p) => p.active && !p.invited && (
+  const list = (people ?? []).filter((p) => p.active && !p.test && (
     f === 'in' ? !!p.today?.in_time : f === 'late' ? ['warn', 'bad'].includes(p.today?.band ?? '') : f === 'od' ? p.today?.status === 'od' : !p.today?.in_time));
   return (
     <div className="scr fade" style={{ paddingBottom: 40 }}>
       <Top small="Today" big="Attendance" onBack={onBack} />
       <div className="pillrow" role="group" aria-label="Filter">{(Object.keys(lab) as (keyof typeof lab)[]).map((k) => <button key={k} className={`pill ${f === k ? 'on' : ''}`} onClick={() => setF(k)}>{lab[k]}</button>)}</div>
       {!people ? <Spin /> : <div className="list">{list.map((p) => (
-        <button key={p.id} className="card row" onClick={() => open({ name: 'person', p })}><Av n={p.full_name} /><div className="t"><b className={p.geo ? 'nmf' : undefined}>{p.full_name}<GeoFlag geo={p.geo} /></b><span>{p.hub ?? 'No hub'} hub{finger.get(p.id) ? ` · finger ${fmtTime(finger.get(p.id)!)}` : ''}{away.get(p.id)?.outside_min ? ` · out ${away.get(p.id)!.outside_min} min today` : ''}</span></div>{away.get(p.id)?.last_inside === false ? <span className="chip c-bad">Out now</span> : dayChip(p)}</button>
+        <button key={p.id} className="card row" onClick={() => open({ name: 'person', p })}><Av n={p.full_name} /><div className="t"><b className={p.geo ? 'nmf' : undefined}>{p.full_name}<GeoFlag geo={p.geo} /></b><span>{p.hub ?? 'No hub'} hub{p.bio ? ` · finger ${fmtTime(p.bio.in_at)}${p.bio.out_at ? `–${fmtTime(p.bio.out_at)}` : ''}` : ''}{away.get(p.id)?.outside_min ? ` · out ${away.get(p.id)!.outside_min} min today` : ''}</span></div>{away.get(p.id)?.last_inside === false ? <span className="chip c-bad">Out now</span> : dayChip(p)}</button>
       ))}{list.length === 0 && <div className="empty"><b>No one here</b>Try another filter.</div>}</div>}
     </div>
   );
@@ -245,10 +238,10 @@ function PersonView({ p: p0, onBack, open }: { p: Person; onBack: () => void; op
   const [photos, setPhotos] = useState<Record<string, string | null>>({});
   const [sheet, setSheet] = useState<null | 'deact' | 'delete' | 'edit'>(null);
   const [active, setActive] = useState(p.active);
-  const reloadDetail = () => { hr.personDetail(p.id).then(setD).catch(() => undefined); };
+  const reloadDetail = () => { hr.personDetail(p.id, p.email).then(setD).catch(() => undefined); };
   useEffect(() => {
-    if (p.invited) return;
-    hr.personDetail(p.id).then(async (x) => {
+    if (p.invited) { hr.personDays(p.email).then((days) => setD({ punches: [], days, ods: [], leaves: [] })).catch(() => setD({ punches: [], days: [], ods: [], leaves: [] })); return; }
+    hr.personDetail(p.id, p.email).then(async (x) => {
       setD(x);
       // all photos asked for together: they go to the server as one request
       x.punches.forEach((pu) => { void hr.selfieUrl(pu.selfie_key).then((u) => setPhotos((m) => ({ ...m, [pu.kind]: u }))); });
@@ -280,7 +273,10 @@ function PersonView({ p: p0, onBack, open }: { p: Person; onBack: () => void; op
         <div className="meta">{p.invited ? <span className="chip c-warn">Invited · not signed in</span> : <>{dayChip(p)}<span className="chip c-mute">Face {p.face_status}</span></>}{!active && <span className="chip c-pend">Inactive</span>}</div></div>
 
       {p.invited ? (
-        <div className="note-hr" style={{ marginTop: 16 }}><Icon n="mail" size={16} />Signs in with a code sent to {p.email}. Status turns active after first sign-in.</div>
+        <><div className="note-hr" style={{ marginTop: 16 }}><Icon n="mail" size={16} />Signs in with a code sent to {p.email}. Status turns active after first sign-in.</div>
+          <BioPunches email={p.email} />
+          <div className="sec">This month</div>
+          {!d ? <Spin /> : <MonthCalendar d={d} />}</>
       ) : (<>
         <div className="sec">Today</div>
         {!d ? <Spin /> : (<>
@@ -293,7 +289,7 @@ function PersonView({ p: p0, onBack, open }: { p: Person; onBack: () => void; op
             {punch('out')?.early_out && <span className="chip c-bad">Early out</span>}
           </div>}
           <WorkHours userId={p.id} />
-          <BioPunches userId={p.id} />
+          <BioPunches email={p.email} />
           <AskReason d={d} first={first} punch={punch('in')} kind="late" show={!!punch('in') && ['warn', 'bad'].includes(punch('in')!.band ?? '')} onAsked={reloadDetail} />
           <AskReason d={d} first={first} punch={punch('out')} kind="early_out" show={!!punch('out')?.early_out} onAsked={reloadDetail} />
         </>)}

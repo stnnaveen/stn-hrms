@@ -3,7 +3,7 @@ import { sb, DEMO, ApiError } from './api';
 
 export interface HrToday {
   staff: number; checked_in: number; late: number; od: number; leave: number;
-  pending_leave: number; pending_od: number; open_flags: number; chairman_away: boolean;
+  pending_leave: number; pending_od: number; open_flags: number; chairman_away: boolean; finger?: number; checked_out?: number;
 }
 export interface Person {
   id: string; full_name: string; email: string; role: string; designation: string | null; hub: string | null; phone: string | null;
@@ -12,6 +12,7 @@ export interface Person {
   today?: { in_time: string | null; out_time: string | null; band: string | null; status: string } | null;
   geo?: 'in' | 'out' | null;   // today's check-in inside / outside the radius (HR only)
   test?: boolean;              // Tech admin's test staff (left out of HR numbers)
+  bio?: { in_at: string; out_at: string | null; band: string } | null;   // today's fingerprint (HR only)
 }
 export interface LeaveReq { id: string; who: string; hub: string | null; leave_type: string; starts_on: string; ends_on: string; half_day: string | null; reason: string | null; status: string; created_at: string }
 export interface OdReq { id: string; who: string; hub: string | null; subject: string; note: string | null; venue_name: string; venue_place?: string | null; venue_url?: string | null; venue_lat?: number | null; venue_lng?: number | null; starts_at: string; ends_at: string; status: string; created_at: string }
@@ -62,6 +63,13 @@ function selfieLink(key: string): Promise<string | null> {
   });
 }
 
+async function personDaysByEmail(email: string): Promise<PersonDetail['days']> {
+  const ist = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+  const { data, error } = await sb!.rpc('hr_person_days', { p_email: email, p_from: ist.slice(0, 8) + '01', p_to: ist });
+  if (error) throw new ApiError('load_failed');
+  return (data ?? []) as PersonDetail['days'];
+}
+
 const real = {
   async today(): Promise<HrToday> { return must(await sb!.rpc('hr_today')) as HrToday; },
   async people(): Promise<Person[]> {
@@ -84,8 +92,21 @@ const real = {
     const invited: Person[] = roster.filter((r) => !known.has(r.email)).map((r) => ({
       id: `invite:${r.email}`, full_name: r.full_name, email: r.email, role: r.role, designation: r.designation, hub: r.hub_name, phone: r.phone,
       employee_code: r.employee_code, active: true, face_status: 'none', invited: true, today: null, test: r.is_test }));
-    return [...people, ...invited].sort((a, b) => a.full_name.localeCompare(b.full_name));
+    // today's fingerprint (first punch = in, out after 20 min): merged into today; earliest in decides the colour
+    const bioRows = ((await sb!.rpc('bio_attendance', { p_from: istToday(), p_to: istToday() })).data ?? []) as { email: string; in_at: string; out_at: string | null; band: string }[];
+    const bioBy = new Map(bioRows.map((b) => [b.email, b]));
+    const all = [...people, ...invited].map((p) => {
+      const b = bioBy.get(p.email); if (!b) return p;
+      const t = p.today;
+      const appFirst = !!t?.in_time && t.in_time <= b.in_at;
+      const out = [t?.out_time, b.out_at].filter(Boolean).sort().pop() ?? null;
+      return { ...p, bio: { in_at: b.in_at, out_at: b.out_at, band: b.band },
+        today: { in_time: appFirst ? t!.in_time : b.in_at, out_time: out, band: appFirst ? t!.band : b.band, status: t?.status ?? 'present' } };
+    });
+    return all.sort((a, b) => a.full_name.localeCompare(b.full_name));
   },
+  /** HR calendar by email, app and fingerprint days merged (works before the person signs in). */
+  async personDays(email: string): Promise<PersonDetail['days']> { return personDaysByEmail(email); },
   async leaves(): Promise<LeaveReq[]> {
     const r = must(await sb!.from('leave_requests').select('id, leave_type, starts_on, ends_on, half_day, reason, status, created_at, p:profiles!leave_requests_user_id_fkey(full_name, hub:hubs(name))').eq('status', 'pending').order('starts_on'));
     return (r as unknown as (LeaveReq & { p: { full_name: string; hub: { name: string } | null } })[]).map((x) => ({ ...x, who: x.p.full_name, hub: x.p.hub?.name ?? null }));
@@ -142,7 +163,7 @@ const real = {
     const { error } = await sb!.functions.invoke('check-in', { body: { action: 'delete_person', email } });
     if (error) { let code = 'save_failed'; try { code = (await (error as { context?: Response }).context?.json())?.error ?? code; } catch { /* keep */ } throw new ApiError(/role/.test(code) ? 'role_account' : code); }
   },
-  async personDetail(userId: string): Promise<PersonDetail> {
+  async personDetail(userId: string, email?: string): Promise<PersonDetail> {
     const ist = new Date(Date.now() + 330 * 60000);
     const today = ist.toISOString().slice(0, 10), monthStart = today.slice(0, 8) + '01';
     const [punches, days, ods, leaves] = await Promise.all([
@@ -154,7 +175,8 @@ const real = {
     const ps = (punches.data ?? []) as DayPunch[];
     const ids = ps.map((x) => x.id).filter(Boolean) as string[];
     const asks = ids.length ? ((await sb!.from('flags').select('id, punch_id, kind, status, staff_reason').in('punch_id', ids).in('kind', ['late', 'early_out'])).data ?? []) : [];
-    return { asks: asks as PersonDetail['asks'], punches: ps, days: (days.data ?? []) as PersonDetail['days'], ods: (ods.data ?? []) as PersonDetail['ods'], leaves: (leaves.data ?? []) as PersonDetail['leaves'] };
+    const merged = email ? await personDaysByEmail(email).catch(() => null) : null;   // HR: fingerprint days merged in
+    return { asks: asks as PersonDetail['asks'], punches: ps, days: merged ?? (days.data ?? []) as PersonDetail['days'], ods: (ods.data ?? []) as PersonDetail['ods'], leaves: (leaves.data ?? []) as PersonDetail['leaves'] };
   },
   async setActive(id: string, active: boolean) { const { error } = await sb!.from('profiles').update({ active }).eq('id', id); if (error) throw new ApiError('save_failed'); },
   async decideLeave(id: string, decision: 'approved' | 'returned', reason?: string) { const { error } = await sb!.rpc('decide_leave', { p_id: id, p_decision: decision, p_reason: reason ?? null }); if (error) throw new ApiError(error.message); },
@@ -213,6 +235,7 @@ const demo: typeof real = {
   async addStaff(s) { await wait(); const dup = D.people.find((x) => x.email === s.email.trim().toLowerCase()); if (dup) throw new ApiError(`already_added:${dup.full_name}`); D.people.push({ id: crypto.randomUUID(), full_name: s.full_name, email: s.email, role: s.role, designation: s.designation, hub: s.hub_name, phone: s.phone ?? null, employee_code: s.employee_code ?? null, active: true, face_status: 'none', invited: true, today: null }); },
   async updateStaff(email, f) { await wait(); const p = D.people.find((x) => x.email === email); if (p) Object.assign(p, { hub: f.hub_name, designation: f.designation || null, phone: f.phone || null, employee_code: f.employee_code || null }); },
   async deleteStaff(email) { await wait(); D.people = D.people.filter((x) => x.email !== email); },
+  async personDays() { await wait(); return []; },
   async personDetail(uid) {
     await wait();
     const p = D.people.find((x) => x.id === uid);

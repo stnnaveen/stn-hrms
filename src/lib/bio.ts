@@ -8,7 +8,8 @@ export interface BioDevice { linkId: string; esslId: number; name: string; seria
 export interface BioPerson { linkId: string; code: string; esslCode: string | null; esslName: string | null; email: string | null; matched: 'auto' | 'manual' | 'none' }
 export interface RosterRow { email: string; name: string; code: string | null; hub: string | null }
 export interface BioOverview { link: BioLink | null; devices: BioDevice[]; people: BioPerson[]; roster: RosterRow[]; hubs: { id: string; name: string }[]; today: number }
-export interface BioDayRow { day: string; code: string; esslCode: string | null; esslName: string | null; email: string | null; name: string | null; hub: string | null; userId: string | null; first: string; last: string; punches: number; appIn: string | null; appOut: string | null; appStatus: string | null }
+export interface BioDayRow { day: string; code: string; esslCode: string | null; esslName: string | null; email: string | null; name: string | null; hub: string | null; userId: string | null; first: string; last: string | null; punches: number; band: 'ok' | 'warn' | 'bad'; appIn: string | null; appOut: string | null; appStatus: string | null }
+export interface BioPersonDay { day: string; in_at: string; out_at: string | null; punches: number; band: 'ok' | 'warn' | 'bad' }
 export interface BioPunch { at: string; direction: string | null; device: string | null; hub: string | null; code: string; esslName: string | null; email: string | null; name: string | null; userId: string | null }
 
 const istToday = () => new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
@@ -68,8 +69,12 @@ const real = {
   },
   async range(from: string, to: string): Promise<BioDayRow[]> {
     const { data, error } = await sb!.rpc('bio_range', { p_from: from, p_to: to }); rpcErr(error);
-    return ((data ?? []) as { day: string; device_code: string; essl_code: string | null; essl_name: string | null; email: string | null; full_name: string | null; hub: string | null; user_id: string | null; first_at: string; last_at: string; punches: number; app_in: string | null; app_out: string | null; app_status: string | null }[])
-      .map((r) => ({ day: r.day, code: r.device_code, esslCode: r.essl_code, esslName: r.essl_name, email: r.email, name: r.full_name, hub: r.hub, userId: r.user_id, first: r.first_at, last: r.last_at, punches: r.punches, appIn: r.app_in, appOut: r.app_out, appStatus: r.app_status }));
+    return ((data ?? []) as { day: string; device_code: string; essl_code: string | null; essl_name: string | null; email: string | null; full_name: string | null; hub: string | null; user_id: string | null; first_at: string; last_at: string | null; punches: number; band: 'ok' | 'warn' | 'bad'; app_in: string | null; app_out: string | null; app_status: string | null }[])
+      .map((r) => ({ day: r.day, code: r.device_code, esslCode: r.essl_code, esslName: r.essl_name, email: r.email, name: r.full_name, hub: r.hub, userId: r.user_id, first: r.first_at, last: r.last_at, punches: r.punches, band: r.band, appIn: r.app_in, appOut: r.app_out, appStatus: r.app_status }));
+  },
+  async personDays(email: string, days = 7): Promise<BioPersonDay[]> {
+    const { data, error } = await sb!.rpc('bio_person_days', { p_email: email, p_days: days }); rpcErr(error);
+    return (data ?? []) as BioPersonDay[];
   },
   async person(userId: string, days = 7): Promise<{ at: string; direction: string | null; device: string | null }[]> {
     const { data, error } = await sb!.rpc('bio_person', { p_user: userId, p_days: days }); rpcErr(error);
@@ -96,9 +101,10 @@ const demo: typeof real = {
   async day() { await wait(); return [{ at: ago(4), direction: 'in', device: 'Biometric', hub: 'Chennai', code: '56', esslName: 'Kavya R', email: 'kavya@startuptn.in', name: 'Kavya R', userId: 's1' }, { at: ago(31), direction: 'in', device: 'Biometric', hub: 'Chennai', code: '16', esslName: 'Arun K', email: null, name: 'Arun K', userId: null }]; },
   async range() {
     await wait(); const d = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
-    return [{ day: d, code: '56', esslCode: 'STN056', esslName: 'Kavya', email: 'kavya@startuptn.in', name: 'Kavya R', hub: 'Chennai', userId: 's1', first: ago(300), last: ago(4), punches: 4, appIn: ago(296), appOut: null, appStatus: 'present' },
-            { day: d, code: '16', esslCode: '016', esslName: 'Arun K', email: null, name: null, hub: null, userId: null, first: ago(280), last: ago(280), punches: 1, appIn: null, appOut: null, appStatus: null }];
+    return [{ day: d, code: '56', esslCode: 'STN056', esslName: 'Kavya', email: 'kavya@startuptn.in', name: 'Kavya R', hub: 'Chennai', userId: 's1', first: ago(300), last: ago(4), punches: 4, band: 'ok' as const, appIn: ago(296), appOut: null, appStatus: 'present' },
+            { day: d, code: '16', esslCode: '016', esslName: 'Arun K', email: null, name: null, hub: null, userId: null, first: ago(280), last: null, punches: 1, band: 'bad' as const, appIn: null, appOut: null, appStatus: null }];
   },
+  async personDays() { await wait(); return [{ day: new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10), in_at: ago(300), out_at: null, punches: 2, band: 'ok' as const }, { day: new Date(Date.now() - 864e5 + 330 * 60000).toISOString().slice(0, 10), in_at: ago(24 * 60 + 290), out_at: ago(24 * 60 - 200), punches: 3, band: 'bad' as const }]; },
   async person() { await wait(); return [{ at: ago(4), direction: 'in', device: 'Biometric' }, { at: ago(24 * 60 - 480), direction: 'out', device: 'Biometric' }]; }
 };
 export const bio = DEMO ? demo : real;

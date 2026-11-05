@@ -33,3 +33,13 @@ for (const p of pp) {
 console.log(`BIOM matched ${m} unmatched ${u} people ${pp.length}; codes punching this month ${active.size}`);
 const notOnEssl = ro.filter((r) => r.hub_name === 'Chennai' && !pp.some((p) => p.email === r.email));
 console.log(`BIOR Chennai roster not linked to eSSL (${notOnEssl.length}): ${notOnEssl.map((r) => `${r.employee_code}|${r.full_name}`).join('; ')}`);
+// what HR now sees: matched people per day with the 20-minute rule and the 10:00 / 10:05 colours
+const rpc = async (f, b) => (await fetch(`${SUPA_URL}/rest/v1/rpc/${f}`, { method: 'POST', headers: { ...h, 'Content-Type': 'application/json' }, body: JSON.stringify(b) })).json();
+const today = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+const att = await rpc('bio_attendance', { p_from: today.slice(0, 8) + '01', p_to: today });
+const sett = await get('settings?select=key,value&key=in.(office_start,late_until,bio_gap_min)');
+console.log(`BIOA settings ${JSON.stringify(sett)}`);
+const per = {}; for (const a of att) { const k = a.day; per[k] = per[k] || { people: 0, ok: 0, warn: 0, bad: 0, out: 0 }; per[k].people++; per[k][a.band]++; if (a.out_at) per[k].out++; }
+for (const [k, v] of Object.entries(per).sort()) console.log(`BIOA ${k} matched ${v.people} · green ${v.ok} yellow ${v.warn} red ${v.bad} · out ${v.out}`);
+const istT = (t) => t ? new Date(new Date(t).getTime() + 330 * 60000).toISOString().slice(11, 16) : '—';
+for (const a of att.filter((x) => x.day === today).sort((x, y) => x.in_at.localeCompare(y.in_at))) console.log(`BIOT ${a.email.split('@')[0]} in ${istT(a.in_at)} ${a.band} out ${istT(a.out_at)} raw ${a.punches}`);

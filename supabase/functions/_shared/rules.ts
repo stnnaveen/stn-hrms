@@ -51,7 +51,7 @@ export function haversineM(a: { lat: number; lng: number }, b: { lat: number; ln
   return 2 * R * Math.asin(Math.sqrt(h));
 }
 
-/** On time by 10:00, slightly late to 10:15, late after (PRD: strict, no grace). */
+/** On time to office_start (10:00), slightly late to late_until (10:05, set 5 Nov), late after. */
 /** Location: outside when distance minus GPS accuracy exceeds the radius; accuracy credit capped at 100 m (PRD LC-03).
  *  The one place this decision is made; the Tech radius test calls it too. */
 export function radiusCheck(fix: { lat: number; lng: number; accuracy?: number | null }, target: Target) {
