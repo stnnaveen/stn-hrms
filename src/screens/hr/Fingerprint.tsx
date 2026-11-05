@@ -50,8 +50,8 @@ export function Fingerprint({ onBack }: { onBack: () => void }) {
           return (
             <div className="lrow" key={`${r.day}-${r.code}`}>
               <span className="t">
-                <b>{r.name ?? r.esslName ?? r.code}{!r.email && <span className="chip c-warn" style={{ marginLeft: 6, fontSize: 11 }}>Not matched</span>}</b>
-                <span>{day === 'all' ? `${dayName(r.day)} · ` : ''}eSSL {r.esslCode ?? r.code}{r.email && r.esslName ? ` · ${r.esslName}` : ''} · {r.punches} punch{one ? '' : 'es'}{r.appIn ? ` · app in ${fmtTime(r.appIn)}` : ''}{r.appOut ? `, out ${fmtTime(r.appOut)}` : ''}</span>
+                <b>{r.name ?? r.esslName ?? r.code}{!r.email && <span className="chip c-warn" style={{ marginLeft: 6, fontSize: 11, display: 'inline-flex', width: 'auto', verticalAlign: 'middle' }}>Not matched</span>}</b>
+                <span style={{ whiteSpace: 'normal' }}>{day === 'all' ? `${dayName(r.day)} · ` : ''}eSSL {r.esslCode ?? r.code}{r.email && r.esslName ? ` · ${r.esslName}` : ''} · {r.punches} punch{one ? '' : 'es'}{r.appIn ? ` · app in ${fmtTime(r.appIn)}` : ''}{r.appOut ? `, out ${fmtTime(r.appOut)}` : ''}</span>
               </span>
               <span className="v"><b>{fmtTime(r.first)}{one ? '' : ` – ${fmtTime(r.last)}`}</b><span>{one ? 'No out punch' : dur(mins(r.first, r.last))}</span></span>
             </div>);
