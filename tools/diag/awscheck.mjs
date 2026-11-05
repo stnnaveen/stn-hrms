@@ -10,7 +10,7 @@ const s = await (await fetch(`${SUPA_URL}/auth/v1/verify`, { method: 'POST', hea
 if (!s.access_token) { console.log('AWS could not sign in as Tech admin'); process.exit(1); }
 const res = await fetch(`${SUPA_URL}/functions/v1/check-in`, { method: 'POST', headers: { apikey: ANON, Authorization: `Bearer ${s.access_token}`, 'Content-Type': 'application/json' }, body: '{"action":"health","test_s3":true}' });
 const raw = await res.text(); let r = {}; try { r = JSON.parse(raw); } catch { /* not json */ }
-console.log(`AWS health HTTP ${res.status} ${raw.slice(0, 200)}`);
+console.log(`AWS health HTTP ${res.status} ${raw.slice(0, 900)}`);
 console.log(`AWS storage=${r.storage} bucket=${r.bucket} region=${r.region} write+delete=${r.s3_ok} error=${r.s3_error ?? '-'} face_match=${r.face_match}`);
 // where today's selfies went
 const since = new Date(Date.now() - 864e5).toISOString();
