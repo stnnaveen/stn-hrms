@@ -5,10 +5,12 @@
 # - Never doubles a punch: the server ignores a row it already has.
 # - Reports in every cycle, so HR/Tech see if this PC goes quiet.
 # Reads only: punch time, device, staff code; device list; staff code + name. No photos, Aadhaar or passwords.
+# v1.1: every 15 minutes also sends eSSL's own numbers (rows per day, and eTimeTrackLite's in/out per person per day)
+#       so StartupTN HR can prove its figures match eSSL exactly.
 
 param([switch]$Once)
 $ErrorActionPreference = 'Stop'
-$Version = '1.0.0'
+$Version = '1.1.0'
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
 
 $Root = if ($env:STN_SYNC_ROOT) { $env:STN_SYNC_ROOT } else { Join-Path $env:ProgramData 'StartupTN\essl-sync' }
@@ -86,6 +88,36 @@ function Get-People {
   return ,$list
 }
 
+# 'HH:mm' (24 h) from whatever eSSL stores: '09:41', '2026-11-05 09:41:00', '1:05 PM'. Null when no time.
+function Hm($v) {
+  $t = Str $v
+  if ($t -notmatch '(\d{1,2}):(\d{2})(?::\d{2})?\s*([AaPp][Mm])?') { return $null }
+  $h = [int]$Matches[1]; $m = [int]$Matches[2]; $ap = $Matches[3]
+  if ($ap) { if ($ap -match '^[Pp]' -and $h -lt 12) { $h += 12 } elseif ($ap -match '^[Aa]' -and $h -eq 12) { $h = 0 } }
+  if ($h -gt 23 -or $m -gt 59) { return $null }
+  return ('{0:00}:{1:00}' -f $h, $m)
+}
+
+# eSSL's own numbers: rows per log table and per day, and eTimeTrackLite's in/out per person per day
+function Get-Audit($tables) {
+  $tb = @()
+  foreach ($t in $tables) {
+    $c = Get-Rows "select count(*) as n, max(DeviceLogId) as mx from [$($t.Schema)].[$($t.Name)]"
+    $days = [ordered]@{}
+    foreach ($r in (Get-Rows "select convert(varchar(10), LogDate, 120) as d, count(*) as n from [$($t.Schema)].[$($t.Name)] group by convert(varchar(10), LogDate, 120)").Rows) { $days[[string]$r.d] = [int]$r.n }
+    $tb += [ordered]@{ t = $t.Name; count = [int]$c.Rows[0].n; max_id = $(if ($c.Rows[0].mx -is [DBNull]) { 0 } else { [int]$c.Rows[0].mx }); days = $days }
+  }
+  $from = (Get-Date).Date.AddDays(1 - (Get-Date).Day); if ((Get-Date).Day -le 7) { $from = $from.AddMonths(-1) }
+  $att = @()
+  $rows = Get-Rows "select e.EmployeeCodeInDevice as code, convert(varchar(10), a.AttendanceDate, 120) as d, a.InTime, a.OutTime, a.Status, cast(a.PunchRecords as nvarchar(600)) as rec from dbo.AttendanceLogs a join dbo.Employees e on e.EmployeeId = a.EmployeeId where a.AttendanceDate >= @from" @{ '@from' = $from }
+  foreach ($r in $rows.Rows) {
+    $in = Hm $r.InTime
+    if (-not $in -and -not (Str $r.rec)) { continue }        # no punch that day: nothing to compare
+    $att += [ordered]@{ code = (Str $r.code); day = [string]$r.d; in = $in; out = (Hm $r.OutTime); status = (Str $r.Status); records = (Str $r.rec) }
+  }
+  return @{ tables = $tb; attendance = $att }
+}
+
 function Send([hashtable]$body) {
   $json = $body | ConvertTo-Json -Depth 6 -Compress
   $bytes = [Text.Encoding]::UTF8.GetBytes($json)
@@ -93,12 +125,12 @@ function Send([hashtable]$body) {
 }
 
 # ---- state
-$state = @{ cursors = @{}; devices_at = $null; people_at = $null }
+$state = @{ cursors = @{}; devices_at = $null; people_at = $null; audit_at = $null }
 if (Test-Path $StatePath) {
   try {
     $s = Get-Content $StatePath -Raw | ConvertFrom-Json
     foreach ($p in $s.cursors.PSObject.Properties) { $state.cursors[$p.Name] = [int]$p.Value }
-    $state.devices_at = $s.devices_at; $state.people_at = $s.people_at
+    $state.devices_at = $s.devices_at; $state.people_at = $s.people_at; $state.audit_at = $s.audit_at
   } catch { Log "state file unreadable, starting from this month: $($_.Exception.Message)" }
 }
 $started = Iso (Get-Date)
@@ -127,6 +159,9 @@ function Sync-Cycle {
   $sendPeople = (-not $state.people_at) -or (($now - [datetime]$state.people_at).TotalMinutes -ge 30)
   if ($sendDevices) { $body.devices = Get-Devices }
   if ($sendPeople) { $body.people = Get-People }
+  # audit only once the backlog is sent, so eSSL's counts and ours describe the same rows
+  $sendAudit = (-not $more) -and ((-not $state.audit_at) -or (($now - [datetime]$state.audit_at).TotalMinutes -ge 15))
+  if ($sendAudit) { try { $body.audit = Get-Audit $tables } catch { $sendAudit = $false; Log "audit skipped: $($_.Exception.Message)" } }
   $body.agent = [ordered]@{ pc = $env:COMPUTERNAME; version = $Version; started = $started; interval_sec = $Interval; last_ok = $stats.last_ok;
     last_error = $stats.last_error; last_punch = $stats.last_punch; sent_total = $stats.sent; cursors = $state.cursors; tables = @($tables | ForEach-Object { "$($_.Schema).$($_.Name)" }) }
 
@@ -135,6 +170,7 @@ function Sync-Cycle {
   foreach ($k in $maxIds.Keys) { $state.cursors[$k] = $maxIds[$k] }
   if ($sendDevices) { $state.devices_at = $now.ToString('o') }
   if ($sendPeople) { $state.people_at = $now.ToString('o') }
+  if ($sendAudit) { $state.audit_at = $now.ToString('o') }
   # keep only cursors for this month and last month
   foreach ($k in @($state.cursors.Keys)) { if (-not ($tables | Where-Object { $_.Name -eq $k })) { $state.cursors.Remove($k) } }
   Save-Json $state $StatePath

@@ -617,3 +617,34 @@ do $$ begin
   raise notice 'PASS staff cannot read fingerprint attendance';
 end $$;
 select pg_temp.reset();
+
+-- ---------- 27. codes without case; verification against eSSL's own numbers ----------
+select pg_temp.reset();
+do $$ declare j jsonb; begin
+  j := bio_ingest('00000000-0000-0000-0000-0000000000b1', '{
+    "punches": [{"t": "DeviceLogs_11_2026", "id": 20, "dev": "14", "code": "stn950", "at": "2026-11-02T09:59:00+05:30"},
+                {"t": "DeviceLogs_11_2026", "id": 21, "dev": "14", "code": "STN950", "at": "2026-11-02T18:01:00+05:30"}],
+    "people": [{"code": "STN950", "essl_code": "STN950", "name": "Meena S"}],
+    "audit": {"tables": [{"t": "DeviceLogs_11_2026", "count": 99, "max_id": 21, "days": {"2026-11-02": 2, "2026-11-03": 3}}],
+              "attendance": [{"code": "STN950", "day": "2026-11-02", "in": "09:59", "out": "18:01", "status": "P"},
+                             {"code": "950", "day": "2026-11-03", "in": "10:03", "out": "10:15", "status": "P"}]}}');
+  if (j->>'saved')::int <> 2 or (j->>'essl_days')::int <> 2 then raise exception 'FAIL audit ingest %', j; end if;
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000a1');
+do $$ declare r record; begin
+  select * into r from bio_attendance('2026-11-02', '2026-11-02') where email = 'meena@startuptn.in';
+  if r.in_at is null or r.out_at <> '2026-11-02 18:01:00+05:30' then raise exception 'FAIL lower-case code not linked %', r; end if;
+  raise notice 'PASS a code in lower case (stn950) links to the same person as STN950';
+  select * into r from bio_verify('2026-11-02', '2026-11-02');
+  if r.essl_rows <> 2 or r.stored_rows <> 2 or r.orphans <> 0 or r.compared <> 1 or r.in_agree <> 1 or r.out_agree <> 1 then raise exception 'FAIL verify 2 Nov %', r; end if;
+  select * into r from bio_verify('2026-11-03', '2026-11-03');
+  if r.compared <> 1 or r.in_agree <> 1 or r.out_agree <> 1 then raise exception 'FAIL verify 3 Nov (out inside 20 min agrees with eSSL) %', r; end if;
+  raise notice 'PASS verification: eSSL rows = stored rows, no orphans, in and out agree with eSSL attendance';
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-000000000001');
+do $$ begin
+  if (select count(*) from bio_essl_days) + (select count(*) from bio_audit) <> 0 then raise exception 'FAIL staff reads eSSL audit'; end if;
+  if (select count(*) from bio_verify('2026-11-01', '2026-11-05') where stored_rows > 0) <> 0 then raise exception 'FAIL staff reads verification'; end if;
+  raise notice 'PASS staff cannot read the eSSL audit';
+end $$;
+select pg_temp.reset();

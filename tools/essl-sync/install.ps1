@@ -29,6 +29,8 @@ if (-not $me.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
 
 # 1. link key
 $key = ''
+$oldCfg = Join-Path $Root 'config.json'
+if (Test-Path $oldCfg) { try { $k = (Get-Content $oldCfg -Raw | ConvertFrom-Json).key; if ($k -match '^stnbio_[0-9a-f]{64}$') { $key = $k; Say 'Updating: keeping the current link key.' 'Green' } } catch {} }
 for ($i = 0; $i -lt 3 -and $key -notmatch '^stnbio_[0-9a-f]{64}$'; $i++) {
   $key = (Read-Host '  Paste the link key (starts with stnbio_) and press Enter').Trim()
   if ($key -notmatch '^stnbio_[0-9a-f]{64}$') { Say 'That is not a full link key. Copy it again from the Tech admin screen.' 'Yellow' }
