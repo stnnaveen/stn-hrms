@@ -640,11 +640,27 @@ do $$ declare r record; begin
   select * into r from bio_verify('2026-11-03', '2026-11-03');
   if r.compared <> 1 or r.in_agree <> 1 or r.out_agree <> 1 then raise exception 'FAIL verify 3 Nov (out inside 20 min agrees with eSSL) %', r; end if;
   raise notice 'PASS verification: eSSL rows = stored rows, no orphans, in and out agree with eSSL attendance';
+  perform 1;
 end $$;
 select pg_temp.as_user('00000000-0000-0000-0000-000000000001');
 do $$ begin
   if (select count(*) from bio_essl_days) + (select count(*) from bio_audit) <> 0 then raise exception 'FAIL staff reads eSSL audit'; end if;
   if (select count(*) from bio_verify('2026-11-01', '2026-11-05') where stored_rows > 0) <> 0 then raise exception 'FAIL staff reads verification'; end if;
   raise notice 'PASS staff cannot read the eSSL audit';
+end $$;
+select pg_temp.reset();
+
+-- ---------- 28. eSSL's filled-in shift end is not a disagreement ----------
+select pg_temp.reset();
+do $$ begin
+  perform bio_ingest('00000000-0000-0000-0000-0000000000b1', '{
+    "punches": [{"t": "DeviceLogs_11_2026", "id": 30, "dev": "14", "code": "STN950", "at": "2026-11-06T09:40:00+05:30"}],
+    "audit": {"attendance": [{"code": "STN950", "day": "2026-11-06", "in": "09:40", "out": "18:00", "status": "P"}]}}');
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000a1');
+do $$ declare r record; begin
+  select * into r from bio_verify('2026-11-06', '2026-11-06');
+  if r.compared <> 1 or r.in_agree <> 1 or r.out_agree <> 1 or r.essl_filled <> 1 or jsonb_array_length(r.differ) <> 0 then raise exception 'FAIL eSSL filled 18:00 %', r; end if;
+  raise notice 'PASS eSSL''s filled-in 18:00 (no punch at that time) is counted as filled, not as a disagreement';
 end $$;
 select pg_temp.reset();

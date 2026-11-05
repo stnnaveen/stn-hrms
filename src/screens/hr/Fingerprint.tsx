@@ -33,6 +33,7 @@ export function Fingerprint({ onBack }: { onBack: () => void }) {
   const ck = (checks ?? []).filter((c) => c.stored_rows > 0 && (day === 'all' || c.day === day));
   const reported = ck.some((c) => c.essl_rows != null);
   const rowsOk = ck.every((c) => c.essl_rows === c.stored_rows), orph = ck.reduce((a, c) => a + c.orphans, 0);
+  const filled = ck.reduce((a, c) => a + (c.essl_filled ?? 0), 0);
   const cmp = ck.reduce((a, c) => a + c.compared, 0), inOk = ck.reduce((a, c) => a + c.in_agree, 0), outOk = ck.reduce((a, c) => a + c.out_agree, 0);
   const diff = new Map(ck.flatMap((c) => c.differ.map((x) => [`${c.day}|${x.code}`, x] as const)));
   const allOk = reported && rowsOk && orph === 0 && cmp > 0 && inOk === cmp && outOk === cmp;
@@ -60,6 +61,7 @@ export function Fingerprint({ onBack }: { onBack: () => void }) {
             <div className="svc"><span className={`dot ${rowsOk ? '' : 'bad'}`} /><span className="t">Every eSSL punch received<span>eSSL {ck.reduce((a, c) => a + (c.essl_rows ?? 0), 0)} · here {ck.reduce((a, c) => a + c.stored_rows, 0)}</span></span></div>
             <div className="svc"><span className={`dot ${orph === 0 ? '' : 'bad'}`} /><span className="t">Every punch linked to an eSSL person<span>{orph === 0 ? 'None left over' : `${orph} not linked`}</span></span></div>
             <div className="svc"><span className={`dot ${cmp && inOk === cmp && outOk === cmp ? '' : cmp ? 'bad' : 'p'}`} /><span className="t">In and out same as eSSL’s own report<span>{cmp ? `In ${inOk}/${cmp} · out ${outOk}/${cmp}` : 'eSSL has not processed these days yet'}</span></span></div>
+            {filled > 0 && <p className="to" style={{ textAlign: 'left', margin: '2px 0 8px' }}>{filled} with no out punch: eSSL’s own report fills in 18:00 for them. That is not a punch; here they show “No out punch”.</p>}
           </>}
         </div>}
         {list.length === 0 ? <div className="empty"><b>No punches</b>Try another day or filter.</div> : list.map((r) => {

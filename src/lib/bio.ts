@@ -11,7 +11,7 @@ export interface BioOverview { link: BioLink | null; devices: BioDevice[]; peopl
 export interface BioDayRow { day: string; code: string; esslCode: string | null; esslName: string | null; email: string | null; name: string | null; hub: string | null; userId: string | null; first: string; last: string | null; punches: number; band: 'ok' | 'warn' | 'bad'; appIn: string | null; appOut: string | null; appStatus: string | null }
 export interface BioPersonDay { day: string; in_at: string; out_at: string | null; punches: number; band: 'ok' | 'warn' | 'bad' }
 export interface BioDiff { code: string; name: string | null; our_in: string | null; essl_in: string | null; our_out: string | null; essl_out: string | null }
-export interface BioCheck { day: string; essl_rows: number | null; stored_rows: number; orphans: number; compared: number; in_agree: number; out_agree: number; differ: BioDiff[]; essl_reported_at: string | null }
+export interface BioCheck { day: string; essl_rows: number | null; stored_rows: number; orphans: number; compared: number; in_agree: number; out_agree: number; essl_filled: number; differ: BioDiff[]; essl_reported_at: string | null }
 export interface BioPunch { at: string; direction: string | null; device: string | null; hub: string | null; code: string; esslName: string | null; email: string | null; name: string | null; userId: string | null }
 
 const istToday = () => new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
@@ -110,7 +110,7 @@ const demo: typeof real = {
     return [{ day: d, code: '56', esslCode: 'STN056', esslName: 'Kavya', email: 'kavya@startuptn.in', name: 'Kavya R', hub: 'Chennai', userId: 's1', first: ago(300), last: ago(4), punches: 4, band: 'ok' as const, appIn: ago(296), appOut: null, appStatus: 'present' },
             { day: d, code: '16', esslCode: '016', esslName: 'Arun K', email: null, name: null, hub: null, userId: null, first: ago(280), last: null, punches: 1, band: 'bad' as const, appIn: null, appOut: null, appStatus: null }];
   },
-  async verify() { await wait(); const d = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10); return [{ day: d, essl_rows: 2, stored_rows: 2, orphans: 0, compared: 1, in_agree: 1, out_agree: 1, differ: [], essl_reported_at: ago(3) }]; },
+  async verify() { await wait(); const d = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10); return [{ day: d, essl_rows: 2, stored_rows: 2, orphans: 0, compared: 1, in_agree: 1, out_agree: 1, essl_filled: 0, differ: [], essl_reported_at: ago(3) }]; },
   async personDays() { await wait(); return [{ day: new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10), in_at: ago(300), out_at: null, punches: 2, band: 'ok' as const }, { day: new Date(Date.now() - 864e5 + 330 * 60000).toISOString().slice(0, 10), in_at: ago(24 * 60 + 290), out_at: ago(24 * 60 - 200), punches: 3, band: 'bad' as const }]; },
   async person() { await wait(); return [{ at: ago(4), direction: 'in', device: 'Biometric' }, { at: ago(24 * 60 - 480), direction: 'out', device: 'Biometric' }]; }
 };

@@ -47,6 +47,6 @@ const orphan = raw.filter((p) => !emailOf.has(p.device_code) && !people.some((x)
 console.log(`CHK 3 punches with no eSSL person: ${orphan}`);
 // --- against eSSL itself
 const v = await rpc('bio_verify', { p_from: first, p_to: today });
-for (const c of v.filter((c) => c.stored_rows > 0)) console.log(`CHK eSSL ${c.day}: eSSL rows ${c.essl_rows ?? 'not reported yet'} · stored ${c.stored_rows} · orphans ${c.orphans} · compared ${c.compared} · in agree ${c.in_agree} · out agree ${c.out_agree}${c.differ.length ? ' · DIFFER ' + JSON.stringify(c.differ.slice(0, 8)) : ''}`);
+for (const c of v.filter((c) => c.stored_rows > 0)) console.log(`CHK eSSL ${c.day}: eSSL rows ${c.essl_rows ?? 'not reported yet'} · stored ${c.stored_rows} · orphans ${c.orphans} · compared ${c.compared} · in agree ${c.in_agree} · out agree ${c.out_agree} · eSSL filled ${c.essl_filled}${c.differ.length ? ' · DIFFER ' + JSON.stringify(c.differ.slice(0, 8)) : ''}`);
 for (const w of ['akila', 'lakshmi']) { const em = (await get(`staff_roster?select=email&full_name=ilike.*${w}*`)).map((r) => r.email); for (const a of att.filter((x) => em.includes(x.email))) console.log(`CHK ${w}: ${a.day} in ${ist(a.in_at).slice(11, 16)} ${a.band} out ${a.out_at ? ist(a.out_at).slice(11, 16) : '—'} (${a.punches} punches)`); }
 if (diff.length || pDiff.length || orphan) process.exitCode = 1;
