@@ -1,5 +1,5 @@
 import { DiwaliBanner, SkyCrackers } from '../../ui/Festive';
-import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { useApp } from '../../App';
 import { api, errorText, ApiError } from '../../lib/api';
 import { hr, FLAG_LABEL, type Flag, type HrToday, type Hub, type LeaveReq, type OdReq, type Person, type PersonDetail, type Pin, type DayPunch } from '../../lib/hr';
@@ -140,20 +140,31 @@ function Home({ c, open, setTab }: { c: HrToday | null; open: (s: Sub) => void; 
   );
 }
 
-function usePeople() {
+function usePeople(day?: string) {
   const [list, setList] = useState<Person[] | null>(null);
-  useEffect(() => { hr.people().then(setList).catch(() => setList([])); }, []);
+  useEffect(() => { setList(null); hr.people(day).then(setList).catch(() => setList([])); }, [day]);
   return list;
+}
+const istToday = () => new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+type SortBy = { k: 'time' | 'name'; dir: 1 | -1 };
+function SortSeg({ v, set }: { v: SortBy; set: (s: SortBy) => void }) {
+  const b = (k: SortBy['k'], l: string) => (
+    <button className={v.k === k ? 'on' : ''} aria-label={`Sort by ${l}${v.k === k ? (v.dir === 1 ? ', ascending' : ', descending') : ''}`}
+      onClick={() => set(v.k === k ? { k, dir: (v.dir * -1) as 1 | -1 } : { k, dir: 1 })}>{l}{v.k === k ? (v.dir === 1 ? ' ↑' : ' ↓') : ''}</button>);
+  return <div className="seg" role="group" aria-label="Sort">{b('time', 'Time')}{b('name', 'Name')}</div>;
 }
 
 function Today({ onBack, open }: { onBack: () => void; open: (s: Sub) => void }) {
-  const people = usePeople();
+  const [day, setDay] = useState(istToday());
+  const isToday = day === istToday();
+  const people = usePeople(day);
   const [f, setF] = useState<'in' | 'outd' | 'late' | 'notin' | 'radius' | 'odlv'>('in');
   const [hub, setHub] = useState('');
-  const [sort, setSort] = useState<'time' | 'name'>('time');
-  // store app: who is outside the radius right now, and for how long today
+  const [sort, setSort] = useState<SortBy>({ k: 'time', dir: 1 });
+  const pick = useRef<HTMLInputElement>(null);
+  // store app: who is outside the radius right now, and for how long today (today only)
   const [away, setAway] = useState<Map<string, { outside_min: number; last_inside: boolean | null }>>(new Map());
-  useEffect(() => { hr.presenceToday().then((r) => setAway(new Map(r.map((x) => [x.user_id, x])))).catch(() => undefined); }, []);
+  useEffect(() => { if (!isToday) { setAway(new Map()); return; } hr.presenceToday().then((r) => setAway(new Map(r.map((x) => [x.user_id, x])))).catch(() => undefined); }, [isToday]);
   const lab = { in: 'Checked in', outd: 'Checked out', late: 'Late', notin: 'Not in', radius: 'Out of radius', odlv: 'OD · Leave' };
   const base = (people ?? []).filter((p) => p.active && !p.test && (!hub || p.hub === hub));
   const is = (p: Person, k: keyof typeof lab) => k === 'in' ? !!p.today?.in_time : k === 'outd' ? !!p.today?.out_time
@@ -161,14 +172,18 @@ function Today({ onBack, open }: { onBack: () => void; open: (s: Sub) => void })
     : k === 'radius' ? p.geo === 'out' || away.get(p.id)?.last_inside === false
     : k === 'odlv' ? !!(p.odToday || p.leaveToday) : !p.today?.in_time && !p.leaveToday && !p.odToday;
   const at = (p: Person) => (f === 'outd' ? p.today?.out_time : p.today?.in_time) ?? '9999';
-  const list = base.filter((p) => is(p, f)).sort((a, b) => (sort === 'name' ? a.full_name.localeCompare(b.full_name) : at(a).localeCompare(at(b)) || a.full_name.localeCompare(b.full_name)));
+  const list = base.filter((p) => is(p, f)).sort((a, b) => sort.dir * (sort.k === 'name' ? a.full_name.localeCompare(b.full_name) : at(a).localeCompare(at(b)) || a.full_name.localeCompare(b.full_name)));
   return (
     <div className="scr fade" style={{ paddingBottom: 40 }}>
-      <Top small="Today" big="Attendance" onBack={onBack} />
+      <Top small={isToday ? 'Today' : fmtShortDay(new Date(`${day}T12:00:00+05:30`))} big="Attendance" onBack={onBack}
+        right={<label className="rbtn" aria-label="Choose day" style={{ position: 'relative', cursor: 'pointer' }}><Icon n="cal" />
+          <input ref={pick} type="date" value={day} max={istToday()} onChange={(e) => e.target.value && setDay(e.target.value)}
+            onClick={(e) => { try { (e.currentTarget as HTMLInputElement & { showPicker?: () => void }).showPicker?.(); } catch { /* opens anyway */ } }}
+            style={{ position: 'absolute', inset: 0, opacity: 0, width: '100%', height: '100%', cursor: 'pointer' }} /></label>} />
       <div className="pillrow" role="group" aria-label="Filter">{(Object.keys(lab) as (keyof typeof lab)[]).map((k) => <button key={k} className={`pill ${f === k ? 'on' : ''}`} onClick={() => setF(k)}>{lab[k]} <span style={{ opacity: 0.6 }}>{base.filter((p) => is(p, k)).length}</span></button>)}</div>
       <div className="tools">
         <select className="inp" aria-label="Hub" value={hub} onChange={(e) => setHub(e.target.value)}><option value="">All hubs</option>{hubsOf(people).map((h) => <option key={h}>{h}</option>)}</select>
-        <div className="seg" role="group" aria-label="Sort"><button className={sort === 'time' ? 'on' : ''} onClick={() => setSort('time')}>Time</button><button className={sort === 'name' ? 'on' : ''} onClick={() => setSort('name')}>Name</button></div>
+        <SortSeg v={sort} set={setSort} />
       </div>
       {!people ? <Spin /> : <div className="list">{list.map((p) => (
         <button key={p.id} className="card row" onClick={() => open({ name: 'person', p })}><Av n={p.full_name} /><div className="t"><b className={p.geo ? 'nmf' : undefined}>{p.full_name}<GeoFlag geo={p.geo} /></b><span>{p.hub ?? 'No hub'} hub{p.bio ? ` · finger` : ''}{p.odToday ? ' · OD' : ''}{p.leaveToday ? ' · leave' : ''}{away.get(p.id)?.outside_min ? ` · out ${away.get(p.id)!.outside_min} min today` : ''}</span></div>{away.get(p.id)?.last_inside === false ? <span className="chip c-bad">Out now</span> : dayChip(p)}</button>

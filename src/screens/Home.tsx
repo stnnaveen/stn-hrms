@@ -2,8 +2,8 @@ import { DiwaliBanner, SkyCrackers, crackers, diwaliOn } from '../ui/Festive';
 import { isStoreApp } from '../device/presence';
 import { useEffect, useState } from 'react';
 import { useApp } from '../App';
-import { api, type Notif } from '../lib/api';
-import { fmtShortDay, fmtTime, greeting, hoursBetween, istMinutesNow, splitTime } from '../lib/time';
+import { api, type Notif, type MyFinger } from '../lib/api';
+import { fmtShortDay, fmtTime, greeting, hoursBetween, istMinutesNow, splitTime, outChip } from '../lib/time';
 import { Icon } from '../ui/Icon';
 import { AccountSheet } from '../ui/AccountSheet';
 import { RefreshButton } from '../ui/RefreshButton';
@@ -21,6 +21,8 @@ export function Home() {
   // store app: ask once for work-hours location (check-in → check-out, office hours). Never in the browser app.
   const [needPresence, setNeedPresence] = useState(false);
   useEffect(() => { if (isStoreApp()) api.presenceConsent().then((ok) => setNeedPresence(!ok)).catch(() => undefined); }, []);
+  const [finger, setFinger] = useState<MyFinger | null>(null);
+  useEffect(() => { api.myFingerprint().then(setFinger).catch(() => undefined); }, [today]);
   const [fab, setFab] = useState(false);
   const [sheet, setSheet] = useState<null | 'early' | 'early1h' | 'out'>(null);
   const [notifs, setNotifs] = useState<Notif[]>([]);
@@ -36,6 +38,8 @@ export function Home() {
   const [inT, inAp] = splitTime(d?.in_time);
   const [outT, outAp] = splitTime(d?.out_time);
   const unread = notifs.some((n) => !n.read_at);
+  // this month: app and fingerprint days merged when the person uses the eSSL device
+  const month = finger?.month && finger.month.finger_days > 0 ? finger.month : today.month;
   // approved OD today: the venue check-in opens 30 min before the start (same window the server uses)
   const od = today.od_today ?? null;
   const odFrom = od ? new Date(od.starts_at).getTime() - 30 * 60000 : 0;
@@ -106,11 +110,20 @@ export function Home() {
             {od.venue_url && <a className="btn light" style={{ marginTop: 8, height: 44, fontSize: 14, textDecoration: 'none' }} href={od.venue_url} target="_blank" rel="noreferrer">Open in Maps</a>}
           </div>
         </>)}
+        {finger?.today && (<>
+          <div className="sec">Fingerprint today</div>
+          <div className="card"><div className="row"><div className="ri c-ok"><Icon n="scan" /></div>
+            <div className="t"><b>eSSL device</b><span>First punch is in · a punch 20+ min later is out</span></div>
+            <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+              <span className={`chip ${finger.today.band === 'ok' ? 'c-ok' : finger.today.band === 'warn' ? 'c-warn' : 'c-bad'}`}>In {fmtTime(finger.today.in_at)}</span>
+              {finger.today.out_at ? <span className={`chip ${outChip(finger.today.out_at)}`}>Out {fmtTime(finger.today.out_at)}</span> : <span className="chip c-pend">No out yet</span>}
+            </span></div></div>
+        </>)}
         <div className="sec">This month</div>
         <div className="tiles">
-          <div className="tile"><b>{today.month.on_time}</b><span><i style={{ background: 'var(--ok)' }} />On time</span></div>
-          <div className="tile"><b>{today.month.late}</b><span><i style={{ background: 'var(--warn)' }} />Late</span></div>
-          <div className="tile"><b>{today.month.early}</b><span><i style={{ background: 'var(--bad)' }} />Early out</span></div>
+          <div className="tile"><b>{month.on_time}</b><span><i style={{ background: 'var(--ok)' }} />On time</span></div>
+          <div className="tile"><b>{month.late}</b><span><i style={{ background: 'var(--warn)' }} />Late</span></div>
+          <div className="tile"><b>{month.early}</b><span><i style={{ background: 'var(--bad)' }} />Early out</span></div>
         </div>
         <div className="sec">Requests</div>
         <div className="card">

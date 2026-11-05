@@ -580,3 +580,5 @@ button.gcard{width:100%}   /* HR summary card is a button: fill the card like th
 .seg button.on{background:var(--ph-card);color:var(--ph-ink);box-shadow:0 2px 6px rgba(13,19,33,.08)}
 .c-great{background:#17703F;color:#fff}
 .io .chip.sm{padding:3px 9px;font-size:12px}
+select.inp{-webkit-appearance:none;-moz-appearance:none;appearance:none}   /* one chevron (ours), not the browser's too */
+.seg button{white-space:nowrap}

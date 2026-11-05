@@ -664,3 +664,22 @@ do $$ declare r record; begin
   raise notice 'PASS eSSL''s filled-in 18:00 (no punch at that time) is counted as filled, not as a disagreement';
 end $$;
 select pg_temp.reset();
+
+-- ---------- 29. staff see only their own fingerprint ----------
+select pg_temp.reset();
+do $$ declare t text := to_char(now() at time zone 'Asia/Kolkata', 'YYYY-MM-DD'); begin
+  perform bio_ingest('00000000-0000-0000-0000-0000000000b1', jsonb_build_object('punches', jsonb_build_array(
+    jsonb_build_object('t', 'DeviceLogs_11_2026', 'id', 40, 'dev', '14', 'code', '901', 'at', t || 'T09:55:00+05:30'),
+    jsonb_build_object('t', 'DeviceLogs_11_2026', 'id', 41, 'dev', '14', 'code', '901', 'at', t || 'T17:30:00+05:30'))));
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-000000000001');
+do $$ declare j jsonb; begin
+  j := my_fingerprint();
+  if j->'today'->>'band' <> 'ok' or j->'today'->>'out_at' is null then raise exception 'FAIL my_fingerprint today %', j; end if;
+  if (j->'month'->>'finger_days')::int < 1 then raise exception 'FAIL my_fingerprint month %', j; end if;
+  if j::text ~ '(radius|distance|inside|flag)' then raise exception 'FAIL my_fingerprint leaks checks'; end if;
+  begin perform person_days_merged('arun@startuptn.in', '2026-11-01', '2026-11-30'); raise exception 'FAIL staff called person_days_merged';
+  exception when others then if sqlerrm like 'FAIL%' then raise; end if; end;
+  raise notice 'PASS staff see their own fingerprint in/out and month, nothing about checks or other people';
+end $$;
+select pg_temp.reset();

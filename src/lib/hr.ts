@@ -73,9 +73,9 @@ async function personDaysByEmail(email: string): Promise<PersonDetail['days']> {
 
 const real = {
   async today(): Promise<HrToday> { return must(await sb!.rpc('hr_today')) as HrToday; },
-  async people(): Promise<Person[]> {
+  async people(day: string = istToday()): Promise<Person[]> {
     const ps = must(await sb!.from('profiles').select('id, full_name, email, role, designation, phone, employee_code, active, face_status, hub:hubs(name)').in('role', ['staff', 'intern']).order('full_name'));
-    const days = must(await sb!.from('attendance_days').select('user_id, in_time, out_time, band, status, in_punch').eq('day', istToday()));
+    const days = must(await sb!.from('attendance_days').select('user_id, in_time, out_time, band, status, in_punch').eq('day', day));
     const ins = (days as { in_punch: string | null }[]).map((d) => d.in_punch).filter(Boolean) as string[];
     const geo = new Map<string, boolean | null>();
     if (ins.length) for (const x of must(await sb!.from('punches').select('id, inside').in('id', ins)) as { id: string; inside: boolean | null }[]) geo.set(x.id, x.inside);
@@ -94,7 +94,7 @@ const real = {
       id: `invite:${r.email}`, full_name: r.full_name, email: r.email, role: r.role, designation: r.designation, hub: r.hub_name, phone: r.phone,
       employee_code: r.employee_code, active: true, face_status: 'none', invited: true, today: null, test: r.is_test }));
     // today's fingerprint (first punch = in, out after 20 min): merged into today; earliest in decides the colour
-    const bioRows = ((await sb!.rpc('bio_attendance', { p_from: istToday(), p_to: istToday() })).data ?? []) as { email: string; in_at: string; out_at: string | null; band: string }[];
+    const bioRows = ((await sb!.rpc('bio_attendance', { p_from: day, p_to: day })).data ?? []) as { email: string; in_at: string; out_at: string | null; band: string }[];
     const bioBy = new Map(bioRows.map((b) => [b.email, b]));
     const all = [...people, ...invited].map((p) => {
       const b = bioBy.get(p.email); if (!b) return p;
@@ -105,11 +105,11 @@ const real = {
         today: { in_time: appFirst ? t!.in_time : b.in_at, out_time: out, band: appFirst ? t!.band : b.band, status: t?.status ?? 'present' } };
     });
     // approved OD / leave today and disputes raised today (signed-in staff only: requests and flags need an account)
-    const t0 = new Date(`${istToday()}T00:00:00+05:30`).toISOString(), t1 = new Date(`${istToday()}T23:59:59+05:30`).toISOString();
+    const t0 = new Date(`${day}T00:00:00+05:30`).toISOString(), t1 = new Date(`${day}T23:59:59+05:30`).toISOString();
     const [odR, lvR, flR] = await Promise.all([
       sb!.from('od_requests').select('user_id').eq('status', 'approved').lte('starts_at', t1).gte('ends_at', t0),
-      sb!.from('leave_requests').select('user_id').eq('status', 'approved').lte('starts_on', istToday()).gte('ends_on', istToday()),
-      sb!.from('flags').select('user_id, kind, status, staff_reason').gte('created_at', t0)
+      sb!.from('leave_requests').select('user_id').eq('status', 'approved').lte('starts_on', day).gte('ends_on', day),
+      sb!.from('flags').select('user_id, kind, status, staff_reason').gte('created_at', t0).lte('created_at', t1)
     ]);
     const odSet = new Set(((odR.data ?? []) as { user_id: string }[]).map((x) => x.user_id));
     const lvSet = new Set(((lvR.data ?? []) as { user_id: string }[]).map((x) => x.user_id));

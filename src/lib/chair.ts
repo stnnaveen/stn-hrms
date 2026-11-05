@@ -12,6 +12,8 @@ export interface Staff {
   /** Today's check-in landed outside the hub/venue radius (Chairman and HR only; never shown to staff). */
   outside?: Outside | null;
   geo?: 'in' | 'out' | null;   // today's check-in inside / outside the radius
+  finger?: boolean;            // today's in/out includes the eSSL fingerprint
+  invited?: boolean;           // on the staff list, not signed in yet (fingerprint only)
 }
 export interface Outside { flagId: string; status: string; distance: number | null; place: string | null; lat: number | null; lng: number | null }
 /** Red flag = outside radius today and HR has not cleared it yet. */
@@ -37,18 +39,24 @@ const real = {
     const today = istToday();
     const startIso = new Date(`${today}T00:00:00+05:30`).toISOString(), endIso = new Date(`${today}T23:59:59+05:30`).toISOString();
     const since = new Date(Date.now() - 30 * 864e5 + 330 * 60000).toISOString().slice(0, 10);
-    const [ps, tests, days, ods, lvs, hubs, away, hist, rad, vis] = await Promise.all([
-      sb!.from('profiles').select('id, full_name, email, designation, hub:hubs(name)').in('role', ['staff', 'intern']).eq('active', true),
+    const [ps, tests, days, ods, lvs, hubs, away, hist, rad, vis, ros, bioT, bioH] = await Promise.all([
+      sb!.from('profiles').select('id, full_name, email, designation, active, hub:hubs(name)').in('role', ['staff', 'intern']),
       sb!.from('staff_roster').select('email').eq('is_test', true),
       sb!.from('attendance_days').select('user_id, in_time, out_time, band, early_out, status, in_punch').eq('day', today),
       sb!.from('od_requests').select('id, user_id, subject, venue_name, venue_place, venue_url, starts_at, ends_at').eq('status', 'approved').lte('starts_at', endIso).gte('ends_at', startIso),
       sb!.from('leave_requests').select('user_id, leave_type').eq('status', 'approved').lte('starts_on', today).gte('ends_on', today),
       sb!.from('hubs').select('name').eq('active', true).order('name'),
       sb!.from('settings').select('value').eq('key', 'chairman_away').maybeSingle(),
-      fetchAll<{ day: string; band: string | null }>(() => sb!.from('attendance_days').select('day, band').gte('day', since).not('in_time', 'is', null).order('day').order('user_id')).then((data) => ({ data, error: null })),
+      fetchAll<{ day: string; band: string | null; user_id: string; in_time: string }>(() => sb!.from('attendance_days').select('day, band, user_id, in_time').gte('day', since).not('in_time', 'is', null).order('day').order('user_id')).then((data) => ({ data, error: null })),
       sb!.from('flags').select('id, user_id, status, created_at, punch:punches(distance_m, place_name, lat, lng)').eq('kind', 'radius').gte('created_at', startIso).order('created_at'),
-      sb!.from('punches').select('id, user_id, target_id, target_type, server_time, inside').gte('server_time', startIso).order('server_time')
+      sb!.from('punches').select('id, user_id, target_id, target_type, server_time, inside').gte('server_time', startIso).order('server_time'),
+      sb!.from('staff_roster').select('email, full_name, designation, hub_name, is_test').in('role', ['staff', 'intern']),
+      sb!.rpc('bio_attendance', { p_from: today, p_to: today }),
+      sb!.rpc('bio_attendance', { p_from: since, p_to: today })
     ]);
+    // fingerprint (eSSL): first punch = in, a punch 20+ min later = out; merged with the app, earliest in decides the colour
+    type B = { email: string; day: string; in_at: string; out_at: string | null; band: Staff['band'] };
+    const bioToday = new Map(((bioT.data ?? []) as B[]).map((b) => [b.email, b]));
     const inside = new Map<string, boolean | null>();
     for (const v of must(vis) as { id: string; inside: boolean | null }[]) inside.set(v.id, v.inside);
     const vmap = new Map<string, { at: string; inside: boolean | null }>();
@@ -59,16 +67,31 @@ const real = {
     const omap = new Map((must(ods) as { id: string; user_id: string; subject: string; venue_name: string; venue_place: string | null; venue_url: string | null; starts_at: string; ends_at: string }[]).map((o) => [o.user_id, o]));
     const lmap = new Map((must(lvs) as { user_id: string; leave_type: string }[]).map((l) => [l.user_id, l.leave_type]));
     const testEmails = new Set(((tests.data ?? []) as { email: string }[]).map((t) => t.email));
-    const staff: Staff[] = (must(ps) as unknown as { id: string; full_name: string; email: string; designation: string | null; hub: { name: string } | null }[]).filter((p) => !testEmails.has(p.email)).map((p) => {
-      const d = dmap.get(p.id), o = omap.get(p.id), lv = lmap.get(p.id);
+    type PR = { id: string; full_name: string; email: string; designation: string | null; active: boolean; hub: { name: string } | null };
+    const profs = must(ps) as unknown as PR[];
+    const byEmail = new Map(profs.map((p) => [p.email, p]));
+    // everyone on the staff list (signed in or not), like HR; inactive and test people left out
+    const people = ((ros.data ?? []) as { email: string; full_name: string; designation: string | null; hub_name: string | null; is_test: boolean }[])
+      .filter((r) => !r.is_test && !testEmails.has(r.email) && (byEmail.get(r.email)?.active ?? true))
+      .map((r) => { const p = byEmail.get(r.email); return { id: p?.id ?? `invite:${r.email}`, full_name: p?.full_name ?? r.full_name, email: r.email, designation: p?.designation ?? r.designation, hub: p?.hub ?? (r.hub_name ? { name: r.hub_name } : null), invited: !p }; });
+    const staff: Staff[] = people.map((p) => {
+      const d0 = dmap.get(p.id), o = omap.get(p.id), lv = lmap.get(p.id), b = bioToday.get(p.email);
+      const appFirst = !!d0?.in_time && (!b || d0.in_time <= b.in_at);
+      const d = b ? { in_time: appFirst ? d0!.in_time : b.in_at, out_time: [d0?.out_time, b.out_at].filter(Boolean).sort().pop() ?? null,
+        band: appFirst ? d0!.band : b.band, early_out: !!d0?.early_out, status: d0?.status ?? 'present', in_punch: d0?.in_punch ?? null } : d0;
       const cat: Cat = lv ? 'lv' : d?.in_time ? 'in' : o ? 'od' : 'notin';
-      return { id: p.id, name: p.full_name, email: p.email, hub: p.hub?.name ?? 'No hub', designation: p.designation, cat,
+      return { id: p.id, name: p.full_name, email: p.email, hub: p.hub?.name ?? 'No hub', designation: p.designation, cat, finger: !!b, invited: p.invited,
         inTime: d?.in_time ?? null, outTime: d?.out_time ?? null, band: d?.band ?? null, early: !!d?.early_out,
         od: o ? { subject: o.subject, venue: o.venue_name, starts_at: o.starts_at, ends_at: o.ends_at, place: o.venue_place, url: o.venue_url, visit: vmap.get(o.id) ?? null } : null, leaveType: lv ?? null, outside: rmap.get(p.id) ?? null,
         geo: (() => { const g = d?.in_punch ? inside.get(d.in_punch) : undefined; return g == null ? null : g ? 'in' as const : 'out' as const; })() };
     });
+    // 30-day on-time trend: app and fingerprint days merged per person (earliest in decides)
+    const emailOfId = new Map(profs.map((p) => [p.id, p.email]));
+    const merged = new Map<string, { at: string; band: string | null }>();
+    for (const r of must(hist) as { day: string; band: string | null; user_id: string; in_time: string }[]) { const k = `${r.day}|${emailOfId.get(r.user_id) ?? r.user_id}`; const c = merged.get(k); if (!c || r.in_time < c.at) merged.set(k, { at: r.in_time, band: r.band }); }
+    for (const b of (bioH.data ?? []) as B[]) { const k = `${b.day}|${b.email}`; const c = merged.get(k); if (!c || b.in_at < c.at) merged.set(k, { at: b.in_at, band: b.band }); }
     const byDay = new Map<string, { n: number; ok: number }>();
-    for (const r of must(hist) as { day: string; band: string | null }[]) { const x = byDay.get(r.day) ?? { n: 0, ok: 0 }; x.n++; if (r.band === 'ok') x.ok++; byDay.set(r.day, x); }
+    for (const [k, r] of merged) { const day = k.split('|')[0]; const x = byDay.get(day) ?? { n: 0, ok: 0 }; x.n++; if (r.band === 'ok') x.ok++; byDay.set(day, x); }
     const trend = [...byDay.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([day, x]) => ({ day, pct: Math.round((x.ok / x.n) * 100) }));
     return { staff, hubs: (must(hubs) as { name: string }[]).map((h) => h.name), away: away.data?.value === true, trend };
   },

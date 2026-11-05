@@ -1,4 +1,5 @@
 import { WorkHours } from '../../ui/WorkHours';
+import { BioPunches } from '../../ui/BioPunches';
 import { DiwaliBanner, SkyCrackers } from '../../ui/Festive';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useApp } from '../../App';
@@ -6,7 +7,7 @@ import { ApiError } from '../../lib/api';
 import { chair, istMin, isRed, type Slot, type LeaveItem, type OdItem, type Snapshot, type Staff } from '../../lib/chair';
 import { hr, FLAG_LABEL, type Flag, type PersonDetail } from '../../lib/hr';
 import { placeLabel, googleMapsUrl, appleMapsUrl, fmtDistance } from '../../lib/geo';
-import { fmtDay, fmtShortDay, fmtTime, greeting } from '../../lib/time';
+import { fmtDay, fmtShortDay, fmtTime, greeting, outChip } from '../../lib/time';
 import { Icon, Logo } from '../../ui/Icon';
 import { AccountSheet } from '../../ui/AccountSheet';
 import { Notifications } from '../Notifications';
@@ -65,8 +66,8 @@ function statusChip(s: Staff) {
   if (s.cat === 'lv') return <span className="chip c-lv">{s.leaveType ? cap(s.leaveType) : 'Leave'}</span>;
   if (s.cat === 'notin') return <span className="chip c-pend">Not in</span>;
   if (s.cat === 'od') return <span className="chip c-od">OD</span>;
-  if (s.early && s.outTime) return <span className="chip c-bad">Out {fmtTime(s.outTime)}</span>;
-  return <span className={`chip ${s.band === 'ok' ? 'c-ok' : s.band === 'warn' ? 'c-warn' : 'c-bad'}`}>{fmtTime(s.inTime)}</span>;
+  return <span className="io"><span className={`chip ${s.band === 'ok' ? 'c-ok' : s.band === 'warn' ? 'c-warn' : 'c-bad'}`}>In {fmtTime(s.inTime)}</span>
+    {s.outTime && <span className={`chip sm ${outChip(s.outTime)}`}>Out {fmtTime(s.outTime)}</span>}</span>;
 }
 
 // ---------------- app shell ----------------
@@ -387,7 +388,7 @@ function HubView({ hub, staff, onBack, onPerson }: { hub: string; staff: Staff[]
       <div className="dark"><div className="top"><div><div className="hi">{x.n} staff</div><div className="day">{x.ot != null ? `${x.ot}% on time` : 'No check-ins yet'}</div></div><span className="live"><i />Live</span></div>
         <div className="gcard"><span><small>In</small><b>{x.inn}</b><em>{x.late} late</em></span><span><small>Not in</small><b>{x.notin}</b><em>today</em></span><span><small>OD · Leave</small><b>{x.away}</b><em>approved</em></span></div></div>
       <div className="sec">Staff</div>
-      {ss.map((s) => <button key={s.id} className="lrow" onClick={() => onPerson(s)}><Av n={s.name} /><span className="t"><Nm s={s} /><span>{s.outTime ? `Out ${fmtTime(s.outTime)}` : s.cat === 'in' ? 'In office' : s.designation ?? ''}</span></span><span className="v">{statusChip(s)}</span></button>)}
+      {ss.map((s) => <button key={s.id} className="lrow" onClick={() => onPerson(s)}><Av n={s.name} /><span className="t"><Nm s={s} /><span>{s.cat === 'in' && !s.outTime ? 'In office' : s.designation ?? ''}{s.finger ? ' · finger' : ''}</span></span><span className="v">{statusChip(s)}</span></button>)}
       {ss.length === 0 && <div className="empty"><b>No staff yet</b>HR adds people to this hub.</div>}
     </div>
   );
@@ -479,8 +480,9 @@ function PersonSheet({ s, onClose }: { s: Staff; onClose: () => void }) {
   const [d, setD] = useState<PersonDetail | null>(null);
   const [photos, setPhotos] = useState<Record<string, string | null>>({});
   useEffect(() => {
-    hr.personDetail(s.id).then((x) => { setD(x); x.punches.forEach((p) => { void hr.selfieUrl(p.selfie_key).then((u) => setPhotos((m) => ({ ...m, [p.kind]: u }))); }); }).catch(() => setD({ punches: [], days: [], ods: [], leaves: [] }));
-  }, [s.id]);
+    if (s.invited) { hr.personDays(s.email).then((days) => setD({ punches: [], days, ods: [], leaves: [] })).catch(() => setD({ punches: [], days: [], ods: [], leaves: [] })); return; }
+    hr.personDetail(s.id, s.email).then((x) => { setD(x); x.punches.forEach((p) => { void hr.selfieUrl(p.selfie_key).then((u) => setPhotos((m) => ({ ...m, [p.kind]: u }))); }); }).catch(() => setD({ punches: [], days: [], ods: [], leaves: [] }));
+  }, [s.id, s.email, s.invited]);
   const [places, setPlaces] = useState<Record<string, string | null>>({});
   useEffect(() => { d?.punches.forEach((pu) => { if (!pu.place_name) placeLabel(pu.lat, pu.lng).then((n) => setPlaces((x) => ({ ...x, [pu.kind]: n }))); }); }, [d]);
   const month = d ? { on: d.days.filter((x) => x.band === 'ok' || x.status === 'od').length, late: d.days.filter((x) => x.band === 'warn' || x.band === 'bad').length, early: d.days.filter((x) => x.early_out).length } : null;
@@ -508,7 +510,8 @@ function PersonSheet({ s, onClose }: { s: Staff; onClose: () => void }) {
         {s.cat !== 'lv' && (!d ? <Spin /> : <div className="dayc" style={{ marginTop: 16 }}>{tile('in')}{tile('out')}</div>)}
         {(() => { const pi = d?.punches.find((x) => x.kind === 'in'), po = d?.punches.find((x) => x.kind === 'out');
           return pi ? <PunchMap height={220} main={{ ...pi, label: `In ${fmtTime(pi.server_time)}` }} extra={po ? [{ ...po, label: `Out ${fmtTime(po.server_time)}` }] : []} /> : null; })()}
-        {s.cat !== 'lv' && <WorkHours userId={s.id} />}
+        {s.cat !== 'lv' && !s.invited && <WorkHours userId={s.id} />}
+        <BioPunches email={s.email} />
         <p className="to" style={{ marginBottom: 0 }}><Icon n="eye" size={14} style={{ verticalAlign: -2 }} /> View only. Changes go through HR.</p>
       </div>
       <button className="btn ghost" style={{ marginTop: 6 }} onClick={onClose}>Close</button></div></>);

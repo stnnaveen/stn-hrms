@@ -15,6 +15,7 @@ export interface Today {
   chairman_available?: { starts_at: string; ends_at: string; place: string | null; note: string | null }[];
   od_today?: { id: string; subject: string; venue_name: string; venue_place: string | null; venue_url: string | null; starts_at: string; ends_at: string; visited_at: string | null } | null;
 }
+export interface MyFinger { today: { in_at: string; out_at: string | null; band: 'ok' | 'warn' | 'bad' } | null; month: { on_time: number; late: number; early: number; finger_days: number } | null }
 export interface Venue { lat: number; lng: number; name: string | null; place: string | null; url: string; approx?: boolean }
 export interface PunchResult {
   kind: 'in' | 'out' | 'visit'; server_time: string; band: 'ok' | 'warn' | 'bad' | null; early_out: boolean;
@@ -111,6 +112,8 @@ const real = {
   async google() { await sb!.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: location.origin } }); },
   async signOut() { await sb!.auth.signOut(); },
   async today(): Promise<Today> { const { data, error } = await sb!.rpc('my_today'); if (error) throw new ApiError('load_failed'); return data as Today; },
+  /** Own fingerprint (eSSL) today and this month's figures with app and fingerprint days merged. */
+  async myFingerprint(): Promise<MyFinger | null> { const { data, error } = await sb!.rpc('my_fingerprint'); return error ? null : (data as MyFinger); },
   async consent() { const { error } = await sb!.rpc('give_consent'); if (error) throw new ApiError('save_failed'); },
   /** Test staff: clear today's check-ins to try again. */
   async resetTestDay() { await invoke({ action: 'reset_test_day' }); },
@@ -183,6 +186,7 @@ const demo = {
   async verifyCode(_e: string, code: string) { await wait(400); if (code.length < 6) throw new ApiError('bad_code'); demoState.signedIn = true; listeners.forEach((l) => l(true)); },
   async presenceSetup() { return null; },
   async presenceConsent() { return true; },
+  async myFingerprint() { await wait(150); return { today: { in_at: new Date(Date.now() - 300 * 60000).toISOString(), out_at: null, band: 'ok' as const }, month: { on_time: 3, late: 1, early: 0, finger_days: 4 } }; },
   async givePresenceConsent() { /* demo */ },
   async google() { demoState.signedIn = true; listeners.forEach((l) => l(true)); },
   async signOut() { demoState.signedIn = false; listeners.forEach((l) => l(false)); },
