@@ -16,6 +16,12 @@ export interface Today {
   od_today?: { id: string; subject: string; venue_name: string; venue_place: string | null; venue_url: string | null; starts_at: string; ends_at: string; visited_at: string | null } | null;
 }
 export interface MyFinger { today: { in_at: string; out_at: string | null; band: 'ok' | 'warn' | 'bad' } | null; month: { on_time: number; late: number; early: number; finger_days: number } | null }
+export interface MyMonth {
+  month: string;
+  days: { day: string; in: string; out: string | null; band: 'ok' | 'warn' | 'bad' | null }[];
+  od: { subject: string; venue: string; starts_at: string; ends_at: string; status: string }[];
+  leave: { type: string; from: string; to: string; half_day: string | null; status: string }[];
+}
 export interface Venue { lat: number; lng: number; name: string | null; place: string | null; url: string; approx?: boolean }
 export interface PunchResult {
   kind: 'in' | 'out' | 'visit'; server_time: string; band: 'ok' | 'warn' | 'bad' | null; early_out: boolean;
@@ -113,6 +119,8 @@ const real = {
   async signOut() { await sb!.auth.signOut(); },
   async today(): Promise<Today> { const { data, error } = await sb!.rpc('my_today'); if (error) throw new ApiError('load_failed'); return data as Today; },
   /** Own fingerprint (eSSL) today and this month's figures with app and fingerprint days merged. */
+  /** Own calendar: punch in / out, OD and leave for one month (YYYY-MM-01). */
+  async myMonth(month?: string): Promise<MyMonth> { const { data, error } = await sb!.rpc('my_month', { p_month: month ?? null }); if (error) throw new ApiError('load_failed'); return data as MyMonth; },
   async myFingerprint(): Promise<MyFinger | null> { const { data, error } = await sb!.rpc('my_fingerprint'); return error ? null : (data as MyFinger); },
   async consent() { const { error } = await sb!.rpc('give_consent'); if (error) throw new ApiError('save_failed'); },
   /** Test staff: clear today's check-ins to try again. */
@@ -186,6 +194,11 @@ const demo = {
   async verifyCode(_e: string, code: string) { await wait(400); if (code.length < 6) throw new ApiError('bad_code'); demoState.signedIn = true; listeners.forEach((l) => l(true)); },
   async presenceSetup() { return null; },
   async presenceConsent() { return true; },
+  async myMonth(month?: string) {
+    await wait(150); const t = new Date(Date.now() + 330 * 60000), m = month ?? t.toISOString().slice(0, 8) + '01', at = (d: number, h: number, mi: number) => new Date(`${m.slice(0, 8)}${String(d).padStart(2, '0')}T${String(h).padStart(2, '0')}:${String(mi).padStart(2, '0')}:00+05:30`).toISOString();
+    return { month: m.slice(0, 7), days: [{ day: m.slice(0, 8) + '02', in: at(2, 9, 52), out: at(2, 18, 20), band: 'ok' as const }, { day: m.slice(0, 8) + '04', in: at(4, 10, 3), out: at(4, 17, 40), band: 'warn' as const }],
+      od: [{ subject: 'TIDCO policy meet', venue: 'TIDCO Office', starts_at: at(7, 15, 0), ends_at: at(7, 17, 0), status: 'approved' }], leave: [{ type: 'casual', from: m.slice(0, 8) + '03', to: m.slice(0, 8) + '03', half_day: null, status: 'approved' }] };
+  },
   async myFingerprint() { await wait(150); return { today: { in_at: new Date(Date.now() - 300 * 60000).toISOString(), out_at: null, band: 'ok' as const }, month: { on_time: 3, late: 1, early: 0, finger_days: 4 } }; },
   async givePresenceConsent() { /* demo */ },
   async google() { demoState.signedIn = true; listeners.forEach((l) => l(true)); },

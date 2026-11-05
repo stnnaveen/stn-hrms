@@ -5,6 +5,7 @@ import { useApp } from '../App';
 import { api, type Notif, type MyFinger } from '../lib/api';
 import { fmtShortDay, fmtTime, greeting, hoursBetween, istMinutesNow, splitTime, outChip } from '../lib/time';
 import { Icon } from '../ui/Icon';
+import { MyCalendar } from '../ui/MyCalendar';
 import { AccountSheet } from '../ui/AccountSheet';
 import { RefreshButton } from '../ui/RefreshButton';
 
@@ -113,7 +114,7 @@ export function Home() {
         {finger?.today && (<>
           <div className="sec">Fingerprint today</div>
           <div className="card"><div className="row"><div className="ri c-ok"><Icon n="scan" /></div>
-            <div className="t"><b>eSSL device</b><span>First punch is in · a punch 20+ min later is out</span></div>
+            <div className="t"><b>eSSL Biometric device</b></div>
             <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
               <span className={`chip ${finger.today.band === 'ok' ? 'c-ok' : finger.today.band === 'warn' ? 'c-warn' : 'c-bad'}`}>In {fmtTime(finger.today.in_at)}</span>
               {finger.today.out_at ? <span className={`chip ${outChip(finger.today.out_at)}`}>Out {fmtTime(finger.today.out_at)}</span> : <span className="chip c-pend">No out yet</span>}
@@ -125,6 +126,8 @@ export function Home() {
           <div className="tile"><b>{month.late}</b><span><i style={{ background: 'var(--warn)' }} />Late</span></div>
           <div className="tile"><b>{month.early}</b><span><i style={{ background: 'var(--bad)' }} />Early out</span></div>
         </div>
+        <div className="sec">My calendar</div>
+        <MyCalendar key={today.today?.in_time ?? 'x'} />
         <div className="sec">Requests</div>
         <div className="card">
           {today.requests.length === 0 && <span style={{ color: 'var(--ph-ink3)', fontSize: 14 }}>No requests yet.</span>}

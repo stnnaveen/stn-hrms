@@ -683,3 +683,15 @@ do $$ declare j jsonb; begin
   raise notice 'PASS staff see their own fingerprint in/out and month, nothing about checks or other people';
 end $$;
 select pg_temp.reset();
+
+-- ---------- 30. staff calendar: own punches, OD and leave only ----------
+select pg_temp.as_user('00000000-0000-0000-0000-000000000001');
+do $$ declare j jsonb; begin
+  j := my_month();
+  if jsonb_typeof(j->'days') <> 'array' or jsonb_array_length(j->'days') < 1 then raise exception 'FAIL my_month days %', j; end if;
+  if j::text ~ '(radius|distance|inside|flag|face|similarity)' then raise exception 'FAIL my_month leaks checks'; end if;
+  begin perform my_month('2020-01-01'); raise exception 'FAIL my_month too far back allowed';
+  exception when others then if sqlerrm like 'FAIL%' then raise; end if; end;
+  raise notice 'PASS staff calendar shows own in/out, OD and leave, nothing about checks';
+end $$;
+select pg_temp.reset();
