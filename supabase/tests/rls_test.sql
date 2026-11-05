@@ -515,3 +515,62 @@ do $$ declare j jsonb; begin
   raise notice 'PASS standing still at the desk counts as inside (120 min); location off counts as no signal';
 end $$;
 select pg_temp.reset();
+
+-- ---------- 25. biometric link (eSSL) ----------
+select pg_temp.reset();
+update staff_roster set employee_code = 'STN901' where email = 'kavya@startuptn.in';
+insert into bio_links (id, name, key_hash) values ('00000000-0000-0000-0000-0000000000b1', 'Test office', 'testhash') on conflict do nothing;
+do $$ declare j jsonb; begin
+  j := bio_ingest('00000000-0000-0000-0000-0000000000b1', '{
+    "agent": {"pc": "TEST", "version": "1"},
+    "devices": [{"id": 14, "name": "Biometric", "serial": "TDBD1", "kind": "biometric", "ip": "192.168.1.252"}],
+    "people": [{"code": "901", "essl_code": "stn901", "name": "Kavya"}, {"code": "016", "essl_code": "016", "name": "Someone"}],
+    "punches": [{"t": "DeviceLogs_11_2026", "id": 1, "dev": "14", "code": "901", "at": "2026-11-05T09:41:12+05:30", "dir": "in"},
+                {"t": "DeviceLogs_11_2026", "id": 2, "dev": "14", "code": "016", "at": "2026-11-05T09:58:03+05:30", "dir": "in"},
+                {"t": "Bad;Table", "id": 3, "dev": "14", "code": "016", "at": "2026-11-05T10:00:00+05:30"}]}');
+  if (j->>'saved')::int <> 2 then raise exception 'FAIL bio ingest saved %', j; end if;
+  j := bio_ingest('00000000-0000-0000-0000-0000000000b1', '{"punches": [{"t": "DeviceLogs_11_2026", "id": 1, "dev": "14", "code": "901", "at": "2026-11-05T09:41:12+05:30"}]}');
+  if (j->>'saved')::int <> 0 then raise exception 'FAIL bio resend duplicated %', j; end if;
+  if (select email from bio_people where device_code = '901') <> 'kavya@startuptn.in' then raise exception 'FAIL bio auto match'; end if;
+  if (select matched from bio_people where device_code = '016') <> 'none' then raise exception 'FAIL bio false match'; end if;
+  raise notice 'PASS biometric: 2 punches saved, resend ignored, bad table name refused, exact code linked, other code left for matching';
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-000000000001');
+do $$ begin
+  if (select count(*) from bio_punches) + (select count(*) from bio_people) + (select count(*) from bio_devices) + (select count(*) from bio_status) + (select count(*) from bio_links) <> 0 then raise exception 'FAIL staff reads biometric tables'; end if;
+  if (select count(*) from bio_day('2026-11-05')) <> 0 then raise exception 'FAIL staff reads bio_day'; end if;
+  begin perform bio_ingest('00000000-0000-0000-0000-0000000000b1', '{}'); raise exception 'FAIL staff called bio_ingest';
+  exception when others then if sqlerrm like 'FAIL%' then raise; end if; end;
+  begin perform bio_new_key('x'); raise exception 'FAIL staff made a link key';
+  exception when others then if sqlerrm like 'FAIL%' then raise; end if; end;
+  begin insert into bio_punches (link_id, essl_table, essl_log_id, device_code, punched_at) values ('00000000-0000-0000-0000-0000000000b1', 'DeviceLogs', 9, 'x', now()); raise exception 'FAIL staff wrote a fingerprint punch';
+  exception when others then if sqlerrm like 'FAIL%' then raise; end if; end;
+  raise notice 'PASS staff cannot read, send or write fingerprint data';
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000a1');
+do $$ begin
+  if (select count(*) from bio_day('2026-11-05')) <> 2 then raise exception 'FAIL HR bio_day'; end if;
+  if (select full_name from bio_day('2026-11-05') where device_code = '901') <> 'Kavya R' then raise exception 'FAIL HR bio_day name'; end if;
+  if (select count(*) from bio_person('00000000-0000-0000-0000-000000000001', 3650)) <> 1 then raise exception 'FAIL HR bio_person'; end if;
+  begin perform bio_new_key('x'); raise exception 'FAIL HR made a link key';
+  exception when others then if sqlerrm like 'FAIL%' then raise; end if; end;
+  perform bio_match_person('00000000-0000-0000-0000-0000000000b1', '016', 'arun@startuptn.in');
+  perform bio_set_device_hub('00000000-0000-0000-0000-0000000000b1', 14, (select id from hubs where name = 'Chennai'));
+  raise notice 'PASS HR reads fingerprint punches, matches a code by hand, sets the device hub; cannot make keys';
+end $$;
+select pg_temp.reset();
+do $$ begin
+  perform bio_ingest('00000000-0000-0000-0000-0000000000b1', '{"people": [{"code": "016", "essl_code": "016", "name": "Someone else"}]}');
+  if (select email from bio_people where device_code = '016') <> 'arun@startuptn.in' then raise exception 'FAIL manual match overwritten'; end if;
+  if (select count(*) from audit_log where entity = 'bio_people' and after->>'matched' = 'manual') < 1 then raise exception 'FAIL manual match not audited'; end if;
+  raise notice 'PASS a manual match survives the next sync and is in the audit log';
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000f1');
+do $$ declare k text; begin
+  k := bio_new_key('Test office');
+  if k !~ '^stnbio_[0-9a-f]{64}$' then raise exception 'FAIL key format'; end if;
+  if (select count(*) from bio_links where name = 'Test office' and revoked_at is null) <> 1 then raise exception 'FAIL old key not revoked'; end if;
+  if (select key_hash from bio_links where name = 'Test office' and revoked_at is null) <> encode(digest(k, 'sha256'), 'hex') then raise exception 'FAIL key hash'; end if;
+  raise notice 'PASS Tech makes a link key (only its hash stored; the old key with the same name is revoked)';
+end $$;
+select pg_temp.reset();

@@ -48,3 +48,5 @@ jobs:
         run: supabase db push --include-all
       - name: Deploy check-in function
         run: supabase functions deploy check-in --project-ref "$PROJECT_REF"
+      - name: Deploy bio-sync function (eSSL link; checks its own key)
+        run: supabase functions deploy bio-sync --no-verify-jwt --project-ref "$PROJECT_REF"
