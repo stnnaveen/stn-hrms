@@ -125,7 +125,7 @@ Deno.serve(async (req) => {
         if (!got.ok || (await got.text()) !== 'ok') throw Object.assign(new Error('view link'), { name: `ViewLink${got.status}` });
         await aws.del(k);
         s3Ok = true;
-      } catch (e) { s3Ok = false; s3Err = (e as { name?: string }).name ?? 'S3Error'; }
+      } catch (e) { s3Ok = false; s3Err = (body.test_s3 ? String((e as Error).message ?? e) : (e as { name?: string }).name ?? 'S3Error').slice(0, 400); }
     }
     return json({ ok: true, db_ms: dbMs, db_ok: !error, s3_ok: s3Ok, s3_error: s3Err, bucket: USE_S3 ? BUCKET : null, storage: USE_S3 ? 's3' : 'supabase', face_match: USE_S3, geocode: gkeyOf() ? 'google' : env('OLA_MAPS_KEY') ? 'ola' : 'osm', region: REGION });
   }

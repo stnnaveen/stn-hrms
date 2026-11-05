@@ -9,7 +9,7 @@ export function makeAws(c: AwsCfg) {
   const s3c = new AwsClient({ accessKeyId: c.accessKeyId, secretAccessKey: c.secretAccessKey, region: c.region, service: 's3' });
   const rekc = new AwsClient({ accessKeyId: c.accessKeyId, secretAccessKey: c.secretAccessKey, region: c.region, service: 'rekognition' });
   const url = (key: string) => `https://${c.bucket}.s3.${c.region}.amazonaws.com/${key.split('/').map(encodeURIComponent).join('/')}`;
-  const fail = async (r: Response, what: string) => { const t = await r.text().catch(() => ''); const code = t.match(/<Code>([^<]+)<\/Code>/)?.[1] ?? `HTTP ${r.status}`; throw Object.assign(new Error(`${what}: ${code}`), { name: code }); };
+  const fail = async (r: Response, what: string) => { const t = await r.text().catch(() => ''); const code = t.match(/<Code>([^<]+)<\/Code>/)?.[1] ?? `HTTP ${r.status}`; const msg = t.match(/<Message>([^<]+)<\/Message>/)?.[1] ?? ''; throw Object.assign(new Error(`${what}: ${code}${msg ? ` · ${msg}` : ''}`), { name: code }); };
   return {
     async put(key: string, body: Uint8Array | string, contentType: string) {
       const r = await s3c.fetch(url(key), { method: 'PUT', body, headers: { 'Content-Type': contentType } });
