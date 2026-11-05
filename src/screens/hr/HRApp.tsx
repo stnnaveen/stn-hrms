@@ -14,12 +14,13 @@ import { GeoFlag } from '../../ui/GeoFlag';
 import { PunchMap } from '../../ui/PunchMap';
 import { WorkHours } from '../../ui/WorkHours';
 import { BioPunches } from '../../ui/BioPunches';
+import { Fingerprint } from './Fingerprint';
 import { bio } from '../../lib/bio';
 import { RefreshButton } from '../../ui/RefreshButton';
 
 type Tab = 'home' | 'staff' | 'approvals' | 'disputes';
 type Sub = { name: 'today' } | { name: 'person'; p: Person } | { name: 'dispute'; f: Flag } | { name: 'hubs' } | { name: 'hub'; h: Hub | null }
-  | { name: 'add' } | { name: 'long'; p?: Person } | { name: 'notifs' };
+  | { name: 'add' } | { name: 'long'; p?: Person } | { name: 'notifs' } | { name: 'finger' };
 
 const TINTS = ['#3B4A6B', '#5B4AA8', '#2F62D9', '#1F7A55', '#9C3F5A', '#7A5A2E', '#4E5464'];
 const tint = (s: string) => TINTS[[...s].reduce((a, c) => a + c.charCodeAt(0), 0) % TINTS.length];
@@ -67,6 +68,7 @@ export function HRApp() {
       case 'add': return <AddStaff onBack={back} />;
       case 'long': return <LongLeave p={sub.p} onBack={back} />;
       case 'notifs': return <NotifWrap onBack={back} />;
+      case 'finger': return <Fingerprint onBack={back} />;
     }
   }
   const pend = (counts?.pending_leave ?? 0) + (counts?.chairman_away ? counts?.pending_od ?? 0 : 0);
@@ -126,6 +128,9 @@ function Home({ c, open, setTab }: { c: HrToday | null; open: (s: Sub) => void; 
         <button onClick={() => open({ name: 'hubs' })}><span className="sq"><Icon n="building" /></span>Hubs</button>
         <button onClick={() => open({ name: 'long' })}><span className="sq"><Icon n="leaf" /></span>Long leave</button>
         <button onClick={() => setAccount(true)}><span className="sq"><Icon n="out" /></span>Log out</button>
+      </div>
+      <div className="card" style={{ padding: '4px 16px', marginTop: 12 }}>
+        <button className="setrow" onClick={() => open({ name: 'finger' })}><span className="ri c-ok"><Icon n="scan" /></span><span className="t"><b>Fingerprint</b><span>eSSL punches this month · test</span></span><Icon n="chevR" /></button>
       </div>
     </div>
     {account && <AccountSheet name="HR team" sub="HR · All hubs" onClose={() => setAccount(false)} />}

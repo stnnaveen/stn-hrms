@@ -8,6 +8,7 @@ export interface BioDevice { linkId: string; esslId: number; name: string; seria
 export interface BioPerson { linkId: string; code: string; esslCode: string | null; esslName: string | null; email: string | null; matched: 'auto' | 'manual' | 'none' }
 export interface RosterRow { email: string; name: string; code: string | null; hub: string | null }
 export interface BioOverview { link: BioLink | null; devices: BioDevice[]; people: BioPerson[]; roster: RosterRow[]; hubs: { id: string; name: string }[]; today: number }
+export interface BioDayRow { day: string; code: string; esslCode: string | null; esslName: string | null; email: string | null; name: string | null; hub: string | null; userId: string | null; first: string; last: string; punches: number; appIn: string | null; appOut: string | null; appStatus: string | null }
 export interface BioPunch { at: string; direction: string | null; device: string | null; hub: string | null; code: string; esslName: string | null; email: string | null; name: string | null; userId: string | null }
 
 const istToday = () => new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
@@ -65,6 +66,11 @@ const real = {
     return ((data ?? []) as { punched_at: string; direction: string | null; device: string | null; hub: string | null; device_code: string; essl_name: string | null; email: string | null; full_name: string | null; user_id: string | null }[])
       .map((r) => ({ at: r.punched_at, direction: r.direction, device: r.device, hub: r.hub, code: r.device_code, esslName: r.essl_name, email: r.email, name: r.full_name, userId: r.user_id }));
   },
+  async range(from: string, to: string): Promise<BioDayRow[]> {
+    const { data, error } = await sb!.rpc('bio_range', { p_from: from, p_to: to }); rpcErr(error);
+    return ((data ?? []) as { day: string; device_code: string; essl_code: string | null; essl_name: string | null; email: string | null; full_name: string | null; hub: string | null; user_id: string | null; first_at: string; last_at: string; punches: number; app_in: string | null; app_out: string | null; app_status: string | null }[])
+      .map((r) => ({ day: r.day, code: r.device_code, esslCode: r.essl_code, esslName: r.essl_name, email: r.email, name: r.full_name, hub: r.hub, userId: r.user_id, first: r.first_at, last: r.last_at, punches: r.punches, appIn: r.app_in, appOut: r.app_out, appStatus: r.app_status }));
+  },
   async person(userId: string, days = 7): Promise<{ at: string; direction: string | null; device: string | null }[]> {
     const { data, error } = await sb!.rpc('bio_person', { p_user: userId, p_days: days }); rpcErr(error);
     return ((data ?? []) as { punched_at: string; direction: string | null; device: string | null }[]).map((r) => ({ at: r.punched_at, direction: r.direction, device: r.device }));
@@ -88,6 +94,11 @@ const demo: typeof real = {
   async setHub(_l, device, hub) { await wait(); D.devices = D.devices.map((d) => (d.esslId === device ? { ...d, hubId: hub } : d)); },
   async match(_l, code, email) { await wait(); D.people = D.people.map((p) => (p.code === code ? { ...p, email, matched: email ? 'manual' : 'none' } : p)); },
   async day() { await wait(); return [{ at: ago(4), direction: 'in', device: 'Biometric', hub: 'Chennai', code: '56', esslName: 'Kavya R', email: 'kavya@startuptn.in', name: 'Kavya R', userId: 's1' }, { at: ago(31), direction: 'in', device: 'Biometric', hub: 'Chennai', code: '16', esslName: 'Arun K', email: null, name: 'Arun K', userId: null }]; },
+  async range() {
+    await wait(); const d = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+    return [{ day: d, code: '56', esslCode: 'STN056', esslName: 'Kavya', email: 'kavya@startuptn.in', name: 'Kavya R', hub: 'Chennai', userId: 's1', first: ago(300), last: ago(4), punches: 4, appIn: ago(296), appOut: null, appStatus: 'present' },
+            { day: d, code: '16', esslCode: '016', esslName: 'Arun K', email: null, name: null, hub: null, userId: null, first: ago(280), last: ago(280), punches: 1, appIn: null, appOut: null, appStatus: null }];
+  },
   async person() { await wait(); return [{ at: ago(4), direction: 'in', device: 'Biometric' }, { at: ago(24 * 60 - 480), direction: 'out', device: 'Biometric' }]; }
 };
 export const bio = DEMO ? demo : real;

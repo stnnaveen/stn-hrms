@@ -539,6 +539,7 @@ select pg_temp.as_user('00000000-0000-0000-0000-000000000001');
 do $$ begin
   if (select count(*) from bio_punches) + (select count(*) from bio_people) + (select count(*) from bio_devices) + (select count(*) from bio_status) + (select count(*) from bio_links) <> 0 then raise exception 'FAIL staff reads biometric tables'; end if;
   if (select count(*) from bio_day('2026-11-05')) <> 0 then raise exception 'FAIL staff reads bio_day'; end if;
+  if (select count(*) from bio_range('2026-11-01', '2026-11-05')) <> 0 then raise exception 'FAIL staff reads bio_range'; end if;
   begin perform bio_ingest('00000000-0000-0000-0000-0000000000b1', '{}'); raise exception 'FAIL staff called bio_ingest';
   exception when others then if sqlerrm like 'FAIL%' then raise; end if; end;
   begin perform bio_new_key('x'); raise exception 'FAIL staff made a link key';
@@ -554,6 +555,8 @@ do $$ begin
   if (select count(*) from bio_person('00000000-0000-0000-0000-000000000001', 3650)) <> 1 then raise exception 'FAIL HR bio_person'; end if;
   begin perform bio_new_key('x'); raise exception 'FAIL HR made a link key';
   exception when others then if sqlerrm like 'FAIL%' then raise; end if; end;
+  if (select count(*) from bio_range('2026-11-01', '2026-11-05')) <> 2 then raise exception 'FAIL HR bio_range'; end if;
+  if (select first_at from bio_range('2026-11-05', '2026-11-05') where device_code = '901') <> '2026-11-05 09:41:12+05:30' then raise exception 'FAIL bio_range first punch'; end if;
   perform bio_match_person('00000000-0000-0000-0000-0000000000b1', '016', 'arun@startuptn.in');
   perform bio_set_device_hub('00000000-0000-0000-0000-0000000000b1', 14, (select id from hubs where name = 'Chennai'));
   raise notice 'PASS HR reads fingerprint punches, matches a code by hand, sets the device hub; cannot make keys';

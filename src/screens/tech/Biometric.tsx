@@ -10,6 +10,8 @@ import { Icon } from '../../ui/Icon';
 
 const ago = (s: number | null) => (s == null ? 'Never' : s < 60 ? `${s} s ago` : s < 3600 ? `${Math.round(s / 60)} min ago` : s < 172800 ? `${Math.round(s / 3600)} h ago` : `${Math.round(s / 86400)} days ago`);
 const when = (iso: string | null | undefined) => (iso ? `${fmtShortDay(new Date(iso))} ${fmtTime(iso)}` : '—');
+/** eSSL and staff-list names share no word of 3+ letters: probably the wrong person. */
+const nameDiffers = (a: string | null, b: string) => { const w = (s: string) => s.toLowerCase().replace(/[^a-z ]/g, ' ').split(/\s+/).filter((x) => x.length >= 3); const x = w(a ?? ''), y = w(b); return x.length > 0 && y.length > 0 && !x.some((u) => y.some((v) => v.startsWith(u.slice(0, 4)) || u.startsWith(v.slice(0, 4)))); };
 const err = (e: unknown) => (e instanceof ApiError ? e.code : 'Could not save. Try again.');
 
 export function Biometric({ onBack }: { onBack: () => void }) {
@@ -96,7 +98,7 @@ export function Biometric({ onBack }: { onBack: () => void }) {
           <div className="sec">Matched · {matched.length}</div>
           {matched.map((p) => (
             <div className="lrow" key={p.code}>
-              <span className="t"><b>{nameOf(p.email)}</b><span>eSSL {p.esslCode ?? p.code} · {p.esslName ?? ''} · {p.matched === 'auto' ? 'same code' : 'by hand'}</span></span>
+              <span className="t"><b>{nameOf(p.email)}{nameDiffers(p.esslName, nameOf(p.email)) && <span className="chip c-bad" style={{ marginLeft: 6, fontSize: 11 }}>Check name</span>}</b><span>eSSL {p.esslCode ?? p.code} · {p.esslName ?? ''} · {p.matched === 'auto' ? 'same code' : 'by hand'}</span></span>
               <button className="rbtn" aria-label={`Unmatch ${nameOf(p.email)}`} disabled={busy === p.code} onClick={() => match(p, null)}><Icon n="x" /></button>
             </div>))}
         </>}

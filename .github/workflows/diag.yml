@@ -8,6 +8,7 @@ on:
       resolve: { description: 'Links to send to the live server (space separated)', default: '' }
       biotest: { description: 'Run the live eSSL link test (yes)', default: '' }
       bio: { description: 'Show live eSSL data and matches (yes)', default: '' }
+      biofix: { description: 'One-off: fix the 047/069 eSSL match (yes)', default: '' }
 jobs:
   diag:
     runs-on: ubuntu-latest
@@ -41,6 +42,9 @@ jobs:
       - name: eSSL link end-to-end (throw-away key, deleted after)
         if: ${{ inputs.biotest == 'yes' }}
         run: bash tools/diag/biotest.sh
+      - name: eSSL one-off match fix
+        if: ${{ inputs.biofix == 'yes' }}
+        run: node tools/diag/biofix.mjs
       - name: eSSL live data and matches
         if: ${{ inputs.bio == 'yes' }}
         run: node tools/diag/bio.mjs
