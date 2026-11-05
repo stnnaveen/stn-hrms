@@ -21,7 +21,8 @@ const BUCKET = env('S3_SELFIE_BUCKET');
 const aws = { region: REGION, credentials: { accessKeyId: env('AWS_ACCESS_KEY_ID'), secretAccessKey: env('AWS_SECRET_ACCESS_KEY') } };
 const s3 = new S3Client(aws);
 // Until StartupTN's AWS keys are set, selfies go to private Supabase Storage and face match is skipped.
-const USE_S3 = !!(BUCKET && env('AWS_ACCESS_KEY_ID') && env('AWS_SECRET_ACCESS_KEY'));
+// S3_ON=1 turns it on once the AWS path is proven (5 Nov: the AWS SDK ran out of compute on first use, so it stays off until fixed)
+const USE_S3 = !!(BUCKET && env('AWS_ACCESS_KEY_ID') && env('AWS_SECRET_ACCESS_KEY')) && env('S3_ON') === '1';
 const rek = new RekognitionClient(aws);
 
 const cors = {
