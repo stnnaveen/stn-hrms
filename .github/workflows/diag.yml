@@ -11,6 +11,7 @@ on:
       biofix: { description: 'One-off: fix the 047/069 eSSL match (yes)', default: '' }
       biotrace: { description: 'Trace fingerprint for names (comma separated)', default: '' }
       biocheck: { description: 'Verify HR fingerprint figures independently (yes)', default: '' }
+      awscheck: { description: 'Check AWS selfie storage (yes)', default: '' }
 jobs:
   diag:
     runs-on: ubuntu-latest
@@ -47,6 +48,9 @@ jobs:
       - name: eSSL one-off match fix
         if: ${{ inputs.biofix == 'yes' }}
         run: node tools/diag/biofix.mjs
+      - name: AWS selfie storage
+        if: ${{ inputs.awscheck == 'yes' }}
+        run: node tools/diag/awscheck.mjs
       - name: eSSL independent verification
         if: ${{ inputs.biocheck == 'yes' }}
         run: node tools/diag/biocheck.mjs
