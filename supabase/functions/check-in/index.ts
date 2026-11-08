@@ -18,8 +18,8 @@ const REGION = env('AWS_REGION') || 'ap-south-1';
 const BUCKET = env('S3_SELFIE_BUCKET');
 const aws = makeAws({ region: REGION, bucket: BUCKET, accessKeyId: env('AWS_ACCESS_KEY_ID'), secretAccessKey: env('AWS_SECRET_ACCESS_KEY') });
 // Until StartupTN's AWS keys are set, selfies go to private Supabase Storage and face match is skipped.
-// S3_ON=1 turns it on once the AWS path is proven (5 Nov: the AWS SDK ran out of compute on first use, so it stays off until fixed)
-const USE_S3 = !!(BUCKET && env('AWS_ACCESS_KEY_ID') && env('AWS_SECRET_ACCESS_KEY')) && env('S3_ON') === '1';
+// Selfies on S3 when the keys are set (aws4fetch; proven 8 Nov: write, private view link, delete). S3_OFF=1 is the emergency switch back.
+const USE_S3 = !!(BUCKET && env('AWS_ACCESS_KEY_ID') && env('AWS_SECRET_ACCESS_KEY')) && env('S3_OFF') !== '1';
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
