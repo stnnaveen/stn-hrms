@@ -2,10 +2,7 @@
 # Debug-signed for direct install; Play Store builds (signed .aab) come later from the same project.
 name: Android app
 on:
-  workflow_dispatch: {}
-  push:
-    branches: [main]
-    paths: ['src/**', 'android/**', 'capacitor.config.ts', 'package.json', 'package-lock.json', 'public/**', '.github/workflows/android.yml']
+  workflow_dispatch: {}   # manual only: a private repository has limited Actions minutes
 jobs:
   apk:
     runs-on: ubuntu-latest

@@ -2,7 +2,8 @@
 # A failed run means something was down; GitHub emails the repo owner.
 name: Uptime
 on:
-  schedule: [{ cron: '*/15 * * * *' }]
+  # every 30 min, 7:30 AM - 9:00 PM IST (private repository: limited Actions minutes)
+  schedule: [{ cron: '0,30 2-15 * * *' }]
   workflow_dispatch:
     inputs:
       samples: { description: 'Requests per service', default: '10' }

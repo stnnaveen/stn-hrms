@@ -33,7 +33,7 @@ npm run dev        # open the URL on your phone (same Wi-Fi) or desktop
    npx supabase functions deploy check-in
    ```
 5. **Frontend**: copy `.env.example` to `.env`, set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`, `npm run build`, host `dist/` on HTTPS (Vercel, Netlify or S3 + CloudFront). Camera and GPS need HTTPS.
-6. **Data**: replace each hub's placeholder coordinates with its real pin. Load staff into `staff_roster` (from `data/staff_template.csv`); they sign in with their email code, no invite needed. The three role logins (hr@, chairmanoffice@, ai@startuptn.in) are already on the roster.
+6. **Data**: replace each hub's placeholder coordinates with its real pin. Load staff into `staff_roster` (from `data/staff_template.csv`); they sign in with their email code, no invite needed. The HR, Chairman and Tech admin logins are already on the roster.
 
 ## Install on phones
 - **Android (Chrome)**: open the link, tap **Install app** (or menu > Add to Home screen).
