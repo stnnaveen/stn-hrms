@@ -4,6 +4,7 @@ import { sb, DEMO, ApiError } from './api';
 export interface HrToday {
   staff: number; checked_in: number; late: number; od: number; leave: number;
   pending_leave: number; pending_od: number; open_flags: number; chairman_away: boolean; finger?: number; checked_out?: number;
+  absent?: number; holiday?: { name: string; kind: 'govt' | 'office' } | null; leave_approver?: string; od_approver?: string;
 }
 export interface Person {
   id: string; full_name: string; email: string; role: string; designation: string | null; hub: string | null; phone: string | null;
@@ -14,7 +15,12 @@ export interface Person {
   test?: boolean;              // Tech admin's test staff (left out of HR numbers)
   bio?: { in_at: string; out_at: string | null; band: string } | null;   // today's fingerprint (HR only)
   odToday?: boolean; leaveToday?: boolean; disputesToday?: number;      // approved OD / leave today, disputes raised today
+  absentToday?: boolean; markNote?: string | null;                       // HR marked this day absent (or leave)
+  reports_to?: string | null;                                            // reporting person's email
 }
+export interface Holiday { day: string; name: string; kind: 'govt' | 'office' }
+export interface DayMark { email: string; day: string; mark: 'absent' | 'leave'; leave_type: string | null; note: string | null }
+export interface Route { kind: 'od' | 'leave'; id: string; route: 'hr' | 'chairman' | 'reporting'; approver_name: string; can_decide: boolean }
 export interface LeaveReq { id: string; who: string; hub: string | null; leave_type: string; starts_on: string; ends_on: string; half_day: string | null; reason: string | null; status: string; created_at: string }
 export interface OdReq { id: string; who: string; hub: string | null; subject: string; note: string | null; venue_name: string; venue_place?: string | null; venue_url?: string | null; venue_lat?: number | null; venue_lng?: number | null; starts_at: string; ends_at: string; status: string; created_at: string }
 export interface Flag {
@@ -31,6 +37,7 @@ export interface PresenceDay { tracked: boolean; reason?: string; from?: string;
   trips: { from: string; to: string; min: number; max_m: number; ongoing?: boolean }[]; samples: number; last_at?: string | null; last_inside?: boolean | null }
 export interface PresenceNow { user_id: string; outside_min: number; no_signal_min: number; trips: number; last_at: string | null; last_inside: boolean | null }
 export interface PersonDetail {
+  holidays?: Holiday[]; marks?: DayMark[];
   punches: DayPunch[];
   /** late / early-out asks on today's punches: whether a reason was asked and the staff answer */
   asks?: { id: string; punch_id: string; kind: 'late' | 'early_out'; status: string; staff_reason: string | null }[];
@@ -64,6 +71,15 @@ function selfieLink(key: string): Promise<string | null> {
   });
 }
 
+/** This month's holidays and HR marks for one person (calendar). */
+async function monthExtras(email: string): Promise<{ holidays: Holiday[]; marks: DayMark[] }> {
+  const ist = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10), from = ist.slice(0, 8) + '01', to = ist.slice(0, 8) + '31';
+  const [h, m] = await Promise.all([
+    sb!.from('holidays').select('day, name, kind').gte('day', from).lte('day', to),
+    sb!.from('day_marks').select('email, day, mark, leave_type, note').eq('email', email).gte('day', from).lte('day', to)
+  ]);
+  return { holidays: (h.data ?? []) as Holiday[], marks: (m.data ?? []) as DayMark[] };
+}
 async function personDaysByEmail(email: string): Promise<PersonDetail['days']> {
   const ist = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
   const { data, error } = await sb!.rpc('hr_person_days', { p_email: email, p_from: ist.slice(0, 8) + '01', p_to: ist });
@@ -116,11 +132,31 @@ const real = {
     const flN = new Map<string, number>();
     for (const f of (flR.data ?? []) as { user_id: string; kind: string; status: string; staff_reason: string | null }[])
       if (f.kind !== 'late' || f.staff_reason || f.status === 'reason_asked') flN.set(f.user_id, (flN.get(f.user_id) ?? 0) + 1);
-    return all.map((p) => ({ ...p, odToday: odSet.has(p.id) || p.today?.status === 'od', leaveToday: lvSet.has(p.id) || p.today?.status === 'leave', disputesToday: flN.get(p.id) ?? 0 }))
+    const [mkR, rtR] = await Promise.all([
+      sb!.from('day_marks').select('email, mark, note').eq('day', day),
+      sb!.from('staff_roster').select('email, reports_to')
+    ]);
+    const mk = new Map(((mkR.data ?? []) as { email: string; mark: string; note: string | null }[]).map((m) => [m.email, m]));
+    const rt = new Map(((rtR.data ?? []) as { email: string; reports_to: string | null }[]).map((r) => [r.email, r.reports_to]));
+    return all.map((p) => ({ ...p, odToday: odSet.has(p.id) || p.today?.status === 'od', reports_to: rt.get(p.email) ?? null,
+      leaveToday: lvSet.has(p.id) || p.today?.status === 'leave' || mk.get(p.email)?.mark === 'leave',
+      absentToday: mk.get(p.email)?.mark === 'absent', markNote: mk.get(p.email)?.note ?? null, disputesToday: flN.get(p.id) ?? 0 }))
       .sort((a, b) => a.full_name.localeCompare(b.full_name));
   },
   /** HR calendar by email, app and fingerprint days merged (works before the person signs in). */
   async personDays(email: string): Promise<PersonDetail['days']> { return personDaysByEmail(email); },
+  async monthExtras(email: string) { return monthExtras(email); },
+  async holidays(year?: number): Promise<Holiday[]> {
+    const y = year ?? Number(new Date(Date.now() + 330 * 60000).toISOString().slice(0, 4));
+    return must(await sb!.from('holidays').select('day, name, kind').gte('day', `${y}-01-01`).lte('day', `${y + 1}-12-31`).order('day')) as Holiday[];
+  },
+  async saveHoliday(day: string, name: string, kind: 'govt' | 'office') { const { error } = await sb!.rpc('save_holiday', { p_day: day, p_name: name, p_kind: kind }); if (error) throw new ApiError(error.message); },
+  async deleteHoliday(day: string) { const { error } = await sb!.rpc('delete_holiday', { p_day: day }); if (error) throw new ApiError(error.message); },
+  async markOf(email: string, day: string): Promise<DayMark | null> { return ((await sb!.from('day_marks').select('email, day, mark, leave_type, note').eq('email', email).eq('day', day)).data ?? [])[0] as DayMark ?? null; },
+  async setDayMark(email: string, day: string, mark: 'absent' | 'leave' | null, leaveType?: string, note?: string) { const { error } = await sb!.rpc('set_day_mark', { p_email: email, p_day: day, p_mark: mark, p_leave_type: leaveType ?? null, p_note: note ?? null }); if (error) throw new ApiError(error.message.replace(/^.*?:\s*/, '')); },
+  async setReportsTo(email: string, reportsTo: string | null) { const { error } = await sb!.rpc('set_reports_to', { p_email: email, p_reports_to: reportsTo }); if (error) throw new ApiError(error.message.replace(/^.*?:\s*/, '')); },
+  async setApprover(kind: 'leave' | 'od', value: string) { const { error } = await sb!.rpc('set_approver', { p_kind: kind, p_value: value }); if (error) throw new ApiError(error.message); },
+  async routes(): Promise<Route[]> { const { data, error } = await sb!.rpc('pending_routes'); if (error) return []; return (data ?? []) as Route[]; },
   async leaves(): Promise<LeaveReq[]> {
     const r = must(await sb!.from('leave_requests').select('id, leave_type, starts_on, ends_on, half_day, reason, status, created_at, p:profiles!leave_requests_user_id_fkey(full_name, hub:hubs(name))').eq('status', 'pending').order('starts_on'));
     return (r as unknown as (LeaveReq & { p: { full_name: string; hub: { name: string } | null } })[]).map((x) => ({ ...x, who: x.p.full_name, hub: x.p.hub?.name ?? null }));
@@ -190,7 +226,8 @@ const real = {
     const ids = ps.map((x) => x.id).filter(Boolean) as string[];
     const asks = ids.length ? ((await sb!.from('flags').select('id, punch_id, kind, status, staff_reason').in('punch_id', ids).in('kind', ['late', 'early_out'])).data ?? []) : [];
     const merged = email ? await personDaysByEmail(email).catch(() => null) : null;   // HR: fingerprint days merged in
-    return { asks: asks as PersonDetail['asks'], punches: ps, days: merged ?? (days.data ?? []) as PersonDetail['days'], ods: (ods.data ?? []) as PersonDetail['ods'], leaves: (leaves.data ?? []) as PersonDetail['leaves'] };
+    const ex = email ? await monthExtras(email).catch(() => ({ holidays: [], marks: [] })) : { holidays: [], marks: [] };
+    return { asks: asks as PersonDetail['asks'], punches: ps, days: merged ?? (days.data ?? []) as PersonDetail['days'], ods: (ods.data ?? []) as PersonDetail['ods'], leaves: (leaves.data ?? []) as PersonDetail['leaves'], ...ex };
   },
   async setActive(id: string, active: boolean) { const { error } = await sb!.from('profiles').update({ active }).eq('id', id); if (error) throw new ApiError('save_failed'); },
   async decideLeave(id: string, decision: 'approved' | 'returned', reason?: string) { const { error } = await sb!.rpc('decide_leave', { p_id: id, p_decision: decision, p_reason: reason ?? null }); if (error) throw new ApiError(error.message); },
@@ -250,6 +287,15 @@ const demo: typeof real = {
   async updateStaff(email, f) { await wait(); const p = D.people.find((x) => x.email === email); if (p) Object.assign(p, { hub: f.hub_name, designation: f.designation || null, phone: f.phone || null, employee_code: f.employee_code || null }); },
   async deleteStaff(email) { await wait(); D.people = D.people.filter((x) => x.email !== email); },
   async personDays() { await wait(); return []; },
+  async monthExtras() { await wait(); return { holidays: [], marks: [] }; },
+  async holidays() { await wait(); return [{ day: '2026-11-08', name: 'Deepavali', kind: 'govt' as const }, { day: '2026-12-25', name: 'Christmas', kind: 'govt' as const }]; },
+  async saveHoliday() { await wait(); },
+  async deleteHoliday() { await wait(); },
+  async markOf() { await wait(); return null; },
+  async setDayMark() { await wait(); },
+  async setReportsTo() { await wait(); },
+  async setApprover() { await wait(); },
+  async routes() { await wait(); return []; },
   async personDetail(uid) {
     await wait();
     const p = D.people.find((x) => x.id === uid);

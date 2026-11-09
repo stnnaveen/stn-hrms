@@ -57,6 +57,8 @@ const real = {
     // fingerprint (eSSL): first punch = in, a punch 20+ min later = out; merged with the app, earliest in decides the colour
     type B = { email: string; day: string; in_at: string; out_at: string | null; band: Staff['band'] };
     const bioToday = new Map(((bioT.data ?? []) as B[]).map((b) => [b.email, b]));
+    // HR's day marks (leave / absent) for today
+    const marks = new Map((((await sb!.from('day_marks').select('email, mark').eq('day', today)).data ?? []) as { email: string; mark: string }[]).map((m) => [m.email, m.mark]));
     const inside = new Map<string, boolean | null>();
     for (const v of must(vis) as { id: string; inside: boolean | null }[]) inside.set(v.id, v.inside);
     const vmap = new Map<string, { at: string; inside: boolean | null }>();
@@ -79,7 +81,7 @@ const real = {
       const appFirst = !!d0?.in_time && (!b || d0.in_time <= b.in_at);
       const d = b ? { in_time: appFirst ? d0!.in_time : b.in_at, out_time: [d0?.out_time, b.out_at].filter(Boolean).sort().pop() ?? null,
         band: appFirst ? d0!.band : b.band, early_out: !!d0?.early_out, status: d0?.status ?? 'present', in_punch: d0?.in_punch ?? null } : d0;
-      const cat: Cat = lv ? 'lv' : d?.in_time ? 'in' : o ? 'od' : 'notin';
+      const cat: Cat = (lv || marks.get(p.email) === 'leave') && !d?.in_time ? 'lv' : d?.in_time ? 'in' : o ? 'od' : 'notin';
       return { id: p.id, name: p.full_name, email: p.email, hub: p.hub?.name ?? 'No hub', designation: p.designation, cat, finger: !!b, invited: p.invited,
         inTime: d?.in_time ?? null, outTime: d?.out_time ?? null, band: d?.band ?? null, early: !!d?.early_out,
         od: o ? { subject: o.subject, venue: o.venue_name, starts_at: o.starts_at, ends_at: o.ends_at, place: o.venue_place, url: o.venue_url, visit: vmap.get(o.id) ?? null } : null, leaveType: lv ?? null, outside: rmap.get(p.id) ?? null,

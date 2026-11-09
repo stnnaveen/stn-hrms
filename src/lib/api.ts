@@ -18,9 +18,14 @@ export interface Today {
 export interface MyFinger { today: { in_at: string; out_at: string | null; band: 'ok' | 'warn' | 'bad' } | null; month: { on_time: number; late: number; early: number; finger_days: number } | null }
 export interface MyMonth {
   month: string;
+  absent?: string[]; holidays?: { day: string; name: string; kind: 'govt' | 'office' }[];
   days: { day: string; in: string; out: string | null; band: 'ok' | 'warn' | 'bad' | null }[];
   od: { subject: string; venue: string; starts_at: string; ends_at: string; status: string }[];
-  leave: { type: string; from: string; to: string; half_day: string | null; status: string }[];
+  leave: { type: string; from: string; to: string; half_day: string | null; status: string; by_hr?: boolean }[];
+}
+export interface MyApprovals {
+  od: { id: string; who: string; subject: string; note: string | null; venue: string; venue_url: string | null; starts_at: string; ends_at: string; created_at: string }[];
+  leave: { id: string; who: string; type: string; from: string; to: string; half_day: string | null; reason: string | null; created_at: string }[];
 }
 export interface Venue { lat: number; lng: number; name: string | null; place: string | null; url: string; approx?: boolean }
 export interface PunchResult {
@@ -119,6 +124,12 @@ const real = {
   async signOut() { await sb!.auth.signOut(); },
   async today(): Promise<Today> { const { data, error } = await sb!.rpc('my_today'); if (error) throw new ApiError('load_failed'); return data as Today; },
   /** Own fingerprint (eSSL) today and this month's figures with app and fingerprint days merged. */
+  /** Requests waiting for me as someone's reporting person. */
+  async myApprovals(): Promise<MyApprovals> { const { data, error } = await sb!.rpc('my_approvals'); if (error) return { od: [], leave: [] }; return data as MyApprovals; },
+  async decide(kind: 'od' | 'leave', id: string, d: 'approved' | 'returned', reason?: string) {
+    const { error } = await sb!.rpc(kind === 'od' ? 'decide_od' : 'decide_leave', { p_id: id, p_decision: d, p_reason: reason ?? null });
+    if (error) throw new ApiError(/not allowed/i.test(error.message) ? 'not_allowed' : 'save_failed');
+  },
   /** Own calendar: punch in / out, OD and leave for one month (YYYY-MM-01). */
   async myMonth(month?: string): Promise<MyMonth> { const { data, error } = await sb!.rpc('my_month', { p_month: month ?? null }); if (error) throw new ApiError('load_failed'); return data as MyMonth; },
   async myFingerprint(): Promise<MyFinger | null> { const { data, error } = await sb!.rpc('my_fingerprint'); return error ? null : (data as MyFinger); },
@@ -194,6 +205,8 @@ const demo = {
   async verifyCode(_e: string, code: string) { await wait(400); if (code.length < 6) throw new ApiError('bad_code'); demoState.signedIn = true; listeners.forEach((l) => l(true)); },
   async presenceSetup() { return null; },
   async presenceConsent() { return true; },
+  async myApprovals() { await wait(150); return { od: [], leave: [] }; },
+  async decide() { await wait(150); },
   async myMonth(month?: string) {
     await wait(150); const t = new Date(Date.now() + 330 * 60000), m = month ?? t.toISOString().slice(0, 8) + '01', at = (d: number, h: number, mi: number) => new Date(`${m.slice(0, 8)}${String(d).padStart(2, '0')}T${String(h).padStart(2, '0')}:${String(mi).padStart(2, '0')}:00+05:30`).toISOString();
     return { month: m.slice(0, 7), days: [{ day: m.slice(0, 8) + '02', in: at(2, 9, 52), out: at(2, 18, 20), band: 'ok' as const }, { day: m.slice(0, 8) + '04', in: at(4, 10, 3), out: at(4, 17, 40), band: 'warn' as const }],

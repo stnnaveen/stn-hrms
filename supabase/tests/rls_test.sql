@@ -695,3 +695,91 @@ do $$ declare j jsonb; begin
   raise notice 'PASS staff calendar shows own in/out, OD and leave, nothing about checks';
 end $$;
 select pg_temp.reset();
+
+-- ---------- 31. holidays, HR day marks, reporting staff and approval routing ----------
+select pg_temp.reset();
+update settings set value = '"hr"' where key = 'leave_approver';
+update settings set value = '"chairman"' where key = 'od_approver';
+update settings set value = 'false' where key = 'chairman_away';
+select pg_temp.as_user('00000000-0000-0000-0000-000000000001');
+do $$ begin
+  if (select count(*) from holidays where day = '2026-11-08') <> 1 then raise exception 'FAIL staff cannot see holidays'; end if;
+  begin perform save_holiday('2026-11-20', 'Fake', 'office'); raise exception 'FAIL staff edited holidays';
+  exception when others then if sqlerrm like 'FAIL%' then raise; end if; end;
+  begin perform set_day_mark('arun@startuptn.in', current_date, 'absent'); raise exception 'FAIL staff marked a day';
+  exception when others then if sqlerrm like 'FAIL%' then raise; end if; end;
+  begin perform set_reports_to('arun@startuptn.in', 'kavya@startuptn.in'); raise exception 'FAIL staff set reporting';
+  exception when others then if sqlerrm like 'FAIL%' then raise; end if; end;
+  begin perform set_approver('leave', 'reporting'); raise exception 'FAIL staff set approver';
+  exception when others then if sqlerrm like 'FAIL%' then raise; end if; end;
+  raise notice 'PASS staff see holidays but cannot edit holidays, marks, reporting or approvers';
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000a1');
+do $$ begin
+  perform save_holiday('2026-11-20', 'Office closed for audit', 'office');
+  perform set_day_mark('arun@startuptn.in', (now() at time zone 'Asia/Kolkata')::date, 'absent', null, 'No show');
+  perform set_day_mark('meena@startuptn.in', (now() at time zone 'Asia/Kolkata')::date, 'leave', 'sick');
+  if (hr_today()->>'absent')::int < 1 or (hr_today()->>'leave')::int < 1 then raise exception 'FAIL hr_today marks %', hr_today(); end if;
+  begin perform set_day_mark('arun@startuptn.in', (now() at time zone 'Asia/Kolkata')::date + 3, 'absent'); raise exception 'FAIL future absent';
+  exception when others then if sqlerrm like 'FAIL%' then raise; end if; end;
+  perform set_reports_to('kavya@startuptn.in', 'arun@startuptn.in');
+  begin perform set_reports_to('arun@startuptn.in', 'kavya@startuptn.in'); raise exception 'FAIL reporting loop allowed';
+  exception when others then if sqlerrm like 'FAIL%' then raise; end if; end;
+  begin perform set_approver('od', 'hr'); raise exception 'FAIL HR set OD approver';
+  exception when others then if sqlerrm like 'FAIL%' then raise; end if; end;
+  perform set_approver('leave', 'reporting');
+  raise notice 'PASS HR edits holidays, marks absent/leave (counted), sets reporting (no loops) and the leave approver; not the OD approver';
+end $$;
+select pg_temp.reset();
+do $$ begin
+  if (select count(*) from audit_log where entity = 'day_marks') < 2 or (select count(*) from audit_log where entity = 'holidays' and after->>'kind' = 'office') < 1
+     or (select count(*) from audit_log where entity = 'staff_roster' and after->>'reports_to' = 'arun@startuptn.in') < 1 then raise exception 'FAIL marks/holidays/reporting not audited'; end if;
+  raise notice 'PASS holidays, day marks and reporting changes are in the audit log';
+end $$;
+-- Kavya asks for leave: it goes to Arun (her reporting person), not HR
+select pg_temp.as_user('00000000-0000-0000-0000-000000000001');
+insert into leave_requests (user_id, leave_type, starts_on, ends_on, reason) values ('00000000-0000-0000-0000-000000000001', 'casual', current_date + 5, current_date + 5, 'Family function');
+do $$ begin
+  if (select count(*) from day_marks) <> 0 then raise exception 'FAIL staff reads others marks'; end if;
+  raise notice 'PASS staff cannot read other people''s day marks';
+end $$;
+select pg_temp.reset();
+do $$ begin
+  if not exists (select 1 from notifications where user_id = '00000000-0000-0000-0000-000000000002' and kind = 'leave_new') then raise exception 'FAIL reporting person not notified'; end if;
+  if exists (select 1 from notifications where user_id = '00000000-0000-0000-0000-0000000000a1' and kind = 'leave_new' and data->>'leave_id' = (select id::text from leave_requests where reason = 'Family function')) then raise exception 'FAIL HR notified for a reporting leave'; end if;
+  raise notice 'PASS leave request notifies the reporting person, not HR';
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000a1');
+do $$ declare v uuid := (select id from leave_requests where reason = 'Family function'); begin
+  if can_decide('leave', v) then raise exception 'FAIL HR can decide a leave routed to reporting staff'; end if;
+  if (select route from pending_routes() where id = v) <> 'reporting' or (select approver_name from pending_routes() where id = v) <> 'Arun K' then raise exception 'FAIL pending_routes'; end if;
+  begin perform decide_leave(v, 'approved'); raise exception 'FAIL HR decided a reporting leave';
+  exception when others then if sqlerrm like 'FAIL%' then raise; end if; end;
+  raise notice 'PASS HR sees the leave is with Arun K and cannot decide it';
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-000000000002');
+do $$ declare v uuid := (select (my_approvals()->'leave'->0->>'id')::uuid); begin
+  if v is null then raise exception 'FAIL reporting person does not see the request'; end if;
+  perform decide_leave(v, 'approved');
+  if (select status from leave_requests where id = v) <> 'approved' or (select decided_route from leave_requests where id = v) <> 'reporting' then raise exception 'FAIL reporting approval'; end if;
+  raise notice 'PASS the reporting person sees and approves the leave';
+end $$;
+-- OD: Chairman switches OD approval to HR; then only HR decides it
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000c1');
+do $$ begin perform set_approver('od', 'hr'); raise notice 'PASS Chairman sets the OD approver'; end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-000000000001');
+insert into od_requests (user_id,subject,venue_name,venue_lat,venue_lng,venue_url,starts_at,ends_at) values ('00000000-0000-0000-0000-000000000001','Routing test OD','Guindy',13.01,80.22,'https://maps.app.goo.gl/abc',now()+interval '2 day',now()+interval '2 day 2 hours');
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000a1');
+do $$ declare v uuid := (select id from od_requests where subject = 'Routing test OD'); begin
+  if not can_decide('od', v) then raise exception 'FAIL HR cannot decide OD routed to HR'; end if;
+  perform decide_od(v, 'approved');
+  raise notice 'PASS OD routed to HR is decided by HR';
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000c1');
+do $$ begin
+  if (select count(*) from pending_routes() where can_decide) <> 0 then raise exception 'FAIL Chairman can decide what is routed elsewhere'; end if;
+  raise notice 'PASS the Chairman cannot decide requests routed to HR or reporting staff';
+end $$;
+select pg_temp.reset();
+update settings set value = '"hr"' where key = 'leave_approver';
+update settings set value = '"chairman"' where key = 'od_approver';

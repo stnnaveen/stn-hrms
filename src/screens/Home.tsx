@@ -6,6 +6,7 @@ import { api, type Notif, type MyFinger } from '../lib/api';
 import { fmtShortDay, fmtTime, greeting, hoursBetween, istMinutesNow, splitTime, outChip } from '../lib/time';
 import { Icon } from '../ui/Icon';
 import { MyCalendar } from '../ui/MyCalendar';
+import { ToApprove } from '../ui/ToApprove';
 import { AccountSheet } from '../ui/AccountSheet';
 import { RefreshButton } from '../ui/RefreshButton';
 
@@ -126,6 +127,7 @@ export function Home() {
           <div className="tile"><b>{month.late}</b><span><i style={{ background: 'var(--warn)' }} />Late</span></div>
           <div className="tile"><b>{month.early}</b><span><i style={{ background: 'var(--bad)' }} />Early out</span></div>
         </div>
+        <ToApprove />
         <div className="sec">My calendar</div>
         <MyCalendar key={today.today?.in_time ?? 'x'} />
         <div className="sec">Requests</div>

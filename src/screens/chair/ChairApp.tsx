@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useApp } from '../../App';
 import { ApiError } from '../../lib/api';
 import { chair, istMin, isRed, type Slot, type LeaveItem, type OdItem, type Snapshot, type Staff } from '../../lib/chair';
-import { hr, FLAG_LABEL, type Flag, type PersonDetail, type Person } from '../../lib/hr';
+import { hr, FLAG_LABEL, type Flag, type PersonDetail, type Person, type Route } from '../../lib/hr';
 import { placeLabel, googleMapsUrl, appleMapsUrl, fmtDistance } from '../../lib/geo';
 import { fmtDay, fmtShortDay, fmtTime, greeting, outChip } from '../../lib/time';
 import { Icon, Logo } from '../../ui/Icon';
@@ -81,6 +81,7 @@ const asPerson = (s: Staff): Person => ({ id: s.id, full_name: s.name, email: s.
 // ---------------- app shell ----------------
 export function ChairApp() {
   const { toast } = useApp();
+  const [odWith, setOdWith] = useState<Map<string, string>>(new Map());
   const [tab, setTab] = useState<Tab>('home');
   const [stack, setStack] = useState<Sub[]>([]);
   const [hub, setHub] = useState('All');
@@ -93,6 +94,7 @@ export function ChairApp() {
   const load = useCallback(() => {
     chair.snapshot().then(setSnap).catch(() => toast('Could not load'));
     chair.ods().then(setOds).catch(() => setOds({ pending: [], decided: [] }));
+    hr.routes().then((r) => setOdWith(new Map(r.filter((x) => !x.can_decide).map((x) => [x.id, `With ${x.approver_name}`])))).catch(() => undefined);
   }, [toast]);
   useEffect(() => { load(); const t = setInterval(load, 60000); return () => clearInterval(t); }, [load]);
 
@@ -130,7 +132,7 @@ export function ChairApp() {
   );
   return (
     <>
-      {tab === 'home' && <Home snap={snap} view={view} hub={hub} setHub={setHub} ods={ods} open={open} setSheet={setSheet} setAway={setAway} goApprovals={(seg) => { setAseg(seg); setTab('approvals'); }} />}
+      {tab === 'home' && <Home snap={snap} view={view} hub={hub} setHub={setHub} ods={ods} odWith={odWith} open={open} setSheet={setSheet} setAway={setAway} goApprovals={(seg) => { setAseg(seg); setTab('approvals'); }} />}
       {tab === 'people' && <People snap={snap} hub={hub} setHub={setHub} open={open} onPerson={(s) => open({ name: 'person', p: asPerson(s) })} />}
       {tab === 'approvals' && <Approvals seg={aseg} setSeg={setAseg} ods={ods} away={away} setAway={setAway} setSheet={setSheet} />}
       <nav className="tabs t3" aria-label="Main">{t('home', 'chart', 'Dashboard')}{t('people', 'users', 'People')}{t('approvals', 'inbox', 'Approvals', pend > 0 && !away)}</nav>
@@ -194,13 +196,14 @@ function StatusRow({ away, setAway, style }: { away: boolean; setAway: (a: boole
   );
 }
 
-function OdCard({ o, away, onOpen, onReturn, onApprove }: { o: OdItem; away: boolean; onOpen: () => void; onReturn: () => void; onApprove: () => void }) {
+function OdCard({ o, away, onOpen, onReturn, onApprove, withWho }: { o: OdItem; away: boolean; onOpen: () => void; onReturn: () => void; onApprove: () => void; withWho?: string | null }) {
   return (
     <div className="req" role="button" tabIndex={0} onClick={onOpen} style={{ cursor: 'pointer' }}>
       <div className="hd"><Av n={o.who} /><div className="t"><b>{o.who}</b><span>{o.hub} hub</span></div>{quick(o) ? <span className="chip c-warn">Quick</span> : <span className="chip c-od">OD</span>}</div>
       <p className="bd">{o.subject}</p>
       <div className="meta"><span className="chip c-od"><Icon n="pin" size={14} />{o.venue.slice(0, 34)}</span><span className="chip c-pend">{when(o)}</span>{o.lat == null && <span className="chip c-warn">No map pin</span>}</div>
-      {away ? <div className="to" style={{ margin: '12px 0 0' }}>Routed to HR while you’re away</div>
+      {withWho ? <div className="to" style={{ margin: '12px 0 0' }}>{withWho}</div>
+        : away ? <div className="to" style={{ margin: '12px 0 0' }}>Routed to HR while you’re away</div>
         : <div className="acts" onClick={(e) => e.stopPropagation()}><button className="btn light" onClick={onReturn}>Return</button><button className="btn dark" onClick={onApprove}><Icon n="check" />Approve</button></div>}
     </div>
   );
@@ -224,7 +227,8 @@ function trendSVG(v: { day: string; pct: number }[]) {
   );
 }
 
-function Home({ snap, view, hub, setHub, ods, open, setSheet, setAway, goApprovals }: {
+function Home({ snap, view, hub, setHub, ods, odWith, open, setSheet, setAway, goApprovals }: {
+  odWith: Map<string, string>;
   snap: Snapshot | null; view: Staff[]; hub: string; setHub: (h: string) => void; ods: { pending: OdItem[]; decided: OdItem[] } | null;
   open: (s: Sub) => void; setSheet: (s: Sheet) => void; setAway: (a: boolean) => void; goApprovals: (seg: 'od' | 'lv' | 'done') => void;
 }) {
@@ -256,7 +260,7 @@ function Home({ snap, view, hub, setHub, ods, open, setSheet, setAway, goApprova
 
       <div className="sec">OD for you · {ods?.pending.length ?? 0} <button onClick={() => goApprovals('od')}>See all</button></div>
       <div className="list">{!ods ? <Spin /> : ods.pending.length === 0 ? <div className="card empty" style={{ padding: 24 }}><b>All clear</b>No OD waiting.</div>
-        : ods.pending.slice(0, 2).map((o) => <OdCard key={o.id} o={o} away={snap.away} onOpen={() => setSheet({ t: 'od', o })} onReturn={() => setSheet({ t: 'ret', o })} onApprove={() => setSheet({ t: 'od', o })} />)}</div>
+        : ods.pending.slice(0, 2).map((o) => <OdCard key={o.id} o={o} away={snap.away} withWho={odWith.get(o.id) ?? null} onOpen={() => setSheet({ t: 'od', o })} onReturn={() => setSheet({ t: 'ret', o })} onApprove={() => setSheet({ t: 'od', o })} />)}</div>
       {decidedToday.length > 0 && <button className="card row" style={{ marginTop: 10, width: '100%' }} onClick={() => goApprovals('done')}><span className="ri c-ok"><Icon n="check" /></span>
         <span className="t"><b>Decided today · {decidedToday.length}</b><span>{decidedToday.filter((d) => d.status === 'approved').length} approved · {decidedToday.filter((d) => d.status === 'returned').length} returned</span></span><Icon n="chevR" style={{ color: 'var(--ph-ink3)' }} /></button>}
       <StatusRow away={snap.away} setAway={setAway} style={{ marginTop: 10 }} />
@@ -381,9 +385,26 @@ function HubView({ hub, staff, onBack, onPerson }: { hub: string; staff: Staff[]
 
 // ---------------- approvals ----------------
 function Approvals({ seg, setSeg, ods, away, setAway, setSheet }: { seg: 'od' | 'lv' | 'done'; setSeg: (s: 'od' | 'lv' | 'done') => void; ods: { pending: OdItem[]; decided: OdItem[] } | null; away: boolean; setAway: (a: boolean) => void; setSheet: (s: Sheet) => void }) {
+  const { toast } = useApp();
   const [leaves, setLeaves] = useState<LeaveItem[] | null>(null);
-  useEffect(() => { chair.leaves().then(setLeaves).catch(() => setLeaves([])); }, []);
+  const [routes, setRoutes] = useState<Map<string, Route>>(new Map());
+  const [odAppr, setOdAppr] = useState<string>('chairman');
+  const [lvAppr, setLvAppr] = useState<string>('hr');
+  const [retLv, setRetLv] = useState<{ id: string; reason: string } | null>(null);
+  const loadAll = () => {
+    chair.leaves().then(setLeaves).catch(() => setLeaves([]));
+    hr.routes().then((r) => setRoutes(new Map(r.map((x) => [x.id, x])))).catch(() => undefined);
+    hr.today().then((c) => { if (c.od_approver) setOdAppr(c.od_approver); if (c.leave_approver) setLvAppr(c.leave_approver); }).catch(() => undefined);
+  };
+  useEffect(() => { loadAll(); }, [ods]);
   const today = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+  const rt = (id: string) => routes.get(id);
+  const withWho = (id: string) => { const r = rt(id); return r && !r.can_decide ? `With ${r.approver_name}` : null; };
+  const setOdApprover = async (v: string) => { const old = odAppr; setOdAppr(v); try { await hr.setApprover('od', v); toast('Saved · new OD requests follow this'); loadAll(); } catch { setOdAppr(old); toast('Could not save'); } };
+  const decideLv = async (id: string, d: 'approved' | 'returned', reason?: string) => {
+    try { await hr.decideLeave(id, d, reason); toast(d === 'approved' ? 'Approved · staff notified' : 'Returned · staff notified'); setRetLv(null); loadAll(); }
+    catch { toast('Could not save. Try again.'); }
+  };
   const dec = ods?.decided ?? [];
   const decRow = (o: OdItem) => (
     <button key={o.id} className="lrow" onClick={() => setSheet({ t: 'od', o })}><Av n={o.who} /><span className="t"><b>{o.who}</b><span>{o.subject} · {o.decided_role === 'hr' ? 'HR · you were away' : 'You'}</span></span>
@@ -398,18 +419,26 @@ function Approvals({ seg, setSeg, ods, away, setAway, setSheet }: { seg: 'od' | 
         <button className={seg === 'done' ? 'on' : ''} onClick={() => setSeg('done')}>Approved</button>
       </div>
       {seg === 'od' && (<>
-        <StatusRow away={away} setAway={setAway} style={{ marginBottom: 12 }} />
+        <div className="card" style={{ padding: '10px 14px', marginBottom: 12 }}>
+          <div className="qhd" style={{ margin: '0 0 8px' }}><span>OD approved by</span></div>
+          <div className="seg" role="group" aria-label="OD approved by">{[['chairman', 'Chairman'], ['hr', 'HR'], ['reporting', 'Reporting staff']].map(([v, l]) => <button key={v} className={odAppr === v ? 'on' : ''} onClick={() => setOdApprover(v)}>{l}</button>)}</div>
+          {odAppr === 'reporting' && <p className="to" style={{ textAlign: 'left', margin: '8px 0 0' }}>Staff without a reporting person (signed in) come to you.</p>}
+        </div>
+        {odAppr === 'chairman' && <StatusRow away={away} setAway={setAway} style={{ marginBottom: 12 }} />}
         <div className="list">{!ods ? <Spin /> : ods.pending.length === 0 ? <div className="empty"><b>All clear</b>No OD waiting.</div>
-          : ods.pending.map((o) => <OdCard key={o.id} o={o} away={away} onOpen={() => setSheet({ t: 'od', o })} onReturn={() => setSheet({ t: 'ret', o })} onApprove={() => setSheet({ t: 'od', o })} />)}</div>
+          : ods.pending.map((o) => <OdCard key={o.id} o={o} away={away} withWho={withWho(o.id)} onOpen={() => setSheet({ t: 'od', o })} onReturn={() => setSheet({ t: 'ret', o })} onApprove={() => setSheet({ t: 'od', o })} />)}</div>
       </>)}
       {seg === 'lv' && (<>
-        <div className="note-hr"><Icon n="eye" size={16} />HR approves leave. View only.</div>
+        <div className="note-hr"><Icon n="eye" size={16} />{lvAppr === 'chairman' ? 'You approve leave (set by HR).' : lvAppr === 'reporting' ? 'Reporting staff approve leave (set by HR). View only.' : 'HR approves leave. View only.'}</div>
         {!leaves ? <Spin /> : leaves.length === 0 ? <div className="empty"><b>No leave</b>Nothing in the last 30 days.</div> : leaves.map((l) => (
           <div className="req" key={l.id} style={{ marginBottom: 10 }}>
             <div className="hd"><Av n={l.who} /><div className="t"><b>{l.who}</b><span>{l.hub} hub</span></div><span className="chip c-lv">{cap(l.leave_type)}</span></div>
             {l.reason && <p className="bd">{l.reason}</p>}
             <div className="meta"><span className="chip c-pend">{l.starts_on === l.ends_on ? fmtShortDay(new Date(l.starts_on)) : `${fmtShortDay(new Date(l.starts_on))} to ${fmtShortDay(new Date(l.ends_on))}`}</span>
-              <span className={`chip ${STC[l.status] ?? 'c-pend'}`}>{l.status === 'pending' ? 'With HR' : l.assigned_by_hr ? 'Assigned by HR' : `${cap(l.status)} by HR`}</span></div>
+              <span className={`chip ${STC[l.status] ?? 'c-pend'}`}>{l.status === 'pending' ? (rt(l.id)?.can_decide ? 'Waiting for you' : `With ${rt(l.id)?.approver_name ?? 'HR'}`) : l.assigned_by_hr ? 'Assigned by HR' : cap(l.status)}</span></div>
+            {l.status === 'pending' && rt(l.id)?.can_decide && (retLv?.id === l.id
+              ? <div style={{ display: 'flex', gap: 8, marginTop: 10 }}><input className="inp" style={{ flex: 1 }} maxLength={300} placeholder="Reason to return" value={retLv.reason} onChange={(e) => setRetLv({ id: l.id, reason: e.target.value })} /><button className="btn dark" style={{ width: 'auto', padding: '0 16px' }} disabled={!retLv.reason.trim()} onClick={() => decideLv(l.id, 'returned', retLv.reason.trim())}>Return</button></div>
+              : <div className="acts"><button className="btn light" onClick={() => setRetLv({ id: l.id, reason: '' })}>Return</button><button className="btn dark" onClick={() => decideLv(l.id, 'approved')}><Icon n="check" />Approve</button></div>)}
           </div>))}
       </>)}
       {seg === 'done' && (<>
