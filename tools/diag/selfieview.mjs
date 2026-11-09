@@ -3,7 +3,7 @@ const { SUPA_URL, SERVICE, ANON } = process.env;
 const svc = { apikey: SERVICE, Authorization: `Bearer ${SERVICE}`, 'Content-Type': 'application/json' };
 const day = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
 const keys = (await (await fetch(`${SUPA_URL}/rest/v1/punches?select=selfie_key&selfie_key=not.is.null&server_time=gte.${day}T00:00:00%2B05:30`, { headers: svc })).json()).map((x) => x.selfie_key);
-const g = await (await fetch(`${SUPA_URL}/auth/v1/admin/generate_link`, { method: 'POST', headers: svc, body: JSON.stringify({ type: 'magiclink', email: 'naveenflop@gmail.com' }) })).json();
+const g = await (await fetch(`${SUPA_URL}/auth/v1/admin/generate_link`, { method: 'POST', headers: svc, body: JSON.stringify({ type: 'magiclink', email: 'hr.ai@startuptn.in' }) })).json();
 const v = await (await fetch(`${SUPA_URL}/auth/v1/verify`, { method: 'POST', headers: { apikey: ANON, 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'magiclink', token_hash: g.hashed_token ?? g.properties?.hashed_token }) })).json();
 if (!v.access_token) { console.log('sign-in failed', JSON.stringify(v).slice(0, 200)); process.exit(1); }
 const r = await fetch(`${SUPA_URL}/functions/v1/check-in`, { method: 'POST', headers: { apikey: ANON, Authorization: `Bearer ${v.access_token}`, 'Content-Type': 'application/json', 'x-client-info': 'supabase-js-web/2' }, body: JSON.stringify({ action: 'selfie_urls', keys }) });

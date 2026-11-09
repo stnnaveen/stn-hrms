@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       who: { description: 'Staff name to open', default: 'Naveen Kumar S' }
+      csp: { description: 'Only check the live site security policy (yes)', default: '' }
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -25,12 +26,19 @@ jobs:
           keys=$(supabase projects api-keys --project-ref "$REF" -o json)
           svc=$(echo "$keys" | jq -r '.[] | select(.name=="service_role") | .api_key'); anon=$(echo "$keys" | jq -r '.[] | select(.name=="anon") | .api_key')
           echo "::add-mask::$svc"; echo "::add-mask::$anon"; echo "SERVICE=$svc" >> "$GITHUB_ENV"; echo "ANON=$anon" >> "$GITHUB_ENV"
+      - name: Live site security policy (staff, HR, Chairman)
+        if: ${{ inputs.csp == 'yes' }}
+        run: |
+          npm i --no-save playwright@1.48.2 && npx playwright install --with-deps chromium >/dev/null
+          node tools/diag/csp.cjs
       - name: Build app on live data
+        if: ${{ inputs.csp != 'yes' }}
         run: |
           npm ci
           VITE_SUPABASE_URL="$SUPA_URL" VITE_SUPABASE_ANON_KEY="$ANON" npx vite build
           (npx vite preview --port 4173 &) ; sleep 4
       - name: Open HR app
+        if: ${{ inputs.csp != 'yes' }}
         env: { WHO: '${{ inputs.who }}' }
         run: |
           npm i --no-save playwright@1.48.2 && npx playwright install --with-deps chromium >/dev/null
