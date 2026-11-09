@@ -12,6 +12,7 @@ on:
       biotrace: { description: 'Trace fingerprint for names (comma separated)', default: '' }
       biocheck: { description: 'Verify HR fingerprint figures independently (yes)', default: '' }
       awscheck: { description: 'Check AWS selfie storage (yes)', default: '' }
+      audit: { description: 'Security audit (yes)', default: '' }
 jobs:
   diag:
     runs-on: ubuntu-latest
@@ -48,6 +49,9 @@ jobs:
       - name: eSSL one-off match fix
         if: ${{ inputs.biofix == 'yes' }}
         run: node tools/diag/biofix.mjs
+      - name: Security audit (settings, advisor, database facts)
+        if: ${{ inputs.audit == 'yes' }}
+        run: node tools/diag/audit.mjs
       - name: Check-in actions probe
         if: ${{ inputs.awscheck == 'yes' }}
         run: node tools/diag/fnprobe.mjs
