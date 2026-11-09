@@ -33,7 +33,7 @@ export interface BulkResult { row: number; email?: string; name?: string; result
 export type PurgeWhat = 'checkins' | 'flags' | 'od' | 'leave' | 'notifications' | 'devices';
 export interface PurgeArgs { scope: 'person' | 'hub' | 'test' | 'everyone'; user?: string | null; hub?: string | null; from?: string | null; to?: string | null; what: PurgeWhat[]; dry: boolean }
 export interface PurgeResult { people: number; checkins: number; days: number; flags: number; od: number; leave: number; notifications: number; devices: number; photos_removed?: number }
-export const TEMP_LOGINS = ['naveenflop@gmail.com', 'naveenbackup7@gmail.com'];
+export const TEMP_LOGINS = ['hr.ai@startuptn.in', 'chairman.ai@startuptn.in'];
 
 const must = <T,>(r: { data: T | null; error: unknown }): T => { if (r.error) throw new ApiError('load_failed'); return r.data as T; };
 const istToday = () => new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
@@ -224,9 +224,9 @@ const DS = {
   settings: { office_start: '10:00', late_until: '10:15', office_end: '18:00', face_threshold: 80, same_point_days: 5, offline_flag_minutes: 30, clock_gap_minutes: 2, jump_kmh: 150, od_notice_hours: 12 } as Settings,
   logins: [
     { email: 'hr@startuptn.in', name: 'HR team', role: 'hr', signedIn: true, active: true, temp: false },
-    { email: 'naveenflop@gmail.com', name: 'Naveen (test HR)', role: 'hr', signedIn: true, active: true, temp: true },
+    { email: 'hr.ai@startuptn.in', name: 'HR (test)', role: 'hr', signedIn: true, active: true, temp: true },
     { email: 'chairmanoffice@startuptn.in', name: 'Chairman', role: 'chairman', signedIn: true, active: true, temp: false },
-    { email: 'naveenbackup7@gmail.com', name: 'Chairman (test)', role: 'chairman', signedIn: true, active: true, temp: true },
+    { email: 'chairman.ai@startuptn.in', name: 'Chairman (test)', role: 'chairman', signedIn: true, active: true, temp: true },
     { email: 'ai@startuptn.in', name: 'Tech admin', role: 'tech', signedIn: true, active: true, temp: false }
   ] as RoleLogin[],
   pending: [{ id: 'd1', userId: 's2', who: 'Arun K', hub: 'Chennai', platform: 'web', ua: 'Mozilla/5.0 (Linux; Android 14; Redmi Note 13) Chrome/129', status: 'pending', created_at: ago(40), approved_at: null }] as Device[],

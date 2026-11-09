@@ -58,7 +58,7 @@ async function invoke<T>(body: Record<string, unknown> | FormData): Promise<T> {
 
 // Codes that mean "this check-in will never be accepted" (drop it from the phone's queue) vs "try again later" (keep it).
 const FINAL_REFUSALS = new Set(['already_checked_in', 'already_checked_out', 'not_checked_in', 'check_in_first', 'no_od_now', 'already_visited', 'bad_selfie', 'bad_location', 'bad_time', 'bad_request', 'bad_selfie_key', 'not_active', 'device_revoked']);
-const RETRYABLE = new Set(['network', 'upload_failed', 'save_failed', 'not_signed_in', 'upload_unavailable']);
+const RETRYABLE = new Set(['network', 'upload_failed', 'save_failed', 'not_signed_in', 'upload_unavailable', 'too_many']);
 const SAVE_TIMEOUT_MS = 40000;   // after this the phone keeps the check-in and sends it later; staff are never stuck
 const withTimeout = <T,>(pr: Promise<T>, ms: number) => Promise.race([pr, new Promise<T>((_, rej) => setTimeout(() => rej(new ApiError('network')), ms))]);
 
@@ -92,7 +92,7 @@ export async function sendPunchTwoStep(p: QueuedPunch): Promise<PunchResult> {
 
 /** Test logins that sign in with a fixed test code instead of an emailed one (no email is sent).
  *  The code is set on the account by the Tech admin; remove the address here before the pilot. */
-export const CODE_LOGINS = new Set(['naveenflop+staff@gmail.com', 'naveenflop@gmail.com', 'naveenbackup7@gmail.com', 'hr.ai@startuptn.in', 'chairman.ai@startuptn.in']);
+export const CODE_LOGINS = new Set(['naveenflop+staff@gmail.com', 'hr.ai@startuptn.in', 'chairman.ai@startuptn.in']);
 
 const real = {
   async session() { const { data } = await sb!.auth.getSession(); return data.session ? { email: data.session.user.email ?? '' } : null; },

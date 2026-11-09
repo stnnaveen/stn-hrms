@@ -8,7 +8,7 @@ on:
       resolve: { description: 'Links to send to the live server (space separated)', default: '' }
       biotest: { description: 'Run the live eSSL link test (yes)', default: '' }
       bio: { description: 'Show live eSSL data and matches (yes)', default: '' }
-      biofix: { description: 'One-off: fix the 047/069 eSSL match (yes)', default: '' }
+      authfix: { description: 'One-off: tighten sign-in settings (yes)', default: '' }
       biotrace: { description: 'Trace fingerprint for names (comma separated)', default: '' }
       biocheck: { description: 'Verify HR fingerprint figures independently (yes)', default: '' }
       awscheck: { description: 'Check AWS selfie storage (yes)', default: '' }
@@ -46,9 +46,9 @@ jobs:
       - name: eSSL link end-to-end (throw-away key, deleted after)
         if: ${{ inputs.biotest == 'yes' }}
         run: bash tools/diag/biotest.sh
-      - name: eSSL one-off match fix
-        if: ${{ inputs.biofix == 'yes' }}
-        run: node tools/diag/biofix.mjs
+      - name: Tighten sign-in settings (one-off)
+        if: ${{ inputs.authfix == 'yes' }}
+        run: node tools/diag/authfix.mjs
       - name: Security audit (settings, advisor, database facts)
         if: ${{ inputs.audit == 'yes' }}
         run: node tools/diag/audit.mjs

@@ -46,7 +46,7 @@ const RULES: { k: string; l: string; s: string; u: string; type: 'time' | 'numbe
 ];
 const t12 = (hm: string | number | undefined) => { if (typeof hm !== 'string') return '—'; const [h, m] = hm.split(':').map(Number); return `${((h + 11) % 12) + 1}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`; };
 const ERR: Record<string, string> = {
-  not_yourself: 'You can’t remove your own login.', last_tech: 'Keep at least one Tech login.', is_staff: 'That email belongs to a staff member.',
+  not_yourself: 'You can’t remove your own login.', last_tech: 'Keep at least one Tech login.', is_staff: 'That email belongs to a staff member.', not_on_admin_list: 'Not on the admin list.',
   bad_email: 'Enter a valid email.', out_of_range: 'Value is outside the allowed range.', bad_time: 'Enter a time like 10:00.',
   late_before_start: '“Late until” must be after “On time until”.', not_pending: 'Already decided.',
   already_added: 'That email is already a staff member.', radius_out_of_range: 'Radius must be 50 m to 3 km.'

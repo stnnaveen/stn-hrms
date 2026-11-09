@@ -163,8 +163,8 @@ end $$;
 
 -- 12. Chairman: temp login gets the chairman role; sees everything; decides OD and In/Away only; cannot change people, hubs or leave
 select pg_temp.reset();
-insert into auth.users values ('00000000-0000-0000-0000-0000000000c7','naveenbackup7@gmail.com');
-do $$ begin if (select role from profiles where email='naveenbackup7@gmail.com') <> 'chairman' then raise exception 'FAIL temp chairman role'; end if;
+insert into auth.users values ('00000000-0000-0000-0000-0000000000c7','chairman.ai@startuptn.in');
+do $$ begin if (select role from profiles where email='chairman.ai@startuptn.in') <> 'chairman' then raise exception 'FAIL temp chairman role'; end if;
   raise notice 'PASS 12 temp Chairman login'; end $$;
 insert into leave_requests (user_id, leave_type, starts_on, ends_on) values ('00000000-0000-0000-0000-000000000002','casual',current_date+3,current_date+3);
 select pg_temp.as_user('00000000-0000-0000-0000-0000000000c7');
@@ -205,19 +205,21 @@ do $$ begin
 exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; raise notice 'PASS 13 HR cannot do Tech admin work';
 end $$;
 select pg_temp.as_user('00000000-0000-0000-0000-0000000000f1');
-select add_role_login('NewHR@StartupTN.in', 'New HR', 'hr');
+do $$ begin begin perform add_role_login('NewHR@StartupTN.in', 'New HR', 'hr'); raise exception 'FAIL role login outside the admin list';
+  exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end; end $$;
+select add_role_login('HR@StartupTN.in', 'HR team', 'hr');
 select set_setting('face_threshold', '85');
 select set_setting('office_start', '"09:30"');
 select decide_device('00000000-0000-0000-0000-00000000de02', true);
 do $$ begin
-  if (select role from staff_roster where email = 'newhr@startuptn.in') <> 'hr' then raise exception 'FAIL role login not added'; end if;
+  if (select role from staff_roster where email = 'hr@startuptn.in') <> 'hr' or (select active from profiles where email = 'hr@startuptn.in') is not true then raise exception 'FAIL role login not added'; end if;
   if ((select value from settings where key='face_threshold'))::int <> 85 or (select value from settings where key='office_start') #>> '{}' <> '09:30' then raise exception 'FAIL setting not saved'; end if;
   begin perform set_setting('face_threshold', '10'); raise exception 'FAIL bad value saved'; exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
   begin perform set_setting('chairman_away', 'true'); raise exception 'FAIL tech set chairman away'; exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
   if (select status from devices where device_key = 'new-phone') <> 'active' or (select status from devices where device_key = 'old-phone') <> 'revoked' then raise exception 'FAIL phone switch'; end if;
   if not (verify_audit_chain() ->> 'ok')::boolean then raise exception 'FAIL audit chain broken'; end if;
   begin perform remove_role_login('ai@startuptn.in'); raise exception 'FAIL removed own login'; exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
-  perform remove_role_login('naveenbackup7@gmail.com');
+  perform remove_role_login('chairman.ai@startuptn.in');
   raise notice 'PASS 13b Tech adds logins, tunes rules, approves phones, checks audit';
 end $$;
 select pg_temp.as_user('00000000-0000-0000-0000-000000000002');
@@ -227,6 +229,8 @@ do $$ begin
   if my_role() is not null or sees_all() then raise exception 'FAIL removed login still has access'; end if;
   raise notice 'PASS 13c removed login loses access at once';
 end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000f1');
+select add_role_login('chairman.ai@startuptn.in', 'Chairman (test)', 'chairman');
 
 -- 14. OD needs a map pin; venue check-in shows on the staff home without distance; HR moves hubs
 select pg_temp.as_user('00000000-0000-0000-0000-000000000001');
@@ -783,3 +787,72 @@ end $$;
 select pg_temp.reset();
 update settings set value = '"hr"' where key = 'leave_approver';
 update settings set value = '"chairman"' where key = 'od_approver';
+
+-- ---------- 32. security hardening (9 Nov) ----------
+-- admin access only for the approved emails
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000f1');
+do $$ begin
+  begin perform add_role_login('boss@gmail.com', 'X', 'hr'); raise exception 'FAIL Gmail admin added';
+  exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; if sqlerrm <> 'not_on_admin_list' then raise exception 'FAIL wrong reason %', sqlerrm; end if; end;
+  begin update profiles set role = 'hr' where email = 'arun@startuptn.in'; raise exception 'FAIL staff made HR outside the list';
+  exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
+  begin insert into staff_roster (email, full_name, role) values ('other@startuptn.in', 'X', 'tech'); raise exception 'FAIL roster admin outside the list';
+  exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
+  if (select role from profiles where email = 'arun@startuptn.in') in ('hr', 'chairman', 'tech') then raise exception 'FAIL arun promoted'; end if;
+  raise notice 'PASS 32 admin roles only for the approved emails';
+end $$;
+-- an admin row that slipped in (written with the service key) still gives no access
+select pg_temp.reset();
+alter table profiles disable trigger profiles_admin_email;
+update profiles set role = 'hr' where email = 'arun@startuptn.in';
+alter table profiles enable trigger profiles_admin_email;
+select pg_temp.as_user('00000000-0000-0000-0000-000000000002');
+do $$ begin
+  if my_role() is not null or sees_all() then raise exception 'FAIL admin role outside the list has access'; end if;
+  if (select count(*) from profiles) > 1 then raise exception 'FAIL sees other profiles'; end if;
+  raise notice 'PASS 32b admin role outside the list gives no access';
+end $$;
+select pg_temp.reset();
+alter table profiles disable trigger profiles_admin_email;
+alter table profiles disable trigger profiles_guard_role;
+update profiles set role = 'staff' where email = 'arun@startuptn.in';
+alter table profiles enable trigger profiles_guard_role;
+alter table profiles enable trigger profiles_admin_email;
+-- the Gmail test admins are gone
+do $$ begin
+  if exists (select 1 from staff_roster where email in ('naveenflop@gmail.com', 'naveenbackup7@gmail.com') and role <> 'staff') then raise exception 'FAIL Gmail admin on roster'; end if;
+  if exists (select 1 from staff_roster where role in ('hr', 'chairman', 'tech') and not admin_email_ok(email)) then raise exception 'FAIL admin outside the list'; end if;
+  raise notice 'PASS 32c only approved admin emails on the roster';
+end $$;
+-- rate limit: server only; counts per window
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000f1');
+do $$ begin
+  begin perform rate_limit('x', 1, 60); raise exception 'FAIL user called rate_limit';
+  exception when insufficient_privilege then null; end;
+  begin perform admin_email_ok('x'); raise exception 'FAIL user called admin_email_ok';
+  exception when insufficient_privilege then null; end;
+  begin perform count(*) from rate_hits; raise exception 'FAIL user reads rate_hits';
+  exception when insufficient_privilege then null; end;
+  raise notice 'PASS 32d rate_limit and the admin list are server only';
+end $$;
+select pg_temp.reset();
+do $$ begin
+  if not rate_limit('t:1', 2, 600) or not rate_limit('t:1', 2, 600) then raise exception 'FAIL allowed hits refused'; end if;
+  if rate_limit('t:1', 2, 600) then raise exception 'FAIL third hit allowed'; end if;
+  if not rate_limit('t:2', 2, 600) then raise exception 'FAIL keys not separate'; end if;
+  raise notice 'PASS 32e rate_limit allows the limit, refuses the next';
+end $$;
+-- text limits
+select pg_temp.as_user('00000000-0000-0000-0000-000000000001');
+do $$ begin
+  begin insert into leave_requests (user_id, leave_type, starts_on, ends_on, reason) values ('00000000-0000-0000-0000-000000000001', 'casual', current_date + 40, current_date + 40, repeat('x', 1001));
+    raise exception 'FAIL long reason saved';
+  exception when check_violation then null; end;
+  raise notice 'PASS 32f long text refused';
+end $$;
+select pg_temp.reset();
+do $$ begin
+  if exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname in ('distance_m', 'audit_is_append_only')
+             and not exists (select 1 from unnest(coalesce(p.proconfig, '{}')) c where c like 'search_path=%')) then raise exception 'FAIL search_path'; end if;
+  raise notice 'PASS 32g every listed function has a fixed search_path';
+end $$;

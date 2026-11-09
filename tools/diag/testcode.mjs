@@ -1,7 +1,7 @@
 // Set the fixed test code (password) on the test and demo logins ONLY, creating the demo accounts if needed,
 // then check each signs in. Refuses any other address. Remove these logins before the pilot.
 const { SUPA_URL, SERVICE, ANON, CODE } = process.env;
-const LOGINS = ['naveenflop+staff@gmail.com', 'naveenflop@gmail.com', 'naveenbackup7@gmail.com', 'hr.ai@startuptn.in', 'chairman.ai@startuptn.in'];
+const LOGINS = ['naveenflop+staff@gmail.com', 'hr.ai@startuptn.in', 'chairman.ai@startuptn.in'];
 if (!/^\d{8}$/.test(CODE ?? '')) { console.log('TC code must be 8 digits'); process.exit(1); }
 const h = { apikey: SERVICE, Authorization: `Bearer ${SERVICE}`, 'Content-Type': 'application/json' };
 const users = await (await fetch(`${SUPA_URL}/auth/v1/admin/users?per_page=1000`, { headers: h })).json();

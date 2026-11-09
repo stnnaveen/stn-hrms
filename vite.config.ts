@@ -43,5 +43,8 @@ export default defineConfig({
       }
     })
   ],
+  // production: no source maps, no debugger statements, console.debug removed
+  build: { sourcemap: false },
+  esbuild: { drop: ['debugger'], pure: ['console.debug'] },
   server: { host: true }
 });

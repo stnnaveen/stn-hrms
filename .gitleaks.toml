@@ -1,0 +1,8 @@
+# Secret scan settings. The frontend Supabase URL and anon key are public by design (they ship in the app;
+# row-level security protects the data), so .env.production is allowed. Everything else is scanned.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Public frontend config"
+paths = ['''^\.env\.production$''']

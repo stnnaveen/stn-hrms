@@ -60,5 +60,21 @@ for (const a of ['selfie_urls', 'purge', 'delete_person', 'remove_selfie', 'radi
     const [no2] = await post('eyJ1IjoieCIsImUiOjk5OTk5OTk5OTl9.abc'); out(no2 === 401, `made-up phone token refused (${no2})`);
   } }
 { const [c] = await fn(anonH, { action: 'presence_token' }); out(c === 401, `signed out: no phone token (${c})`); }
+// ---- 9 Nov hardening: admin list, rate limits, CORS, sign-in
+for (const f of ['rate_limit', 'admin_email_ok', 'guard_admin_email']) {
+  const b = f === 'rate_limit' ? { p_key: 'x', p_max: 1, p_window_s: 60 } : f === 'admin_email_ok' ? { p_email: 'x@y.z' } : {};
+  const [a] = await rpc(anonH, f, b); const [c] = await rpc(st, f, b); out(a >= 400 && c >= 400, `internal ${f} not callable signed out or as staff (${a}, ${c})`);
+}
+{ const [a] = await sel(anonH, 'rate_hits'); const [c, j] = await sel(st, 'rate_hits'); out((a >= 400) && (c >= 400 || (Array.isArray(j) && j.length === 0)), `rate_hits unreadable (${a}, ${c})`); }
+{ const [c, t] = await rpc(st, 'add_role_login', { p_email: 'evil@gmail.com', p_name: 'x', p_role: 'hr' }); out(c >= 400, `staff: cannot add an admin login (${c} ${t.slice(0, 40)})`); }
+{ const r = await fetch(`${SUPA_URL}/rest/v1/staff_roster?select=email&role=in.(hr,chairman,tech)`, { headers: svc }); const j = await r.json().catch(() => []);
+  const ok = ['hr@startuptn.in', 'hr.ai@startuptn.in', 'chairmanoffice@startuptn.in', 'chairman.ai@startuptn.in', 'ai@startuptn.in'];
+  const bad = (Array.isArray(j) ? j : []).filter((x) => !ok.includes(x.email)).length; out(r.ok && bad === 0, `only approved emails hold admin roles (${Array.isArray(j) ? j.length : '-'} admin logins, ${bad} outside the list)`); }
+for (const [origin, want] of [['https://stn-hrms.vercel.app', true], ['https://evil.example.com', false]]) {
+  const r = await fetch(`${SUPA_URL}/functions/v1/check-in`, { method: 'OPTIONS', headers: { Origin: origin, 'Access-Control-Request-Method': 'POST' } });
+  const acao = r.headers.get('access-control-allow-origin'); out(want ? acao === origin : !acao || acao !== origin && acao !== '*', `CORS ${want ? 'allows the app' : 'refuses other sites'} (${acao ?? 'none'})`);
+}
+{ const r = await fetch(`${SUPA_URL}/functions/v1/bio-sync`, { method: 'POST', headers: { 'x-bio-key': 'stnbio_' + '0'.repeat(64), 'Content-Type': 'application/json' }, body: '{}' }); out(r.status === 401, `fingerprint sync refuses a wrong key (${r.status})`); }
+{ const r = await fetch(`${SUPA_URL}/auth/v1/token?grant_type=password`, { method: 'POST', headers: { apikey: ANON, 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'hr.ai@startuptn.in', password: '00000000' }) }); out(r.status === 400 || r.status === 429, `wrong test code refused (${r.status})`); }
 console.log(`SEC done: ${fails} failed`);
 process.exit(fails ? 1 : 0);

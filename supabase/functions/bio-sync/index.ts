@@ -5,7 +5,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 
 const env = (k: string) => Deno.env.get(k) ?? '';
-const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { 'Content-Type': 'application/json' } });
+const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { 'Content-Type': 'application/json', 'X-Content-Type-Options': 'nosniff' } });
 const db = createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'));
 
 const MAX_BODY = 2_000_000;
@@ -31,6 +31,9 @@ Deno.serve(async (req) => {
   if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
   const link = await linkFor((req.headers.get('x-bio-key') ?? '').trim());
   if (!link) return json({ error: 'bad_key' }, 401);
+  // the sync PC posts every 30 s, plus quick catch-up batches; 600 per 10 min is far above that
+  const { data: ok, error: rlErr } = await db.rpc('rate_limit', { p_key: `bio:${link}`, p_max: 600, p_window_s: 600 });
+  if (!rlErr && ok === false) return json({ error: 'too_many' }, 429);
 
   const len = Number(req.headers.get('content-length') ?? 0);
   if (len > MAX_BODY) return json({ error: 'too_large' }, 413);

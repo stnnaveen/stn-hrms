@@ -21,13 +21,34 @@ const aws = makeAws({ region: REGION, bucket: BUCKET, accessKeyId: env('AWS_ACCE
 // Selfies on S3 when the keys are set (aws4fetch; proven 8 Nov: write, private view link, delete). S3_OFF=1 is the emergency switch back.
 const USE_S3 = !!(BUCKET && env('AWS_ACCESS_KEY_ID') && env('AWS_SECRET_ACCESS_KEY')) && env('S3_OFF') !== '1';
 
-const cors = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-presence-token',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS'
+// Browsers may call this only from the app's own addresses (web, the store app's built-in pages, local dev).
+// The background-location SDK posts from native code with no Origin; CORS does not apply there.
+const ORIGINS = new Set((env('ALLOWED_ORIGINS') || 'https://stn-hrms.vercel.app,https://hrapp.startuptn.in,https://localhost,capacitor://localhost,http://localhost,http://localhost:5173,http://localhost:4173')
+  .split(',').map((o) => o.trim()).filter(Boolean));
+const withCors = (req: Request, res: Response) => {
+  const origin = req.headers.get('origin') ?? '';
+  if (ORIGINS.has(origin)) {
+    res.headers.set('Access-Control-Allow-Origin', origin);
+    res.headers.set('Access-Control-Allow-Headers', 'authorization, x-client-info, apikey, content-type, x-presence-token');
+    res.headers.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.headers.set('Access-Control-Max-Age', '86400');
+  }
+  res.headers.set('Vary', 'Origin');
+  res.headers.set('X-Content-Type-Options', 'nosniff');
+  return res;
 };
 const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
+  new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+
+// Rate limits per person, per 10 minutes. Far above real use; stops scripts hammering the server.
+// If the limit check itself fails, the request goes ahead (staff are never blocked by our own fault).
+const LIMITS: Record<string, number> = { punch: 30, start: 30, complete: 30, resolve_venue: 40, presence: 300, presence_token: 20, timing: 60 };
+// deno-lint-ignore no-explicit-any
+async function allowed(db: any, uid: string, action: string) {
+  const group = action in LIMITS ? action : 'other';
+  const { data, error } = await db.rpc('rate_limit', { p_key: `ci:${uid}:${group}`, p_max: LIMITS[group] ?? 300, p_window_s: 600 });
+  return error ? true : data !== false;
+}
 
 interface Body {
   action: 'start' | 'complete' | 'punch' | 'ping' | 'timing' | 'presence' | 'presence_token' | 'reset_test_day' | 'health' | 'selfie_urls' | 'resolve_venue' | 'radius_test' | 'purge' | 'delete_person' | 'remove_selfie';
@@ -52,8 +73,10 @@ interface Body {
 
 const istDay = (d: Date) => new Date(d.getTime() + 330 * 60000).toISOString().slice(0, 10);
 
-Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
+Deno.serve(async (req) => withCors(req, await handle(req)));
+
+async function handle(req: Request): Promise<Response> {
+  if (req.method === 'OPTIONS') return new Response('ok');
   if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
 
   const T0 = Date.now();
@@ -76,7 +99,9 @@ Deno.serve(async (req) => {
   if (body.action === 'presence' && req.headers.get('x-presence-token')) {
     const uid = await verifyPresenceToken(req.headers.get('x-presence-token')!);
     if (!uid) return json({ error: 'not_signed_in' }, 401);
-    return json(await presence(createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY')), uid, body.samples ?? []));
+    const sdb = createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'));
+    if (!(await allowed(sdb, uid, 'presence'))) return json({ error: 'too_many' }, 429);
+    return json(await presence(sdb, uid, body.samples ?? []));
   }
 
   const authHeader = req.headers.get('Authorization') ?? '';
@@ -84,6 +109,7 @@ Deno.serve(async (req) => {
   const { data: { user } } = await asUser.auth.getUser();
   if (!user) return json({ error: 'not_signed_in' }, 401);
   const db = createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'));
+  if (!(await allowed(db, user.id, String(body.action)))) return json({ error: 'too_many' }, 429);
   const tAuth = Date.now() - T0;
 
   // ---- test staff (test mode on): clear today's check-ins to try again
@@ -369,7 +395,7 @@ Deno.serve(async (req) => {
     if (rt?.waitUntil) rt.waitUntil(fill);
   }
   return json(reply(punch));
-});
+}
 
 // What the phone is allowed to know
 function reply(p: { server_time: string; kind: string; band: string | null; early_out: boolean; place_name: string | null; lat: number; lng: number }) {
@@ -590,7 +616,7 @@ async function resolveVenue(db: any, text: string): Promise<{ lat: number; lng: 
     if (typed) return { lat: typed.lat, lng: typed.lng, name: null, place: await placeFor(db, typed.lat, typed.lng), url: `https://www.google.com/maps?q=${typed.lat},${typed.lng}` };
   }
   const start = firstUrl(text.trim());
-  if (!start || !isMapsHost(start)) { console.log(JSON.stringify({ resolve_venue: 'not_maps_link', text: text.slice(0, 200) })); return { error: 'not_maps_link' }; }
+  if (!start || !isMapsHost(start)) { console.log(JSON.stringify({ resolve_venue: 'not_maps_link' })); return { error: 'not_maps_link' }; }
   // desktop browser: a phone browser gets Google's "Open in app?" page instead of the map
   const UA = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36', 'Accept-Language': 'en' };
   let url = start, name = nameFrom(url), c = coordsFrom(url) ?? await fromPlusCode(text, db);
@@ -641,11 +667,11 @@ async function resolveVenue(db: any, text: string): Promise<{ lat: number; lng: 
     for (const q of tries) { if (Date.now() > deadline) break; const g = await geocodeArea(q, deadline); if (g) { c = g; approx = true; via = 'area'; break; } }
   }
   if (!c) {
-    console.log(JSON.stringify({ resolve_venue: 'no_pin', name, hops }));
+    console.log(JSON.stringify({ resolve_venue: 'no_pin', hops }));
     return { error: isListLink(url) ? 'list_link' : 'no_pin' };
   }
   name = name?.replace(/^[23456789CFGHJMPQRVWX]{4,8}[+ ][23456789CFGHJMPQRVWX]{2,3}[\s,]*/i, '').trim() || null;   // drop the Plus Code from the name
-  console.log(JSON.stringify({ resolve_venue: 'ok', via, name: name?.slice(0, 80), lat: c.lat, lng: c.lng, start: start.slice(0, 80) }));
+  console.log(JSON.stringify({ resolve_venue: 'ok', via }));
   if (approx) return { lat: Number(c.lat.toFixed(6)), lng: Number(c.lng.toFixed(6)), name, place: null, url: start, approx: true };   // area only: the phone asks for a tap
   return { lat: Number(c.lat.toFixed(6)), lng: Number(c.lng.toFixed(6)), name, place: await placeFor(db, c.lat, c.lng), url: start };
 }
