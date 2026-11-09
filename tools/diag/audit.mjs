@@ -22,7 +22,11 @@ const q = {
   views: `select c.relname, coalesce((select option_value from pg_options_to_table(c.reloptions) where option_name = 'security_invoker'), 'false') as invoker from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'public' and c.relkind = 'v'`,
   admins: `select r.role, count(*) as n, string_agg(split_part(r.email, '@', 2), ',') as domains from staff_roster r where r.role in ('hr', 'chairman', 'tech') group by 1`,
   admin_profiles: `select role, active, count(*) from profiles where role in ('hr','chairman','tech') group by 1, 2`,
+  admin_allow: `select r.role, r.email in ('hr.ai@startuptn.in','ai@startuptn.in','chairman.ai@startuptn.in','chairmanoffice@startuptn.in','hr@startuptn.in') as allowed, left(r.email, 3) || '…@' || split_part(r.email, '@', 2) as who, coalesce(p.active, false) as signed_up_active from staff_roster r left join profiles p on p.email = r.email where r.role in ('hr', 'chairman', 'tech') order by 1, 3`,
+  custom_admins: `select count(*) from profiles where custom_role_id is not null`,
   buckets: `select id, public from storage.buckets`,
   extensions: `select extname, extversion from pg_extension order by 1`
 };
 for (const [k, qq] of Object.entries(q)) console.log(`AUD db ${k}: ${JSON.stringify(await sql(qq)).slice(0, 700)}`);
+const [ss, sec] = await api('/secrets');
+console.log(`AUD secrets ${ss}: ${(Array.isArray(sec) ? sec.map((x) => x.name).sort() : []).join(', ')}`);   // names only, never values
