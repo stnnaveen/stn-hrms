@@ -30,11 +30,15 @@ export interface MyMonth {
   absent?: string[]; holidays?: { day: string; name: string; kind: 'govt' | 'office' }[];
   days: { day: string; in: string; out: string | null; band: 'ok' | 'warn' | 'bad' | null }[];
   od: { subject: string; venue: string; starts_at: string; ends_at: string; status: string }[];
-  leave: { type: string; from: string; to: string; half_day: string | null; status: string; by_hr?: boolean }[];
+  leave: { type: string; from: string; to: string; half_day: string | null; status: string; by_hr?: boolean; mark?: boolean }[];
+  /** Staff queries on days HR marked (leave / absent). */
+  queries?: { id: string; day: string; status: 'pending' | 'approved' | 'returned'; clarify: boolean }[];
+  today?: string;
 }
+export type ReqKind = 'od' | 'leave' | 'mark';
 /** One request with its whole story (request_timeline). */
 export interface Timeline {
-  kind: 'od' | 'leave'; id: string; title: string; note: string | null; who: string; hub: string | null;
+  kind: ReqKind; id: string; title: string; note: string | null; who: string; hub: string | null; mark?: string;
   status: 'pending' | 'approved' | 'returned' | 'cancelled'; clarify: boolean; with: string | null; route: string | null;
   can_decide: boolean; mine: boolean; created_at: string; decided_at: string | null;
   venue?: string; venue_url?: string | null; starts_at?: string; ends_at?: string; from?: string; to?: string; half_day?: string | null; assigned_by_hr?: boolean;
@@ -49,7 +53,7 @@ export interface PunchResult {
   kind: 'in' | 'out' | 'visit'; server_time: string; band: 'ok' | 'warn' | 'bad' | null; early_out: boolean;
   place_name: string | null; lat: number; lng: number; queued?: boolean;
 }
-export interface Notif { id: string; kind: string; title: string; body: string | null; created_at: string; read_at: string | null; data?: { flag_id?: string; od_id?: string; leave_id?: string } }
+export interface Notif { id: string; kind: string; title: string; body: string | null; created_at: string; read_at: string | null; data?: { flag_id?: string; od_id?: string; leave_id?: string; mark_query_id?: string } }
 export interface ODInput { subject: string; note?: string; venue_name: string; venue_lat: number; venue_lng: number; venue_url: string; venue_place: string | null; starts_at: string; ends_at: string }
 export interface LeaveInput { leave_type: string; starts_on: string; ends_on: string; half_day?: 'first' | 'second' | null; reason?: string }
 
@@ -143,19 +147,26 @@ const real = {
   /** Own fingerprint (eSSL) today and this month's figures with app and fingerprint days merged. */
   /** Requests waiting for me as someone's reporting person. */
   async myApprovals(): Promise<MyApprovals> { const { data, error } = await sb!.rpc('my_approvals'); if (error) return { od: [], leave: [] }; return data as MyApprovals; },
-  async decide(kind: 'od' | 'leave', id: string, d: 'approved' | 'returned', reason?: string) {
-    const { error } = await sb!.rpc(kind === 'od' ? 'decide_od' : 'decide_leave', { p_id: id, p_decision: d, p_reason: reason ?? null });
+  async decide(kind: ReqKind, id: string, d: 'approved' | 'returned', reason?: string) {
+    const { error } = kind === 'mark' ? await sb!.rpc('decide_mark_query', { p_id: id, p_decision: d, p_comment: reason ?? null })
+      : await sb!.rpc(kind === 'od' ? 'decide_od' : 'decide_leave', { p_id: id, p_decision: d, p_reason: reason ?? null });
     if (error) throw new ApiError(/not allowed/i.test(error.message) ? 'not_allowed' : 'save_failed');
   },
+  /** Staff: question a day HR marked as leave or absent. */
+  async raiseQuery(day: string, message: string): Promise<string> {
+    const { data, error } = await sb!.rpc('raise_mark_query', { p_day: day, p_message: message });
+    if (error) throw new ApiError(/already_raised/.test(error.message) ? 'already_raised' : 'save_failed');
+    return data as string;
+  },
   /** A request's timeline: created, questions, replies, decision, with comments. */
-  async timeline(kind: 'od' | 'leave', id: string): Promise<Timeline> {
+  async timeline(kind: ReqKind, id: string): Promise<Timeline> {
     const { data, error } = await sb!.rpc('request_timeline', { p_kind: kind, p_id: id });
     if (error) throw new ApiError(/not allowed/i.test(error.message) ? 'not_allowed' : 'load_failed');
     return data as Timeline;
   },
   /** Approver: ask the staff member a question. Staff: answer it. */
-  async ask(kind: 'od' | 'leave', id: string, question: string) { const { error } = await sb!.rpc('ask_clarity', { p_kind: kind, p_id: id, p_question: question }); if (error) throw new ApiError(/not allowed/i.test(error.message) ? 'not_allowed' : 'save_failed'); },
-  async reply(kind: 'od' | 'leave', id: string, text: string) { const { error } = await sb!.rpc('reply_clarity', { p_kind: kind, p_id: id, p_reply: text }); if (error) throw new ApiError(/nothing_to_reply/.test(error.message) ? 'nothing_to_reply' : 'save_failed'); },
+  async ask(kind: ReqKind, id: string, question: string) { const { error } = await sb!.rpc('ask_clarity', { p_kind: kind, p_id: id, p_question: question }); if (error) throw new ApiError(/not allowed/i.test(error.message) ? 'not_allowed' : 'save_failed'); },
+  async reply(kind: ReqKind, id: string, text: string) { const { error } = await sb!.rpc('reply_clarity', { p_kind: kind, p_id: id, p_reply: text }); if (error) throw new ApiError(/nothing_to_reply/.test(error.message) ? 'nothing_to_reply' : 'save_failed'); },
   /** Own calendar: punch in / out, OD and leave for one month (YYYY-MM-01). */
   async myMonth(month?: string): Promise<MyMonth> { const { data, error } = await sb!.rpc('my_month', { p_month: month ?? null }); if (error) throw new ApiError('load_failed'); return data as MyMonth; },
   async myFingerprint(): Promise<MyFinger | null> { const { data, error } = await sb!.rpc('my_fingerprint'); return error ? null : (data as MyFinger); },
@@ -233,7 +244,8 @@ const demo = {
   async presenceConsent() { return true; },
   async myApprovals() { await wait(150); return { od: [], leave: [] }; },
   async decide() { await wait(150); },
-  async timeline(kind: 'od' | 'leave', id: string): Promise<Timeline> {
+  async raiseQuery() { await wait(150); return 'q1'; },
+  async timeline(kind: ReqKind, id: string): Promise<Timeline> {
     await wait(150); const ago = (m: number) => new Date(Date.now() - m * 60000).toISOString();
     return { kind, id, title: kind === 'od' ? 'TIDCO policy meet' : 'Casual leave', note: 'Meeting with the TIDCO team', who: 'Kavya R', hub: 'Chennai', status: 'pending', clarify: true,
       with: 'Arun K', route: 'reporting', can_decide: false, mine: true, created_at: ago(300), decided_at: null, from: '2026-11-20', to: '2026-11-20',
@@ -244,7 +256,7 @@ const demo = {
   async reply() { await wait(150); },
   async myMonth(month?: string) {
     await wait(150); const t = new Date(Date.now() + 330 * 60000), m = month ?? t.toISOString().slice(0, 8) + '01', at = (d: number, h: number, mi: number) => new Date(`${m.slice(0, 8)}${String(d).padStart(2, '0')}T${String(h).padStart(2, '0')}:${String(mi).padStart(2, '0')}:00+05:30`).toISOString();
-    return { month: m.slice(0, 7), holidays: [{ day: m.slice(0, 8) + '14', name: 'Office day off', kind: 'office' as const }, { day: m.slice(0, 8) + '25', name: 'Public holiday', kind: 'govt' as const }], days: [{ day: m.slice(0, 8) + '02', in: at(2, 9, 52), out: at(2, 18, 20), band: 'ok' as const }, { day: m.slice(0, 8) + '04', in: at(4, 10, 3), out: at(4, 17, 40), band: 'warn' as const }],
+    return { month: m.slice(0, 7), absent: [m.slice(0, 8) + '05'], queries: [], holidays: [{ day: m.slice(0, 8) + '14', name: 'Office day off', kind: 'office' as const }, { day: m.slice(0, 8) + '25', name: 'Public holiday', kind: 'govt' as const }], days: [{ day: m.slice(0, 8) + '02', in: at(2, 9, 52), out: at(2, 18, 20), band: 'ok' as const }, { day: m.slice(0, 8) + '04', in: at(4, 10, 3), out: at(4, 17, 40), band: 'warn' as const }],
       od: [{ subject: 'TIDCO policy meet', venue: 'TIDCO Office', starts_at: at(7, 15, 0), ends_at: at(7, 17, 0), status: 'approved' }], leave: [{ type: 'casual', from: m.slice(0, 8) + '03', to: m.slice(0, 8) + '03', half_day: null, status: 'approved' }] };
   },
   async myFingerprint() { await wait(150); return { today: { in_at: new Date(Date.now() - 300 * 60000).toISOString(), out_at: null, band: 'ok' as const }, month: { on_time: 3, late: 1, early: 0, finger_days: 4 } }; },

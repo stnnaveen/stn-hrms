@@ -597,3 +597,4 @@ select.inp{-webkit-appearance:none;-moz-appearance:none;appearance:none}   /* on
 .legend .sq{width:10px;height:10px;border-radius:3px;display:inline-block}
 .sheet .acts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:14px}
 .sheet .acts .btn{height:46px;font-size:15px;border-radius:14px;gap:6px}
+.chip-btn{display:flex;align-items:center;justify-content:space-between;width:100%;gap:8px;text-align:left}

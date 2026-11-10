@@ -8,7 +8,8 @@ import { Icon } from '../ui/Icon';
 const KIND: Record<string, [string, string]> = {
   od_approved: ['c-ok', 'check'], od_returned: ['c-bad', 'x'], leave_approved: ['c-ok', 'check'], leave_returned: ['c-bad', 'x'],
   leave_assigned: ['c-lv', 'leaf'], reason_asked: ['c-warn', 'alert'], od_new: ['c-od', 'brief'], leave_new: ['c-lv', 'leaf'], device_new: ['c-pend', 'shield'],
-  clarify_asked: ['c-warn', 'help'], clarify_reply: ['c-od', 'chat']
+  clarify_asked: ['c-warn', 'help'], clarify_reply: ['c-od', 'chat'],
+  mark_query: ['c-warn', 'help'], mark_approved: ['c-ok', 'check'], mark_returned: ['c-bad', 'x']
 };
 
 function ago(iso: string) {
@@ -22,7 +23,7 @@ export function Notifications({ onBackOverride }: { onBackOverride?: () => void 
   const [reasonFor, setReasonFor] = useState<Notif | null>(null);
   const [reason, setReason] = useState('');
   const [answered, setAnswered] = useState<string[]>([]);
-  const [req, setReq] = useState<{ kind: 'od' | 'leave'; id: string } | null>(null);
+  const [req, setReq] = useState<{ kind: 'od' | 'leave' | 'mark'; id: string } | null>(null);
   useEffect(() => { api.notifications().then(setList); }, []);
 
   const send = async () => {
@@ -44,7 +45,7 @@ export function Notifications({ onBackOverride }: { onBackOverride?: () => void 
         const [c, i] = KIND[n.kind] ?? ['c-pend', 'bell'];
         const ask = n.kind === 'reason_asked' && n.data?.flag_id && !answered.includes(n.id);
         // leave / OD notifications open the request with its timeline (a question can be answered there)
-        const rq = n.data?.od_id ? { kind: 'od' as const, id: n.data.od_id } : n.data?.leave_id ? { kind: 'leave' as const, id: n.data.leave_id } : null;
+        const rq = n.data?.od_id ? { kind: 'od' as const, id: n.data.od_id } : n.data?.leave_id ? { kind: 'leave' as const, id: n.data.leave_id } : n.data?.mark_query_id ? { kind: 'mark' as const, id: n.data.mark_query_id } : null;
         const tap = ask ? () => setReasonFor(n) : rq ? () => setReq(rq) : undefined;
         return (
           <div className={`nt ${n.read_at ? '' : 'unread'}`} key={n.id} role={tap ? 'button' : undefined} onClick={tap} style={tap ? { cursor: 'pointer' } : undefined}>

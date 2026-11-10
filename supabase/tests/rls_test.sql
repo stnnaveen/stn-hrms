@@ -1038,3 +1038,112 @@ do $$ declare j jsonb; begin
 end $$;
 select pg_temp.reset();
 delete from holidays where name = 'Test office day';
+
+-- ---------- 35. approvers per staff member; one calendar for everyone; queries on HR marks ----------
+select pg_temp.reset();
+update staff_roster set reports_to = 'arun@startuptn.in' where email = 'kavya@startuptn.in';
+select pg_temp.as_user('00000000-0000-0000-0000-000000000001');
+do $$ begin
+  begin perform set_staff_approver('kavya@startuptn.in', 'leave', 'reporting'); raise exception 'FAIL staff set own approver';
+  exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
+  raise notice 'PASS 35 staff cannot choose their own approver';
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000a1');
+select set_staff_approver('kavya@startuptn.in', 'leave', 'reporting');
+select set_staff_approver('kavya@startuptn.in', 'od', 'hr');
+do $$ declare j jsonb; begin
+  j := routes_for('kavya@startuptn.in');
+  if j->'leave'->>'route' <> 'reporting' or j->'leave'->>'name' <> 'Arun K' or j->'od'->>'route' <> 'hr' or j->'od'->>'set' <> 'hr' then raise exception 'FAIL per-staff routes %', j; end if;
+  if (routes_for('arun@startuptn.in')->'leave'->>'set') is not null then raise exception 'FAIL other staff changed'; end if;
+  begin perform set_staff_approver('kavya@startuptn.in', 'od', 'tech'); raise exception 'FAIL bad approver saved';
+  exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
+  raise notice 'PASS 35b HR sets leave and OD approver per staff member';
+end $$;
+-- the routes are used: a new OD from Kavya goes to HR, her leave to Arun
+select pg_temp.as_user('00000000-0000-0000-0000-000000000001');
+insert into od_requests (id, user_id, subject, venue_name, venue_lat, venue_lng, venue_url, starts_at, ends_at)
+values ('00000000-0000-0000-0000-0000000035d1', '00000000-0000-0000-0000-000000000001', 'Per staff route', 'Guindy', 13.01, 80.22, 'https://maps.app.goo.gl/abc', now() + interval '3 days', now() + interval '3 days 2 hours');
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000a1');
+do $$ begin
+  if not can_decide('od', '00000000-0000-0000-0000-0000000035d1') then raise exception 'FAIL HR should decide Kavya''s OD'; end if;
+  raise notice 'PASS 35c per-staff OD route reaches HR';
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000c1');
+do $$ begin
+  if can_decide('od', '00000000-0000-0000-0000-0000000035d1') then raise exception 'FAIL Chairman decides an OD routed to HR'; end if;
+  raise notice 'PASS 35d Chairman does not decide it';
+end $$;
+-- one calendar: HR and staff get the same month
+select pg_temp.reset();
+insert into day_marks (email, day, mark, leave_type) values ('kavya@startuptn.in', date_trunc('month', current_date)::date + 1, 'leave', 'casual') on conflict (email, day) do update set mark = 'leave';
+insert into day_marks (email, day, mark) values ('kavya@startuptn.in', date_trunc('month', current_date)::date + 2, 'absent') on conflict (email, day) do update set mark = 'absent';
+select pg_temp.as_user('00000000-0000-0000-0000-000000000001');
+create temp table m35 as select my_month(current_date) as j;
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000a1');
+do $$ declare h jsonb := hr_person_month('kavya@startuptn.in', current_date); s jsonb := (select j from m35); begin
+  if h <> s then raise exception 'FAIL HR and staff calendars differ'; end if;
+  if jsonb_array_length(h->'absent') < 1 or not exists (select 1 from jsonb_array_elements(h->'leave') x where (x->>'mark')::boolean) then raise exception 'FAIL marks missing %', h; end if;
+  raise notice 'PASS 35e HR and staff calendar data are identical, marks included';
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000c1');
+do $$ begin
+  if hr_person_month('kavya@startuptn.in', current_date) <> (select j from m35) then raise exception 'FAIL Chairman calendar differs'; end if;
+  raise notice 'PASS 35f Chairman calendar is the same';
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-000000000002');
+do $$ begin
+  begin perform hr_person_month('kavya@startuptn.in', current_date); raise exception 'FAIL staff read another calendar';
+  exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
+  begin perform person_month('kavya@startuptn.in', current_date); raise exception 'FAIL person_month callable';
+  exception when insufficient_privilege then null; end;
+  raise notice 'PASS 35g staff cannot read another person''s calendar';
+end $$;
+-- staff queries an absent mark; HR asks, staff replies, HR corrects (mark removed); timeline for HR and Chairman
+select pg_temp.as_user('00000000-0000-0000-0000-000000000001');
+create temp table q35 (id uuid);
+do $$ declare v uuid; begin
+  begin perform raise_mark_query(current_date - 400, 'no mark here'); raise exception 'FAIL query on an unmarked day';
+  exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
+  v := raise_mark_query(date_trunc('month', current_date)::date + 2, 'I was at the Guindy office that day');
+  insert into q35 values (v);
+  begin perform raise_mark_query(date_trunc('month', current_date)::date + 2, 'again'); raise exception 'FAIL second open query';
+  exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
+  begin insert into mark_queries (email, user_id, day, mark, message) values ('kavya@startuptn.in', '00000000-0000-0000-0000-000000000001', current_date, 'absent', 'direct'); raise exception 'FAIL direct insert';
+  exception when insufficient_privilege then null; end;
+  if (select count(*) from mark_queries) <> 1 then raise exception 'FAIL staff sees own query'; end if;
+  if jsonb_array_length(my_month(current_date)->'queries') <> 1 then raise exception 'FAIL calendar shows the query'; end if;
+  raise notice 'PASS 35h staff raises one query on an HR mark';
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-000000000002');
+do $$ begin
+  if (select count(*) from mark_queries) <> 0 then raise exception 'FAIL other staff sees the query'; end if;
+  begin perform decide_mark_query((select id from q35), 'approved'); raise exception 'FAIL staff decided a query';
+  exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
+  raise notice 'PASS 35i other staff cannot see or decide it';
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000a1');
+do $$ begin
+  if (select count(*) from notifications where kind = 'mark_query') < 1 then raise exception 'FAIL HR not told'; end if;
+  perform ask_clarity('mark', (select id from q35), 'Who saw you there?');
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-000000000001');
+select reply_clarity('mark', (select id from q35), 'Arun K');
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000a1');
+do $$ declare acts text; begin
+  begin perform decide_mark_query((select id from q35), 'returned', ''); raise exception 'FAIL keep without reason';
+  exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
+  perform decide_mark_query((select id from q35), 'approved', 'Confirmed with Arun');
+  if exists (select 1 from day_marks where email = 'kavya@startuptn.in' and day = date_trunc('month', current_date)::date + 2) then raise exception 'FAIL mark not removed'; end if;
+  select string_agg(x->>'action', ',' order by o) into acts from jsonb_array_elements(request_timeline('mark', (select id from q35))->'events') with ordinality t(x, o);
+  if acts <> 'created,clarify,reply,approved' then raise exception 'FAIL query timeline %', acts; end if;
+  raise notice 'PASS 35j HR asks, staff replies, HR corrects: mark removed, full timeline';
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000c1');
+do $$ begin
+  if jsonb_array_length(request_timeline('mark', (select id from q35))->'events') <> 4 then raise exception 'FAIL Chairman query timeline'; end if;
+  if (request_timeline('mark', (select id from q35))->>'can_decide')::boolean then raise exception 'FAIL Chairman can decide'; end if;
+  raise notice 'PASS 35k Chairman sees the query timeline, read only';
+end $$;
+select pg_temp.reset();
+update staff_roster set leave_approver = null, od_approver = null, reports_to = null where email = 'kavya@startuptn.in';
+delete from day_marks where email = 'kavya@startuptn.in' and day >= date_trunc('month', current_date)::date;

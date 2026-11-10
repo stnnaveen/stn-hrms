@@ -2,7 +2,7 @@ import { DiwaliBanner, SkyCrackers } from '../../ui/Festive';
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { useApp } from '../../App';
 import { api, errorText, ApiError } from '../../lib/api';
-import { hr, type HistoryItem, type RoutesFor, FLAG_LABEL, type Flag, type HrToday, type Hub, type LeaveReq, type OdReq, type Person, type PersonDetail, type Pin, type DayPunch, type Route, type Holiday } from '../../lib/hr';
+import { hr, type HistoryItem, type MarkQuery, type RoutesFor, FLAG_LABEL, type Flag, type HrToday, type Hub, type LeaveReq, type OdReq, type Person, type PersonDetail, type Pin, type DayPunch, type Route, type Holiday } from '../../lib/hr';
 import { placeLabel, googleMapsUrl, appleMapsUrl, fmtDistance } from '../../lib/geo';
 import { fmtShortDay, fmtTime, greeting, outChip } from '../../lib/time';
 const MapView = lazy(() => import('../../ui/MapView'));
@@ -18,6 +18,7 @@ import { Fingerprint } from './Fingerprint';
 import { Holidays } from './Holidays';
 import { MarkDay } from './MarkDay';
 import { RequestSheet } from '../../ui/RequestSheet';
+import { PersonCalendar } from '../../ui/MyCalendar';
 import { RefreshButton } from '../../ui/RefreshButton';
 
 type Tab = 'home' | 'staff' | 'approvals' | 'disputes';
@@ -238,53 +239,8 @@ function pattern(pins: Pin[]): { same: boolean; drift: string } {
   return { same: max < 1 && accs.size === 1, drift: `Drifts up to ${Math.round(max)} m` };
 }
 
-const DOT: Record<string, string> = { ok: 'var(--ok)', warn: 'var(--warn)', bad: 'var(--bad)', od: 'var(--od)', leave: 'var(--lv)', absent: '#C9CCD3', marked: '#7A1F1F', holiday: '#8C93A3' };
 const STATUS_CHIP: Record<string, string> = { approved: 'c-ok', pending: 'c-pend', returned: 'c-bad', cancelled: 'c-pend' };
 
-function MonthCalendar({ d }: { d: PersonDetail }) {
-  const ist = new Date(Date.now() + 330 * 60000);
-  const y = ist.getUTCFullYear(), m = ist.getUTCMonth(), today = ist.getUTCDate();
-  const first = new Date(Date.UTC(y, m, 1)).getUTCDay(), len = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
-  const key = (n: number) => `${y}-${String(m + 1).padStart(2, '0')}-${String(n).padStart(2, '0')}`;
-  const byDay = new Map(d.days.map((x) => [x.day, x]));
-  const hol = new Map((d.holidays ?? []).map((h) => [h.day, h]));
-  const mk = new Map((d.marks ?? []).map((x) => [x.day, x]));
-  const onLeave = (k: string) => mk.get(k)?.mark === 'leave' || d.leaves.some((l) => l.status === 'approved' && l.starts_on <= k && l.ends_on >= k);
-  const state = (n: number): string | null => {
-    const k = key(n), wd = new Date(Date.UTC(y, m, n)).getUTCDay(), rec = byDay.get(k);
-    if (onLeave(k)) return 'leave';
-    if (mk.get(k)?.mark === 'absent' && !rec?.band) return 'marked';
-    if (hol.has(k) && !rec?.band) return 'holiday';
-    if (rec?.status === 'od') return 'od';
-    if (rec?.band) return rec.band;
-    if (n < today && wd !== 0 && wd !== 6) return 'absent';
-    return null;
-  };
-  const counts = { ok: 0, warn: 0, bad: 0, od: 0, leave: 0, absent: 0, marked: 0, holiday: 0 } as Record<string, number>;
-  for (let n = 1; n <= len; n++) { const st = state(n); if (st) counts[st]++; }
-  return (
-    <div className="card">
-      <div className="cal">
-        {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((w, i) => <span className="dw" key={i}>{w}</span>)}
-        {Array.from({ length: first }, (_, i) => <button key={`b${i}`} className="blank" aria-hidden="true" />)}
-        {Array.from({ length: len }, (_, i) => i + 1).map((n) => {
-          const st = state(n), wd = new Date(Date.UTC(y, m, n)).getUTCDay();
-          const h = hol.get(key(n));
-          return <button key={n} className={`${n === today ? 'today' : ''} ${wd === 0 || wd === 6 ? 'off' : ''} ${h ? (h.kind === 'office' ? 'hoff' : 'hol') : ''}`} aria-label={`${n}${st ? `, ${st}` : ''}${h ? `, ${h.name}` : ''}`} tabIndex={-1}>
-            {n}{st ? <i style={{ background: DOT[st] }} /> : <i style={{ background: 'transparent' }} />}</button>;
-        })}
-      </div>
-      <div className="legend">
-        <span><i style={{ background: DOT.ok }} />On time {counts.ok}</span><span><i style={{ background: DOT.warn }} />Slightly late {counts.warn}</span>
-        <span><i style={{ background: DOT.bad }} />Late {counts.bad}</span><span><i style={{ background: DOT.od }} />OD {counts.od}</span>
-        <span><i style={{ background: DOT.leave }} />Leave {counts.leave}</span><span><i style={{ background: DOT.absent }} />No check-in {counts.absent}</span>
-        {counts.marked > 0 && <span><i style={{ background: DOT.marked }} />Absent (HR) {counts.marked}</span>}
-        {(d.holidays ?? []).some((h) => h.kind !== 'office') && <span><i className="sq" style={{ background: '#ECEBFB', boxShadow: 'inset 0 0 0 1px #4B46B0' }} />Holiday</span>}
-        {(d.holidays ?? []).some((h) => h.kind === 'office') && <span><i className="sq" style={{ background: '#FFF0E3', boxShadow: 'inset 0 0 0 1px #9A4B12' }} />Office leave</span>}
-      </div>
-    </div>
-  );
-}
 
 /** One person (HR; the Chairman read-only: no edit, ask-reason, leave, deactivate or delete). */
 export function PersonView({ p: p0, onBack, open, readOnly = false }: { p: Person; onBack: () => void; open?: (s: Sub) => void; readOnly?: boolean }) {
@@ -296,6 +252,7 @@ export function PersonView({ p: p0, onBack, open, readOnly = false }: { p: Perso
   const [photos, setPhotos] = useState<Record<string, string | null>>({});
   const [sheet, setSheet] = useState<null | 'deact' | 'delete' | 'edit'>(null);
   const [active, setActive] = useState(p.active);
+  const [calTick, setCalTick] = useState(0);
   const reloadDetail = () => { hr.personDetail(p.id, p.email).then(setD).catch(() => undefined); };
   useEffect(() => {
     if (p.invited) { Promise.all([hr.personDays(p.email), hr.monthExtras(p.email)]).then(([days, ex]) => setD({ punches: [], days, ods: [], leaves: [], ...ex })).catch(() => setD({ punches: [], days: [], ods: [], leaves: [] })); return; }
@@ -334,9 +291,9 @@ export function PersonView({ p: p0, onBack, open, readOnly = false }: { p: Perso
       {p.invited ? (
         <><div className="note-hr" style={{ marginTop: 16 }}><Icon n="mail" size={16} />Signs in with a code sent to {p.email}. Status turns active after first sign-in.</div>
           <BioPunches email={p.email} />
-          {!readOnly && <><div className="sec">Mark a day</div><MarkDay email={p.email} name={p.full_name} onSaved={() => hr.personDays(p.email).then(async (days) => setD({ punches: [], days, ods: [], leaves: [], ...(await hr.monthExtras(p.email)) })).catch(() => undefined)} /></>}
+          {!readOnly && <><div className="sec">Mark a day</div><MarkDay email={p.email} name={p.full_name} onSaved={() => setCalTick((t) => t + 1)} /></>}
           <div className="sec">This month</div>
-          {!d ? <Spin /> : <MonthCalendar d={d} />}</>
+          <PersonCalendar key={calTick} email={p.email} /></>
       ) : (<>
         <div className="sec">Today</div>
         {!d ? <Spin /> : (<>
@@ -354,9 +311,9 @@ export function PersonView({ p: p0, onBack, open, readOnly = false }: { p: Perso
           <AskReason d={d} first={first} punch={punch('out')} kind="early_out" show={!readOnly && !!punch('out')?.early_out} onAsked={reloadDetail} />
         </>)}
 
-        {!readOnly && <><div className="sec">Mark a day</div><MarkDay email={p.email} name={p.full_name} onSaved={reloadDetail} /></>}
+        {!readOnly && <><div className="sec">Mark a day</div><MarkDay email={p.email} name={p.full_name} onSaved={() => { reloadDetail(); setCalTick((t) => t + 1); }} /></>}
         <div className="sec">This month</div>
-        {!d ? <Spin /> : <MonthCalendar d={d} />}
+        <PersonCalendar key={calTick} email={p.email} />
 
         <div className="sec">OD</div>
         <div className="card">
@@ -430,6 +387,19 @@ function ReportsCard({ p, readOnly, onSaved }: { p: Person; readOnly: boolean; o
     setBusy(false);
   };
   const via = (r?: { route: string; name: string }) => (!r ? '…' : r.route === 'reporting' ? r.name : r.route === 'chairman' ? 'Chairman' : 'HR');
+  const LBL: Record<string, string> = { reporting: 'Reporting staff', hr: 'HR', chairman: 'Chairman' };
+  const setAppr = async (kind: 'leave' | 'od', v: string) => {
+    setBusy(true);
+    try { await hr.setStaffApprover(p.email, kind, v || null); toast(`${kind === 'leave' ? 'Leave' : 'OD'} → ${v ? LBL[v] : 'Approvals setting'}`); await loadRt(); }
+    catch { toast('Could not save. Try again.'); }
+    setBusy(false);
+  };
+  const pick = (kind: 'leave' | 'od') => {
+    const r = kind === 'leave' ? rt?.leave : rt?.od, def = kind === 'leave' ? rt?.default_leave : rt?.default_od;
+    return <div><label className="lab" htmlFor={`ap-${kind}`}>{kind === 'leave' ? 'Leave approved by' : 'OD approved by'}</label>
+      <select className="inp" id={`ap-${kind}`} disabled={busy || !rt} value={r?.set ?? ''} onChange={(e) => setAppr(kind, e.target.value)}>
+        <option value="">Default{def ? ` (${def === 'chairman' ? 'Chair' : LBL[def].replace(' staff', '')})` : ''}</option><option value="reporting">Reporting staff</option><option value="hr">HR</option><option value="chairman">Chairman</option></select></div>;
+  };
   return (<>
     <div className="sec">Reporting</div>
     <div className="card">
@@ -437,9 +407,10 @@ function ReportsCard({ p, readOnly, onSaved }: { p: Person; readOnly: boolean; o
         : <><label className="lab" htmlFor="rep-to" style={{ marginTop: 0 }}>Reports to</label>
           <select className="inp" id="rep-to" disabled={busy || !roster} value={cur ?? ''} onChange={(e) => save(e.target.value)}>
             <option value="">No one</option>{(roster ?? []).map((r) => <option key={r.email} value={r.email}>{r.full_name}{r.hub ? ` · ${r.hub}` : ''}{r.invited ? ' · not signed in' : ''}</option>)}</select></>}
+      {!readOnly && <div className="two">{pick('leave')}{pick('od')}</div>}
       <div className="meta" style={{ marginTop: 10 }}><span className="chip c-lv">Leave → {via(rt?.leave)}</span><span className="chip c-od">OD → {via(rt?.od)}</span></div>
+      {rt && (rt.leave.set === 'reporting' || rt.od.set === 'reporting' || rt.default_leave === 'reporting' || rt.default_od === 'reporting') && !cur && <p className="to" style={{ textAlign: 'left', margin: '8px 0 0' }}>No reporting person yet. Those requests go to HR (leave) / Chairman (OD).</p>}
       {cur && rt && !rt.reports_to_signed_in && <p className="to" style={{ textAlign: 'left', margin: '8px 0 0' }}>{name(cur)} hasn’t signed in yet. Requests go to HR / Chairman until then.</p>}
-      {cur && rt && rt.reports_to_signed_in && rt.leave.route !== 'reporting' && rt.od.route !== 'reporting' && <p className="to" style={{ textAlign: 'left', margin: '8px 0 0' }}>Set “Reporting staff” in Approvals to send requests to {name(cur)}.</p>}
     </div>
   </>);
 }
@@ -492,17 +463,19 @@ function EditStaff({ p, onClose, onSaved }: { p: Person; onClose: () => void; on
 
 function Approvals({ c, onChange }: { c: HrToday | null; onChange: () => void }) {
   const { toast } = useApp();
-  const [tab, setTab] = useState<'leave' | 'od' | 'done'>('leave');
+  const [tab, setTab] = useState<'leave' | 'od' | 'query' | 'done'>('leave');
+  const [queries, setQueries] = useState<MarkQuery[] | null>(null);
   const [leaves, setLeaves] = useState<LeaveReq[] | null>(null);
   const [ods, setOds] = useState<OdReq[] | null>(null);
   const [done, setDone] = useState<HistoryItem[] | null>(null);
-  const [open, setOpen] = useState<{ kind: 'od' | 'leave'; id: string; start?: 'ask' | 'return' | 'approve' } | null>(null);
+  const [open, setOpen] = useState<{ kind: 'od' | 'leave' | 'mark'; id: string; start?: 'ask' | 'return' | 'approve' } | null>(null);
   const [routes, setRoutes] = useState<Map<string, Route>>(new Map());
   const [lvAppr, setLvAppr] = useState<string>(c?.leave_approver ?? 'hr');
   useEffect(() => { if (c?.leave_approver) setLvAppr(c.leave_approver); }, [c?.leave_approver]);
   const load = useCallback(() => {
     hr.leaves().then(setLeaves).catch(() => setLeaves([])); hr.ods().then(setOds).catch(() => setOds([]));
     hr.history().then(setDone).catch(() => setDone([]));
+    hr.markQueries().then(setQueries).catch(() => setQueries([]));
     hr.routes().then((r) => setRoutes(new Map(r.map((x) => [x.id, x])))).catch(() => undefined);
   }, []);
   useEffect(() => { load(); }, [load]);
@@ -526,6 +499,7 @@ function Approvals({ c, onChange }: { c: HrToday | null; onChange: () => void })
       <div className="seg" role="group" aria-label="Type">
         <button className={tab === 'leave' ? 'on' : ''} onClick={() => setTab('leave')}>Leave {leaves?.length ?? ''}</button>
         <button className={tab === 'od' ? 'on' : ''} onClick={() => setTab('od')}>OD {ods?.length ?? ''}</button>
+        <button className={tab === 'query' ? 'on' : ''} onClick={() => setTab('query')}>Queries {queries?.filter((x) => x.status === 'pending').length || ''}</button>
         <button className={tab === 'done' ? 'on' : ''} onClick={() => setTab('done')}>Done</button>
       </div>
       {tab === 'leave' && <div className="card" style={{ padding: '10px 14px', marginTop: 12 }}>
@@ -555,6 +529,18 @@ function Approvals({ c, onChange }: { c: HrToday | null; onChange: () => void })
               </div>);
           })}
         </>)}
+        {tab === 'query' && (!queries ? <Spin /> : queries.length === 0 ? <div className="empty"><b>No queries</b>Staff can question a day you marked.</div> : queries.map((x) => (
+          <div className="req" key={x.id} style={{ marginBottom: 10 }}>
+            <div className="hd"><Av n={x.who} /><div className="t"><b>{x.who}</b><span>{x.hub ?? 'No hub'} hub</span></div><span className={`chip ${x.mark === 'absent' ? 'c-bad' : 'c-lv'}`}>{cap(x.mark)} · {fmtShortDay(new Date(x.day))}</span></div>
+            <p className="bd">{x.message}</p>
+            {x.status === 'pending' ? <div className="acts" style={{ gridTemplateColumns: 'repeat(3,minmax(0,1fr))' }}>
+              <button className="btn light" onClick={() => setOpen({ kind: 'mark', id: x.id, start: 'ask' })}><Icon n="help" />Ask</button>
+              <button className="btn light" onClick={() => setOpen({ kind: 'mark', id: x.id, start: 'return' })}>Keep</button>
+              <button className="btn dark" onClick={() => setOpen({ kind: 'mark', id: x.id, start: 'approve' })}><Icon n="check" />Correct</button></div>
+              : <div className="meta"><span className={`chip ${x.status === 'approved' ? 'c-ok' : 'c-bad'}`}>{x.status === 'approved' ? 'Corrected' : 'Kept'}</span></div>}
+            {x.clarify_at && x.status === 'pending' && <div className="meta"><span className="chip c-warn">Asked staff · waiting for reply</span></div>}
+            <button className="more" style={{ display: 'block', margin: '8px auto 0' }} onClick={() => setOpen({ kind: 'mark', id: x.id })}>Timeline</button>
+          </div>)))}
         {tab === 'done' && (!done ? <Spin /> : done.length === 0 ? <div className="empty"><b>Nothing yet</b>Decisions from the last 30 days appear here.</div> : <div className="card" style={{ padding: '4px 14px' }}>{done.map((h) => (
           <button key={h.id} className="lrow" style={{ width: '100%', textAlign: 'left' }} onClick={() => setOpen({ kind: h.kind, id: h.id })}><Av n={h.who} />
             <span className="t"><b>{h.who}</b><span>{h.title} · {h.by === 'reporting' ? 'Reporting staff' : h.by === 'chairman' ? 'Chairman' : 'HR'}</span></span>

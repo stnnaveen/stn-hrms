@@ -1,5 +1,5 @@
 // HR data layer. Real mode uses Supabase (RLS lets HR read everything); demo mode uses sample data.
-import { sb, DEMO, ApiError } from './api';
+import { sb, DEMO, ApiError, api, type MyMonth } from './api';
 
 export interface HrToday {
   staff: number; checked_in: number; late: number; od: number; leave: number;
@@ -24,7 +24,8 @@ export interface BoardRow {
   in_time: string | null; out_time: string | null; source: 'app' | 'bio' | 'both'; in_src: 'app' | 'bio' | null; out_src: 'app' | 'bio' | null;
   in_punch: string | null; bio_in: string | null; bio_out: string | null;
 }
-export interface RoutesFor { leave: { route: string; name: string }; od: { route: string; name: string }; reports_to: string | null; reports_to_name: string | null; reports_to_signed_in: boolean }
+export interface RoutesFor { leave: { route: string; name: string; set: string | null }; od: { route: string; name: string; set: string | null }; default_leave: string; default_od: string; reports_to: string | null; reports_to_name: string | null; reports_to_signed_in: boolean }
+export interface MarkQuery { id: string; who: string; hub: string | null; day: string; mark: 'absent' | 'leave'; message: string; status: string; clarify_at: string | null; created_at: string }
 export interface HistoryItem { kind: 'od' | 'leave'; id: string; who: string; hub: string | null; title: string; status: string; decided_at: string; by: string | null }
 export interface Holiday { day: string; name: string; kind: 'govt' | 'office' }
 export interface DayMark { email: string; day: string; mark: 'absent' | 'leave'; leave_type: string | null; note: string | null }
@@ -81,7 +82,8 @@ function selfieLink(key: string): Promise<string | null> {
 
 /** This month's holidays and HR marks for one person (calendar). */
 async function monthExtras(email: string): Promise<{ holidays: Holiday[]; marks: DayMark[] }> {
-  const ist = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10), from = ist.slice(0, 8) + '01', to = ist.slice(0, 8) + '31';
+  const n = new Date(Date.now() + 330 * 60000), from = n.toISOString().slice(0, 8) + '01';
+  const to = new Date(Date.UTC(n.getUTCFullYear(), n.getUTCMonth() + 1, 0)).toISOString().slice(0, 10);   // real month end (30 Nov, not 31)
   const [h, m] = await Promise.all([
     sb!.from('holidays').select('day, name, kind').gte('day', from).lte('day', to),
     sb!.from('day_marks').select('email, day, mark, leave_type, note').eq('email', email).gte('day', from).lte('day', to)
@@ -167,6 +169,17 @@ const real = {
     const act = new Map(((p.data ?? []) as { email: string; active: boolean }[]).map((x) => [x.email, x.active]));
     return ((must(r) as { email: string; full_name: string; hub_name: string | null; is_test: boolean }[])).filter((x) => !x.is_test && act.get(x.email) !== false)
       .map((x) => ({ email: x.email, full_name: x.full_name, hub: x.hub_name, invited: !act.has(x.email) }));
+  },
+  /** One person's month, exactly as the staff member sees it (same server function). */
+  async personMonth(email: string, month: string): Promise<MyMonth> { return must(await sb!.rpc('hr_person_month', { p_email: email, p_month: month })) as MyMonth; },
+  /** Leave and OD approver for one staff member (null = follow Approvals). */
+  async setStaffApprover(email: string, kind: 'leave' | 'od', value: string | null) { const { error } = await sb!.rpc('set_staff_approver', { p_email: email, p_kind: kind, p_value: value }); if (error) throw new ApiError(error.message); },
+  /** Open queries staff raised on HR marks (and the last 30 days' answered ones). */
+  async markQueries(): Promise<MarkQuery[]> {
+    const since = new Date(Date.now() - 30 * 864e5).toISOString();
+    const r = must(await sb!.from('mark_queries').select('id, day, mark, message, status, clarify_at, created_at, p:profiles!mark_queries_user_id_fkey(full_name, hub:hubs(name))')
+      .or(`status.eq.pending,decided_at.gte.${since}`).order('created_at', { ascending: false }).limit(100)) as unknown as (Omit<MarkQuery, 'who' | 'hub'> & { p: { full_name: string; hub: { name: string } | null } })[];
+    return r.map((x) => ({ ...x, who: x.p.full_name, hub: x.p.hub?.name ?? null }));
   },
   /** Where this person's leave and OD go now (approver settings + reporting person). */
   async routesFor(email: string): Promise<RoutesFor> { return must(await sb!.rpc('routes_for', { p_email: email })) as RoutesFor; },
@@ -326,7 +339,10 @@ const demo: typeof real = {
   async setApprover() { await wait(); },
   async routes() { await wait(); return []; },
   async rosterLite() { await wait(); return D.people.map((x) => ({ email: x.email, full_name: x.full_name, hub: x.hub, invited: !!x.invited })); },
-  async routesFor() { await wait(); return { leave: { route: 'hr', name: 'HR' }, od: { route: 'chairman', name: 'Chairman' }, reports_to: null, reports_to_name: null, reports_to_signed_in: false }; },
+  async personMonth(_e: string, month: string) { return api.myMonth(month); },
+  async setStaffApprover() { await wait(); },
+  async markQueries() { await wait(); return []; },
+  async routesFor() { await wait(); return { leave: { route: 'hr', name: 'HR', set: null }, od: { route: 'chairman', name: 'Chairman', set: null }, default_leave: 'hr', default_od: 'chairman', reports_to: null, reports_to_name: null, reports_to_signed_in: false }; },
   async personDetail(uid) {
     await wait();
     const p = D.people.find((x) => x.id === uid);

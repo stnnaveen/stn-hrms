@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useApp } from '../../App';
 import { ApiError } from '../../lib/api';
 import { chair, istMin, isRed, type Slot, type LeaveItem, type OdItem, type Snapshot, type Staff } from '../../lib/chair';
-import { hr, FLAG_LABEL, type Flag, type PersonDetail, type Person, type Route } from '../../lib/hr';
+import { hr, FLAG_LABEL, type Flag, type PersonDetail, type Person, type Route, type MarkQuery } from '../../lib/hr';
 import { placeLabel, googleMapsUrl, appleMapsUrl, fmtDistance } from '../../lib/geo';
 import { fmtDay, fmtShortDay, fmtTime, greeting, outChip } from '../../lib/time';
 import { Icon, Logo } from '../../ui/Icon';
@@ -23,7 +23,7 @@ type Tab = 'home' | 'people' | 'approvals';
 type ListKind = 'red' | 'in' | 'late' | 'notin' | 'out' | 'od' | 'lv' | 'early' | 'last';
 type Sub = { name: 'list'; kind: ListKind } | { name: 'hub'; hub: string } | { name: 'alerts' } | { name: 'alert'; f: Flag } | { name: 'notifs' } | { name: 'person'; p: Person };
 type Sheet = null | { t: 'od'; o: OdItem } | { t: 'ret'; o: OdItem } | { t: 'person'; s: Staff } | { t: 'account' }
-  | { t: 'tl'; kind: 'od' | 'leave'; id: string; start?: 'ask' | 'return' | 'approve' };
+  | { t: 'tl'; kind: 'od' | 'leave' | 'mark'; id: string; start?: 'ask' | 'return' | 'approve' };
 const BY: Record<string, string> = { chairman: 'You', hr: 'HR' };
 
 const TINTS = ['#3B4A6B', '#5B4AA8', '#2F62D9', '#1F7A55', '#9C3F5A', '#7A5A2E', '#4E5464'];
@@ -91,7 +91,7 @@ export function ChairApp() {
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [ods, setOds] = useState<{ pending: OdItem[]; decided: OdItem[] } | null>(null);
   const [sheet, setSheet] = useState<Sheet>(null);
-  const [aseg, setAseg] = useState<'od' | 'lv' | 'done'>('od');
+  const [aseg, setAseg] = useState<'od' | 'lv' | 'q' | 'done'>('od');
   const [intro, setIntro] = useState(() => firstViewToday('chair-intro'));
 
   const load = useCallback(() => {
@@ -233,7 +233,7 @@ function trendSVG(v: { day: string; pct: number }[]) {
 function Home({ snap, view, hub, setHub, ods, odWith, open, setSheet, setAway, goApprovals }: {
   odWith: Map<string, string>;
   snap: Snapshot | null; view: Staff[]; hub: string; setHub: (h: string) => void; ods: { pending: OdItem[]; decided: OdItem[] } | null;
-  open: (s: Sub) => void; setSheet: (s: Sheet) => void; setAway: (a: boolean) => void; goApprovals: (seg: 'od' | 'lv' | 'done') => void;
+  open: (s: Sub) => void; setSheet: (s: Sheet) => void; setAway: (a: boolean) => void; goApprovals: (seg: 'od' | 'lv' | 'q' | 'done') => void;
 }) {
   if (!snap) return <div className="scr"><Spin /></div>;
   const evening = istMin(new Date().toISOString()) >= 1080;
@@ -387,14 +387,16 @@ function HubView({ hub, staff, onBack, onPerson }: { hub: string; staff: Staff[]
 }
 
 // ---------------- approvals ----------------
-function Approvals({ seg, setSeg, ods, away, setAway, setSheet }: { seg: 'od' | 'lv' | 'done'; setSeg: (s: 'od' | 'lv' | 'done') => void; ods: { pending: OdItem[]; decided: OdItem[] } | null; away: boolean; setAway: (a: boolean) => void; setSheet: (s: Sheet) => void }) {
+function Approvals({ seg, setSeg, ods, away, setAway, setSheet }: { seg: 'od' | 'lv' | 'q' | 'done'; setSeg: (s: 'od' | 'lv' | 'q' | 'done') => void; ods: { pending: OdItem[]; decided: OdItem[] } | null; away: boolean; setAway: (a: boolean) => void; setSheet: (s: Sheet) => void }) {
   const { toast } = useApp();
   const [leaves, setLeaves] = useState<LeaveItem[] | null>(null);
+  const [queries, setQueries] = useState<MarkQuery[] | null>(null);
   const [routes, setRoutes] = useState<Map<string, Route>>(new Map());
   const [odAppr, setOdAppr] = useState<string>('chairman');
   const [lvAppr, setLvAppr] = useState<string>('hr');
   const loadAll = () => {
     chair.leaves().then(setLeaves).catch(() => setLeaves([]));
+    hr.markQueries().then(setQueries).catch(() => setQueries([]));
     hr.routes().then((r) => setRoutes(new Map(r.map((x) => [x.id, x])))).catch(() => undefined);
     hr.today().then((c) => { if (c.od_approver) setOdAppr(c.od_approver); if (c.leave_approver) setLvAppr(c.leave_approver); }).catch(() => undefined);
   };
@@ -414,6 +416,7 @@ function Approvals({ seg, setSeg, ods, away, setAway, setSheet }: { seg: 'od' | 
       <div className="seg" role="group" aria-label="Type" style={{ marginBottom: 16 }}>
         <button className={seg === 'od' ? 'on' : ''} onClick={() => setSeg('od')}>OD · {ods?.pending.length ?? 0}</button>
         <button className={seg === 'lv' ? 'on' : ''} onClick={() => setSeg('lv')}>Leave · {leaves?.filter((l) => l.status === 'pending').length ?? 0}</button>
+        <button className={seg === 'q' ? 'on' : ''} onClick={() => setSeg('q')}>Queries</button>
         <button className={seg === 'done' ? 'on' : ''} onClick={() => setSeg('done')}>Approved</button>
       </div>
       {seg === 'od' && (<>
@@ -441,6 +444,15 @@ function Approvals({ seg, setSeg, ods, away, setAway, setSheet }: { seg: 'od' | 
                 <button className="btn dark" onClick={() => setSheet({ t: 'tl', kind: 'leave', id: l.id, start: 'approve' })}><Icon n="check" />Approve</button></div>)}
             <button className="more" style={{ display: 'block', margin: '8px auto 0' }} onClick={() => setSheet({ t: 'tl', kind: 'leave', id: l.id })}>Timeline</button>
           </div>))}
+      </>)}
+      {seg === 'q' && (<>
+        <div className="note-hr"><Icon n="eye" size={16} />Staff questions on days HR marked. HR answers. View only.</div>
+        {!queries ? <Spin /> : queries.length === 0 ? <div className="empty"><b>No queries</b>Nothing in the last 30 days.</div> : queries.map((x) => (
+          <button key={x.id} className="req" style={{ width: '100%', textAlign: 'left', display: 'block', marginBottom: 10 }} onClick={() => setSheet({ t: 'tl', kind: 'mark', id: x.id })}>
+            <span className="hd"><Av n={x.who} /><span className="t"><b>{x.who}</b><span>{x.hub ?? 'No hub'} hub</span></span><span className={`chip ${x.mark === 'absent' ? 'c-bad' : 'c-lv'}`}>{cap(x.mark)} · {fmtShortDay(new Date(x.day))}</span></span>
+            <span className="bd" style={{ display: 'block' }}>{x.message}</span>
+            <span className="meta" style={{ display: 'flex' }}><span className={`chip ${x.status === 'pending' ? 'c-warn' : x.status === 'approved' ? 'c-ok' : 'c-bad'}`}>{x.status === 'pending' ? (x.clarify_at ? 'HR asked staff' : 'With HR') : x.status === 'approved' ? 'Corrected' : 'Kept'}</span></span>
+          </button>))}
       </>)}
       {seg === 'done' && (<>
         <div className="card"><div className="ft" style={{ gridTemplateColumns: 'repeat(3,minmax(0,1fr))' }}>

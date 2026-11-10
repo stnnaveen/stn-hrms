@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useApp } from '../App';
-import { api, ApiError, type Timeline } from '../lib/api';
+import { api, ApiError, type ReqKind, type Timeline } from '../lib/api';
 import { fmtShortDay, fmtTime } from '../lib/time';
 import { Icon } from './Icon';
 
@@ -11,11 +11,13 @@ const STEP: Record<string, [string, string, string]> = {   // label, icon, tint
   reply: ['Replied', 'chat', 'c-od'], approved: ['Approved', 'check', 'c-ok'], returned: ['Returned', 'x', 'c-bad'],
   cancelled: ['Cancelled', 'x', 'c-pend'], pending: ['Reopened', 'clock', 'c-pend']
 };
+// a query on an HR mark: approve = correct the mark (removed), return = keep it
+const MARK_STEP: Record<string, [string, string, string]> = { created: ['Query raised', 'help', 'c-warn'], approved: ['Corrected', 'check', 'c-ok'], returned: ['Kept', 'x', 'c-bad'] };
 const when = (iso: string) => `${fmtShortDay(new Date(iso))} · ${fmtTime(iso)}`;
 
 /** One leave or OD with its whole timeline. The approver (reporting person, HR or Chairman) can approve,
  *  return or ask; the staff member answers a question. HR and Chairman always see every step. */
-export function RequestSheet({ kind, id, onClose, onChanged, start }: { kind: 'od' | 'leave'; id: string; onClose: () => void; onChanged?: () => void; start?: 'ask' | 'return' | 'approve' }) {
+export function RequestSheet({ kind, id, onClose, onChanged, start }: { kind: ReqKind; id: string; onClose: () => void; onChanged?: () => void; start?: 'ask' | 'return' | 'approve' }) {
   const { toast } = useApp();
   const [t, setT] = useState<Timeline | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -33,21 +35,22 @@ export function RequestSheet({ kind, id, onClose, onChanged, start }: { kind: 'o
     try {
       if (mode === 'ask') { await api.ask(kind, id, v); toast('Question sent'); }
       else if (mode === 'reply') { await api.reply(kind, id, v); toast('Reply sent'); }
-      else if (mode === 'return') { await api.decide(kind, id, 'returned', v); toast('Returned · staff notified'); }
-      else if (mode === 'approve') { await api.decide(kind, id, 'approved', v || undefined); toast('Approved · staff notified'); }
+      else if (mode === 'return') { await api.decide(kind, id, 'returned', v); toast(kind === 'mark' ? 'Kept · staff notified' : 'Returned · staff notified'); }
+      else if (mode === 'approve') { await api.decide(kind, id, 'approved', v || undefined); toast(kind === 'mark' ? 'Corrected · mark removed' : 'Approved · staff notified'); }
       setMode(null); setText(''); onChanged?.(); await load();
     } catch (e) { toast(e instanceof ApiError && e.code === 'not_allowed' ? 'This one is with another approver.' : 'Could not send. Try again.'); }
     setBusy(false);
   };
 
-  const status = !t ? null : t.status !== 'pending' ? t.status : t.clarify ? (t.mine ? 'Reply needed' : 'Asked staff') : t.can_decide ? 'Waiting for you' : `With ${t.with ?? 'approver'}`;
+  const status = !t ? null : t.status !== 'pending' ? (t.kind === 'mark' ? (t.status === 'approved' ? 'Corrected' : t.status === 'returned' ? 'Kept' : t.status) : t.status) : t.clarify ? (t.mine ? 'Reply needed' : 'Asked staff') : t.can_decide ? 'Waiting for you' : `With ${t.with ?? 'approver'}`;
   const stCls = !t ? '' : t.status === 'approved' ? 'c-ok' : t.status === 'returned' ? 'c-bad' : t.clarify ? 'c-warn' : 'c-pend';
   const dates = !t ? '' : t.kind === 'od' && t.starts_at
     ? `${fmtShortDay(new Date(t.starts_at))} · ${fmtTime(t.starts_at)} to ${fmtTime(t.ends_at)}`
     : t.from ? (t.from === t.to ? fmtShortDay(new Date(t.from)) : `${fmtShortDay(new Date(t.from))} to ${fmtShortDay(new Date(t.to!))}`) + (t.half_day ? ` · ${t.half_day} half` : '') : '';
   const need = mode === 'ask' || mode === 'return' || mode === 'reply';
-  const ph = mode === 'ask' ? 'Your question' : mode === 'return' ? 'Reason to return' : mode === 'reply' ? 'Your answer' : 'Comment (optional)';
-  const go = mode === 'ask' ? 'Ask' : mode === 'return' ? 'Return' : mode === 'reply' ? 'Send' : 'Approve';
+  const ph = mode === 'ask' ? 'Your question' : mode === 'return' ? (kind === 'mark' ? 'Why the mark stays' : 'Reason to return') : mode === 'reply' ? 'Your answer' : 'Comment (optional)';
+  const M = kind === 'mark';
+  const go = mode === 'ask' ? 'Ask' : mode === 'return' ? (M ? 'Keep' : 'Return') : mode === 'reply' ? 'Send' : (M ? 'Correct' : 'Approve');
 
   return createPortal(<>
     <div className="scrim" onClick={onClose} />
@@ -55,7 +58,7 @@ export function RequestSheet({ kind, id, onClose, onChanged, start }: { kind: 'o
       <div className="scrollable">
         {!t ? (err ? <p>{err}</p> : <div className="center" style={{ height: 160 }}><span className="spin dark" /></div>) : <>
           <div className="row" style={{ padding: 0 }}>
-            <div className={`ri ${t.kind === 'od' ? 'c-od' : 'c-lv'}`}><Icon n={t.kind === 'od' ? 'brief' : 'leaf'} /></div>
+            <div className={`ri ${t.kind === 'od' ? 'c-od' : t.kind === 'mark' ? 'c-warn' : 'c-lv'}`}><Icon n={t.kind === 'od' ? 'brief' : t.kind === 'mark' ? 'help' : 'leaf'} /></div>
             <div className="t"><b style={{ fontSize: 18 }}>{t.title}</b><span>{t.mine ? dates : `${t.who}${t.hub ? ` · ${t.hub}` : ''}`}</span></div>
             <span className={`chip ${stCls}`}>{status && status[0].toUpperCase() + status.slice(1)}</span>
           </div>
@@ -64,7 +67,7 @@ export function RequestSheet({ kind, id, onClose, onChanged, start }: { kind: 'o
 
           <div className="sec">Timeline</div>
           <ol className="tline2">{t.events.map((e, i) => {
-            const [label, icon, tint] = STEP[e.action] ?? [e.action, 'clock', 'c-pend'];
+            const [label, icon, tint] = (M ? MARK_STEP[e.action] : undefined) ?? STEP[e.action] ?? [e.action, 'clock', 'c-pend'];
             return <li key={i}><span className={`ri ${tint}`}><Icon n={icon} size={16} /></span>
               <div><b>{label}</b> · {e.who} <span className="rl">{ROLE[e.role] ?? e.role}</span>
                 <small>{when(e.at)}{e.action === 'created' && e.with ? ` · to ${e.with}` : ''}</small>
@@ -80,8 +83,8 @@ export function RequestSheet({ kind, id, onClose, onChanged, start }: { kind: 'o
           {!mode && t.can_decide && t.status === 'pending' && (
             <div className="acts" style={{ gridTemplateColumns: 'repeat(3,minmax(0,1fr))' }}>
               <button className="btn light" onClick={() => setMode('ask')}><Icon n="help" />Ask</button>
-              <button className="btn light" onClick={() => setMode('return')}>Return</button>
-              <button className="btn dark" onClick={() => setMode('approve')}><Icon n="check" />Approve</button>
+              <button className="btn light" onClick={() => setMode('return')}>{M ? 'Keep' : 'Return'}</button>
+              <button className="btn dark" onClick={() => setMode('approve')}><Icon n="check" />{M ? 'Correct' : 'Approve'}</button>
             </div>)}
         </>}
       </div>

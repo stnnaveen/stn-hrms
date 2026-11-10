@@ -91,5 +91,14 @@ for (const [f, b] of [['request_timeline', { p_kind: 'leave', p_id: '00000000-00
   const [a] = await rpc(anonH, f, b); const [c] = await rpc(st, f, b); out(a >= 400 && c >= 400, `${f} refused signed out and for staff on others' requests (${a}, ${c})`);
 }
 { const r = await fetch(`${SUPA_URL}/rest/v1/request_events`, { method: 'POST', headers: st, body: JSON.stringify({ kind: 'leave', request_id: '00000000-0000-0000-0000-000000000000', action: 'approved' }) }); out(r.status >= 400, `staff cannot write a timeline step (${r.status})`); }
+// ---- 10 Nov: per-staff approvers, one calendar, queries on HR marks
+{ const [a] = await sel(anonH, 'mark_queries'); const [c, j] = await sel(st, 'mark_queries'); const others = Array.isArray(j) ? j.filter((x) => x.user_id !== me).length : 0; out(a >= 400 && (c >= 400 || others === 0), `mark_queries: only own rows (${a}, ${c}, others ${others})`); }
+for (const [f, b] of [['set_staff_approver', { p_email: 'naveenflop+staff@gmail.com', p_kind: 'leave', p_value: 'hr' }], ['hr_person_month', { p_email: 'x@y.z', p_month: '2026-11-01' }], ['person_month', { p_email: 'x@y.z', p_month: '2026-11-01' }],
+  ['decide_mark_query', { p_id: '00000000-0000-0000-0000-000000000000', p_decision: 'approved', p_comment: null }], ['request_route_email', { p_kind: 'leave', p_email: 'x@y.z' }]]) {
+  const [a] = await rpc(anonH, f, b); const [c] = await rpc(st, f, b); out(a >= 400 && c >= 400, `${f} refused signed out and for staff (${a}, ${c})`);
+}
+{ const [c, t] = await rpc(st, 'my_month', { p_month: '2026-11-01' }); out(c === 200 && /"queries"/.test(t) && !/radius|distance|inside|flag|face/i.test(t), `staff: own calendar has queries, no check details (${c})`); }
+{ const [c] = await rpc(st, 'raise_mark_query', { p_day: '2020-01-01', p_message: 'test' }); out(c >= 400, `staff: no query on an unmarked day (${c})`); }
+{ const r = await fetch(`${SUPA_URL}/rest/v1/mark_queries`, { method: 'POST', headers: st, body: JSON.stringify({ email: 'x@y.z', user_id: me, day: '2026-11-01', mark: 'absent', message: 'x' }) }); out(r.status >= 400, `staff cannot write a query directly (${r.status})`); }
 console.log(`SEC done: ${fails} failed`);
 process.exit(fails ? 1 : 0);
