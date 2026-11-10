@@ -2,11 +2,13 @@ import { useEffect, useState } from 'react';
 import { useApp } from '../App';
 import { api, type Notif } from '../lib/api';
 import { HelpButton } from '../ui/Help';
+import { RequestSheet } from '../ui/RequestSheet';
 import { Icon } from '../ui/Icon';
 
 const KIND: Record<string, [string, string]> = {
   od_approved: ['c-ok', 'check'], od_returned: ['c-bad', 'x'], leave_approved: ['c-ok', 'check'], leave_returned: ['c-bad', 'x'],
-  leave_assigned: ['c-lv', 'leaf'], reason_asked: ['c-warn', 'alert'], od_new: ['c-od', 'brief'], leave_new: ['c-lv', 'leaf'], device_new: ['c-pend', 'shield']
+  leave_assigned: ['c-lv', 'leaf'], reason_asked: ['c-warn', 'alert'], od_new: ['c-od', 'brief'], leave_new: ['c-lv', 'leaf'], device_new: ['c-pend', 'shield'],
+  clarify_asked: ['c-warn', 'help'], clarify_reply: ['c-od', 'chat']
 };
 
 function ago(iso: string) {
@@ -20,6 +22,7 @@ export function Notifications({ onBackOverride }: { onBackOverride?: () => void 
   const [reasonFor, setReasonFor] = useState<Notif | null>(null);
   const [reason, setReason] = useState('');
   const [answered, setAnswered] = useState<string[]>([]);
+  const [req, setReq] = useState<{ kind: 'od' | 'leave'; id: string } | null>(null);
   useEffect(() => { api.notifications().then(setList); }, []);
 
   const send = async () => {
@@ -40,15 +43,19 @@ export function Notifications({ onBackOverride }: { onBackOverride?: () => void 
       {list?.map((n) => {
         const [c, i] = KIND[n.kind] ?? ['c-pend', 'bell'];
         const ask = n.kind === 'reason_asked' && n.data?.flag_id && !answered.includes(n.id);
+        // leave / OD notifications open the request with its timeline (a question can be answered there)
+        const rq = n.data?.od_id ? { kind: 'od' as const, id: n.data.od_id } : n.data?.leave_id ? { kind: 'leave' as const, id: n.data.leave_id } : null;
+        const tap = ask ? () => setReasonFor(n) : rq ? () => setReq(rq) : undefined;
         return (
-          <div className={`nt ${n.read_at ? '' : 'unread'}`} key={n.id} role={ask ? 'button' : undefined} onClick={ask ? () => setReasonFor(n) : undefined} style={ask ? { cursor: 'pointer' } : undefined}>
+          <div className={`nt ${n.read_at ? '' : 'unread'}`} key={n.id} role={tap ? 'button' : undefined} onClick={tap} style={tap ? { cursor: 'pointer' } : undefined}>
             <div className={`ri ${c}`}><Icon n={i} /></div>
-            <div className="t"><b>{n.title}</b>{n.body && <span>{n.body}</span>}{ask && <span style={{ color: 'var(--ph-ink)', fontWeight: 600 }}>Tap to reply</span>}</div>
+            <div className="t"><b>{n.title}</b>{n.body && <span>{n.body}</span>}{(ask || n.kind === 'clarify_asked') && <span style={{ color: 'var(--ph-ink)', fontWeight: 600 }}>Tap to reply</span>}</div>
             <time>{ago(n.created_at)}</time>
           </div>
         );
       })}
     </div>
+      {req && <RequestSheet kind={req.kind} id={req.id} onClose={() => setReq(null)} />}
       {!onBackOverride && <div style={{ position: 'absolute', right: 20, bottom: 'calc(env(safe-area-inset-bottom,0px) + 24px)', zIndex: 5 }}><HelpButton /></div>}
       {reasonFor && (<>
         <div className="scrim" onClick={() => setReasonFor(null)} />

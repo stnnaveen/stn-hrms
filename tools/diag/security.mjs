@@ -84,5 +84,12 @@ for (const [f, b] of [['hr_board', { p_from: '2026-11-01', p_to: '2026-11-02' }]
   const [c2, full] = await fetch(`${SUPA_URL}/rest/v1/rpc/my_today`, { method: 'POST', headers: st, body: '{}' }).then(async (r) => [r.status, await r.text()]);
   void c; void j; out(c2 === 200 && /"checkin"/.test(full) && !/radius|distance|inside|flag|face_sim/i.test(full), `staff: my_today has the method and help, no check details (${c2})`); }
 { const [c] = await rpc(st, 'set_setting', { p_key: 'help_contact', p_value: { email: 'evil@x.com', whatsapp: '', phone: '' } }); out(c >= 400, `staff: cannot change the help contact (${c})`); }
+// ---- 10 Nov: approvals timeline and clarity
+{ const [a] = await sel(anonH, 'request_events'); const [c, j] = await sel(st, 'request_events'); out(a >= 400 && (c >= 400 || (Array.isArray(j) && j.length === 0)), `request_events unreadable directly (${a}, ${c})`); }
+for (const [f, b] of [['request_timeline', { p_kind: 'leave', p_id: '00000000-0000-0000-0000-000000000000' }], ['ask_clarity', { p_kind: 'leave', p_id: '00000000-0000-0000-0000-000000000000', p_question: 'test?' }],
+  ['reply_clarity', { p_kind: 'leave', p_id: '00000000-0000-0000-0000-000000000000', p_reply: 'x' }], ['routes_for', { p_email: 'x@y.z' }], ['log_request_event', { p_kind: 'leave', p_id: '00000000-0000-0000-0000-000000000000', p_action: 'approved', p_comment: null }]]) {
+  const [a] = await rpc(anonH, f, b); const [c] = await rpc(st, f, b); out(a >= 400 && c >= 400, `${f} refused signed out and for staff on others' requests (${a}, ${c})`);
+}
+{ const r = await fetch(`${SUPA_URL}/rest/v1/request_events`, { method: 'POST', headers: st, body: JSON.stringify({ kind: 'leave', request_id: '00000000-0000-0000-0000-000000000000', action: 'approved' }) }); out(r.status >= 400, `staff cannot write a timeline step (${r.status})`); }
 console.log(`SEC done: ${fails} failed`);
 process.exit(fails ? 1 : 0);

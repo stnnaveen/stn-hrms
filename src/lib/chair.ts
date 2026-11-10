@@ -25,7 +25,7 @@ export interface OdItem {
   decided_role: string | null; decided_at: string | null; return_reason: string | null;
 }
 export interface Slot { id: string; starts_at: string; ends_at: string; place: string | null; note: string | null }
-export interface LeaveItem { id: string; who: string; hub: string; leave_type: string; starts_on: string; ends_on: string; reason: string | null; status: string; assigned_by_hr: boolean }
+export interface LeaveItem { id: string; who: string; hub: string; leave_type: string; starts_on: string; ends_on: string; reason: string | null; status: string; assigned_by_hr: boolean; clarify_at?: string | null }
 
 const istToday = () => new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
 const istMin = (iso: string) => { const d = new Date(iso); return (d.getUTCHours() * 60 + d.getUTCMinutes() + 330) % 1440; };
@@ -99,7 +99,7 @@ const real = {
   },
   async leaves(): Promise<LeaveItem[]> {
     const since = new Date(Date.now() - 30 * 864e5).toISOString();
-    const r = must(await sb!.from('leave_requests').select('id, leave_type, starts_on, ends_on, reason, status, assigned_by_hr, created_at, p:profiles!leave_requests_user_id_fkey(full_name, hub:hubs(name))')
+    const r = must(await sb!.from('leave_requests').select('id, leave_type, starts_on, ends_on, reason, status, assigned_by_hr, clarify_at, created_at, p:profiles!leave_requests_user_id_fkey(full_name, hub:hubs(name))')
       .gte('created_at', since).order('created_at', { ascending: false }).limit(60)) as unknown as (Omit<LeaveItem, 'who' | 'hub'> & { p: P })[];
     return r.map((x) => ({ ...x, who: x.p.full_name, hub: x.p.hub?.name ?? 'No hub' }));
   },

@@ -2,7 +2,7 @@ import { DiwaliBanner, SkyCrackers } from '../../ui/Festive';
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { useApp } from '../../App';
 import { api, errorText, ApiError } from '../../lib/api';
-import { hr, FLAG_LABEL, type Flag, type HrToday, type Hub, type LeaveReq, type OdReq, type Person, type PersonDetail, type Pin, type DayPunch, type Route, type Holiday } from '../../lib/hr';
+import { hr, type HistoryItem, type RoutesFor, FLAG_LABEL, type Flag, type HrToday, type Hub, type LeaveReq, type OdReq, type Person, type PersonDetail, type Pin, type DayPunch, type Route, type Holiday } from '../../lib/hr';
 import { placeLabel, googleMapsUrl, appleMapsUrl, fmtDistance } from '../../lib/geo';
 import { fmtShortDay, fmtTime, greeting, outChip } from '../../lib/time';
 const MapView = lazy(() => import('../../ui/MapView'));
@@ -17,6 +17,7 @@ import { BioPunches } from '../../ui/BioPunches';
 import { Fingerprint } from './Fingerprint';
 import { Holidays } from './Holidays';
 import { MarkDay } from './MarkDay';
+import { RequestSheet } from '../../ui/RequestSheet';
 import { RefreshButton } from '../../ui/RefreshButton';
 
 type Tab = 'home' | 'staff' | 'approvals' | 'disputes';
@@ -268,7 +269,8 @@ function MonthCalendar({ d }: { d: PersonDetail }) {
         {Array.from({ length: first }, (_, i) => <button key={`b${i}`} className="blank" aria-hidden="true" />)}
         {Array.from({ length: len }, (_, i) => i + 1).map((n) => {
           const st = state(n), wd = new Date(Date.UTC(y, m, n)).getUTCDay();
-          return <button key={n} className={`${n === today ? 'today' : ''} ${wd === 0 || wd === 6 ? 'off' : ''}`} aria-label={`${n}${st ? `, ${st}` : ''}`} tabIndex={-1}>
+          const h = hol.get(key(n));
+          return <button key={n} className={`${n === today ? 'today' : ''} ${wd === 0 || wd === 6 ? 'off' : ''} ${h ? (h.kind === 'office' ? 'hoff' : 'hol') : ''}`} aria-label={`${n}${st ? `, ${st}` : ''}${h ? `, ${h.name}` : ''}`} tabIndex={-1}>
             {n}{st ? <i style={{ background: DOT[st] }} /> : <i style={{ background: 'transparent' }} />}</button>;
         })}
       </div>
@@ -277,7 +279,8 @@ function MonthCalendar({ d }: { d: PersonDetail }) {
         <span><i style={{ background: DOT.bad }} />Late {counts.bad}</span><span><i style={{ background: DOT.od }} />OD {counts.od}</span>
         <span><i style={{ background: DOT.leave }} />Leave {counts.leave}</span><span><i style={{ background: DOT.absent }} />No check-in {counts.absent}</span>
         {counts.marked > 0 && <span><i style={{ background: DOT.marked }} />Absent (HR) {counts.marked}</span>}
-        {counts.holiday > 0 && <span><i style={{ background: DOT.holiday }} />Holiday {counts.holiday}</span>}
+        {(d.holidays ?? []).some((h) => h.kind !== 'office') && <span><i className="sq" style={{ background: '#ECEBFB', boxShadow: 'inset 0 0 0 1px #4B46B0' }} />Holiday</span>}
+        {(d.holidays ?? []).some((h) => h.kind === 'office') && <span><i className="sq" style={{ background: '#FFF0E3', boxShadow: 'inset 0 0 0 1px #9A4B12' }} />Office leave</span>}
       </div>
     </div>
   );
@@ -327,6 +330,7 @@ export function PersonView({ p: p0, onBack, open, readOnly = false }: { p: Perso
       <div className="pcard"><span className="av" style={{ background: tint(p.full_name), display: 'grid', placeItems: 'center', color: '#fff' }}>{ini(p.full_name)}</span><h2>{p.full_name}</h2><p>{p.designation ?? cap(p.role)} · {p.hub ?? 'No hub'} hub</p>
         <div className="meta">{p.invited ? <span className="chip c-warn">Invited · not signed in</span> : <>{dayChip(p)}<span className="chip c-mute">Face {p.face_status}</span></>}{!active && <span className="chip c-pend">Inactive</span>}</div></div>
 
+      <ReportsCard p={p} readOnly={readOnly} onSaved={(e) => setP((x) => ({ ...x, reports_to: e }))} />
       {p.invited ? (
         <><div className="note-hr" style={{ marginTop: 16 }}><Icon n="mail" size={16} />Signs in with a code sent to {p.email}. Status turns active after first sign-in.</div>
           <BioPunches email={p.email} />
@@ -406,6 +410,40 @@ export function PersonView({ p: p0, onBack, open, readOnly = false }: { p: Perso
   );
 }
 
+// Profile: who this person reports to, and where their leave and OD go right now
+function ReportsCard({ p, readOnly, onSaved }: { p: Person; readOnly: boolean; onSaved: (email: string | null) => void }) {
+  const { toast } = useApp();
+  const [roster, setRoster] = useState<{ email: string; full_name: string; hub: string | null; invited: boolean }[] | null>(null);
+  const [rt, setRt] = useState<RoutesFor | null>(null);
+  const [busy, setBusy] = useState(false);
+  const loadRt = () => hr.routesFor(p.email).then(setRt).catch(() => setRt(null));
+  useEffect(() => {
+    loadRt();
+    if (!readOnly) hr.rosterLite().then((ps) => setRoster(ps.filter((x) => x.email !== p.email))).catch(() => setRoster([]));
+  }, [p.email]); // eslint-disable-line react-hooks/exhaustive-deps
+  const cur = rt ? rt.reports_to : p.reports_to ?? null;
+  const name = (e: string | null | undefined) => (e ? roster?.find((r) => r.email === e)?.full_name ?? (e === rt?.reports_to ? rt?.reports_to_name : null) ?? e : null);
+  const save = async (v: string) => {
+    setBusy(true);
+    try { await hr.setReportsTo(p.email, v || null); onSaved(v || null); toast(v ? `Reports to ${name(v)}` : 'Reporting person removed'); await loadRt(); }
+    catch (e) { toast(e instanceof ApiError && /loop|themselves|staff list/.test(e.code) ? cap(e.code) + '.' : 'Could not save. Try again.'); }
+    setBusy(false);
+  };
+  const via = (r?: { route: string; name: string }) => (!r ? '…' : r.route === 'reporting' ? r.name : r.route === 'chairman' ? 'Chairman' : 'HR');
+  return (<>
+    <div className="sec">Reporting</div>
+    <div className="card">
+      {readOnly ? <div className="row" style={{ padding: 0 }}><div className="ri c-pend"><Icon n="users" /></div><div className="t"><b>{rt ? rt.reports_to_name ?? 'No one' : '…'}</b><span>Reports to</span></div></div>
+        : <><label className="lab" htmlFor="rep-to" style={{ marginTop: 0 }}>Reports to</label>
+          <select className="inp" id="rep-to" disabled={busy || !roster} value={cur ?? ''} onChange={(e) => save(e.target.value)}>
+            <option value="">No one</option>{(roster ?? []).map((r) => <option key={r.email} value={r.email}>{r.full_name}{r.hub ? ` · ${r.hub}` : ''}{r.invited ? ' · not signed in' : ''}</option>)}</select></>}
+      <div className="meta" style={{ marginTop: 10 }}><span className="chip c-lv">Leave → {via(rt?.leave)}</span><span className="chip c-od">OD → {via(rt?.od)}</span></div>
+      {cur && rt && !rt.reports_to_signed_in && <p className="to" style={{ textAlign: 'left', margin: '8px 0 0' }}>{name(cur)} hasn’t signed in yet. Requests go to HR / Chairman until then.</p>}
+      {cur && rt && rt.reports_to_signed_in && rt.leave.route !== 'reporting' && rt.od.route !== 'reporting' && <p className="to" style={{ textAlign: 'left', margin: '8px 0 0' }}>Set “Reporting staff” in Approvals to send requests to {name(cur)}.</p>}
+    </div>
+  </>);
+}
+
 // HR moves a person to another hub or fixes their details (roster -> profile by trigger; a hub move notifies the person)
 function EditStaff({ p, onClose, onSaved }: { p: Person; onClose: () => void; onSaved: (p: Person, moved: boolean) => void }) {
   const [hubs, setHubs] = useState<Hub[] | null>(null);
@@ -451,31 +489,20 @@ function EditStaff({ p, onClose, onSaved }: { p: Person; onClose: () => void; on
         <button className="btn ghost" onClick={onClose}>Cancel</button></div></div></>);
 }
 
-function ReturnSheet({ title, onClose, onReturn }: { title: string; onClose: () => void; onReturn: (reason: string) => Promise<void> }) {
-  const [chip, setChip] = useState<string | null>(null);
-  const [note, setNote] = useState('');
-  const [err, setErr] = useState(false);
-  return (<><div className="scrim" onClick={onClose} />
-    <div className="sheet" role="dialog" aria-label={title}><div className="grab" /><h3>{title}</h3><p>Pick a reason.</p>
-      <div className="rchips">{['Dates clash', 'Need details', 'Short staffed', 'Other'].map((x) => <button key={x} className={chip === x ? 'on' : ''} onClick={() => { setChip(x); setErr(false); }}>{x}</button>)}</div>
-      <input className="inp" style={{ marginTop: 14 }} placeholder="Add a note (optional)" value={note} onChange={(e) => setNote(e.target.value)} />
-      {err && <div className="err">Pick a reason.</div>}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 18 }}>
-        <button className="btn dark" onClick={async () => { if (!chip) { setErr(true); return; } await onReturn(note ? `${chip}: ${note}` : chip); }}>Return</button>
-        <button className="btn ghost" onClick={onClose}>Cancel</button></div></div></>);
-}
 
 function Approvals({ c, onChange }: { c: HrToday | null; onChange: () => void }) {
   const { toast } = useApp();
-  const [tab, setTab] = useState<'leave' | 'od'>('leave');
+  const [tab, setTab] = useState<'leave' | 'od' | 'done'>('leave');
   const [leaves, setLeaves] = useState<LeaveReq[] | null>(null);
   const [ods, setOds] = useState<OdReq[] | null>(null);
-  const [ret, setRet] = useState<{ type: 'leave' | 'od'; id: string } | null>(null);
+  const [done, setDone] = useState<HistoryItem[] | null>(null);
+  const [open, setOpen] = useState<{ kind: 'od' | 'leave'; id: string; start?: 'ask' | 'return' | 'approve' } | null>(null);
   const [routes, setRoutes] = useState<Map<string, Route>>(new Map());
   const [lvAppr, setLvAppr] = useState<string>(c?.leave_approver ?? 'hr');
   useEffect(() => { if (c?.leave_approver) setLvAppr(c.leave_approver); }, [c?.leave_approver]);
   const load = useCallback(() => {
     hr.leaves().then(setLeaves).catch(() => setLeaves([])); hr.ods().then(setOds).catch(() => setOds([]));
+    hr.history().then(setDone).catch(() => setDone([]));
     hr.routes().then((r) => setRoutes(new Map(r.map((x) => [x.id, x])))).catch(() => undefined);
   }, []);
   useEffect(() => { load(); }, [load]);
@@ -483,10 +510,15 @@ function Approvals({ c, onChange }: { c: HrToday | null; onChange: () => void })
   const mine = (id: string) => (routes.has(id) ? routes.get(id)!.can_decide : true);   // the server still refuses anything not routed to HR
   const withWho = (id: string) => { const r = routes.get(id); return r ? (r.route === 'reporting' ? `With ${r.approver_name}` : `With ${r.approver_name}`) : ''; };
   const setLeaveApprover = async (v: string) => { const old = lvAppr; setLvAppr(v); try { await hr.setApprover('leave', v); toast('Saved · new leave requests follow this'); load(); onChange(); } catch { setLvAppr(old); toast('Could not save'); } };
-  const decide = async (type: 'leave' | 'od', id: string, d: 'approved' | 'returned', reason?: string) => {
-    try { await (type === 'leave' ? hr.decideLeave(id, d, reason) : hr.decideOd(id, d, reason)); toast(d === 'approved' ? 'Approved · staff notified' : 'Returned · staff notified'); setRet(null); load(); onChange(); }
-    catch (e) { toast(e instanceof ApiError && /not allowed/i.test(e.code) ? 'This one is with another approver.' : 'Could not save. Try again.'); }
-  };
+  // Ask / Return / Approve open the request with its timeline; every comment stays there for HR and the Chairman
+  const acts = (kind: 'od' | 'leave', id: string, asked?: boolean | string | null) => (<>
+    {mine(id) ? <div className="acts" style={{ gridTemplateColumns: 'repeat(3,minmax(0,1fr))' }}>
+      <button className="btn light" onClick={() => setOpen({ kind, id, start: 'ask' })}><Icon n="help" />Ask</button>
+      <button className="btn light" onClick={() => setOpen({ kind, id, start: 'return' })}>Return</button>
+      <button className="btn dark" onClick={() => setOpen({ kind, id, start: 'approve' })}><Icon n="check" />Approve</button></div>
+      : <div className="meta"><span className="chip c-od">{withWho(id) || 'With approver'}</span>{asked && <span className="chip c-warn">Asked staff</span>}</div>}
+    {mine(id) && asked && <div className="meta"><span className="chip c-warn">Asked staff · waiting for reply</span></div>}
+    <button className="more" style={{ display: 'block', margin: '8px auto 0' }} onClick={() => setOpen({ kind, id })}>Timeline</button></>);
   const when = (a: string, b: string) => a === b ? fmtShortDay(new Date(a)) : `${fmtShortDay(new Date(a))} to ${fmtShortDay(new Date(b))}`;
   return (
     <><div className="scr fade">
@@ -494,6 +526,7 @@ function Approvals({ c, onChange }: { c: HrToday | null; onChange: () => void })
       <div className="seg" role="group" aria-label="Type">
         <button className={tab === 'leave' ? 'on' : ''} onClick={() => setTab('leave')}>Leave {leaves?.length ?? ''}</button>
         <button className={tab === 'od' ? 'on' : ''} onClick={() => setTab('od')}>OD {ods?.length ?? ''}</button>
+        <button className={tab === 'done' ? 'on' : ''} onClick={() => setTab('done')}>Done</button>
       </div>
       {tab === 'leave' && <div className="card" style={{ padding: '10px 14px', marginTop: 12 }}>
         <div className="qhd" style={{ margin: '0 0 8px' }}><span>Leave approved by</span></div>
@@ -506,8 +539,7 @@ function Approvals({ c, onChange }: { c: HrToday | null; onChange: () => void })
             <div className="hd"><Av n={r.who} /><div className="t"><b>{r.who}</b><span>{r.hub ?? 'No hub'} hub</span></div><span className="chip c-lv">{cap(r.leave_type)}</span></div>
             {r.reason && <p className="bd">{r.reason}</p>}
             <div className="meta"><span className="chip c-pend"><Icon n="clock" size={14} />{when(r.starts_on, r.ends_on)}{r.half_day ? ` · ${r.half_day} half` : ''}</span></div>
-            {mine(r.id) ? <div className="acts"><button className="btn light" onClick={() => setRet({ type: 'leave', id: r.id })}>Return</button><button className="btn dark" onClick={() => decide('leave', r.id, 'approved')}><Icon n="check" />Approve</button></div>
-              : <div className="meta"><span className="chip c-od">{withWho(r.id) || 'With approver'}</span></div>}
+            {acts('leave', r.id, r.clarify_at)}
           </div>)))}
         {tab === 'od' && (<>
           <div className="note-hr"><Icon n="brief" size={16} />{c?.od_approver === 'hr' ? 'You approve OD (set by the Chairman).' : c?.od_approver === 'reporting' ? 'Reporting staff approve OD (set by the Chairman).' : away ? 'Chairman is Away. You approve OD.' : 'Chairman approves OD. View only.'}</div>
@@ -519,14 +551,17 @@ function Approvals({ c, onChange }: { c: HrToday | null; onChange: () => void })
                 <p className="bd">{r.subject}</p>
                 <div className="meta"><span className="chip c-pend">{fmtShortDay(new Date(r.starts_at))} · {fmtTime(r.starts_at)} to {fmtTime(r.ends_at)}</span></div>
                 <VenueLink name={r.venue_name} place={r.venue_place} url={r.venue_url} lat={r.venue_lat} lng={r.venue_lng} />
-                {mine(r.id) ? <div className="acts"><button className="btn light" onClick={() => setRet({ type: 'od', id: r.id })}>Return</button><button className="btn dark" onClick={() => decide('od', r.id, 'approved')}><Icon n="check" />Approve</button></div>
-                  : <div className="meta"><span className="chip c-od">{withWho(r.id) || 'With approver'}</span></div>}
+                {acts('od', r.id, r.clarify_at)}
               </div>);
           })}
         </>)}
+        {tab === 'done' && (!done ? <Spin /> : done.length === 0 ? <div className="empty"><b>Nothing yet</b>Decisions from the last 30 days appear here.</div> : <div className="card" style={{ padding: '4px 14px' }}>{done.map((h) => (
+          <button key={h.id} className="lrow" style={{ width: '100%', textAlign: 'left' }} onClick={() => setOpen({ kind: h.kind, id: h.id })}><Av n={h.who} />
+            <span className="t"><b>{h.who}</b><span>{h.title} · {h.by === 'reporting' ? 'Reporting staff' : h.by === 'chairman' ? 'Chairman' : 'HR'}</span></span>
+            <span className="v"><span className={`chip ${h.status === 'approved' ? 'c-ok' : 'c-bad'}`}>{cap(h.status)}</span><span style={{ display: 'block', marginTop: 4 }}>{fmtShortDay(new Date(h.decided_at))}</span></span></button>))}</div>)}
       </div>
     </div>
-    {ret && <ReturnSheet title={ret.type === 'leave' ? 'Return leave' : 'Return OD'} onClose={() => setRet(null)} onReturn={(reason) => decide(ret.type, ret.id, 'returned', reason)} />}
+    {open && <RequestSheet kind={open.kind} id={open.id} start={open.start} onClose={() => { setOpen(null); load(); onChange(); }} onChanged={() => { load(); onChange(); }} />}
     </>
   );
 }

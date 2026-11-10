@@ -17,11 +17,14 @@ import { VenueLink } from '../../ui/VenueLink';
 import { GeoFlag } from '../../ui/GeoFlag';
 import { PunchMap } from '../../ui/PunchMap';
 import { RefreshButton } from '../../ui/RefreshButton';
+import { RequestSheet } from '../../ui/RequestSheet';
 
 type Tab = 'home' | 'people' | 'approvals';
 type ListKind = 'red' | 'in' | 'late' | 'notin' | 'out' | 'od' | 'lv' | 'early' | 'last';
 type Sub = { name: 'list'; kind: ListKind } | { name: 'hub'; hub: string } | { name: 'alerts' } | { name: 'alert'; f: Flag } | { name: 'notifs' } | { name: 'person'; p: Person };
-type Sheet = null | { t: 'od'; o: OdItem } | { t: 'ret'; o: OdItem } | { t: 'person'; s: Staff } | { t: 'account' };
+type Sheet = null | { t: 'od'; o: OdItem } | { t: 'ret'; o: OdItem } | { t: 'person'; s: Staff } | { t: 'account' }
+  | { t: 'tl'; kind: 'od' | 'leave'; id: string; start?: 'ask' | 'return' | 'approve' };
+const BY: Record<string, string> = { chairman: 'You', hr: 'HR' };
 
 const TINTS = ['#3B4A6B', '#5B4AA8', '#2F62D9', '#1F7A55', '#9C3F5A', '#7A5A2E', '#4E5464'];
 const tint = (s: string) => TINTS[[...s].reduce((a, c) => a + c.charCodeAt(0), 0) % TINTS.length];
@@ -114,7 +117,7 @@ export function ChairApp() {
   if (intro && snap) return <Intro snap={snap} pending={ods?.pending.length ?? 0} onDone={() => setIntro(false)} />;
 
   const sub = stack[stack.length - 1];
-  const sheets = <ChairSheets sheet={sheet} setSheet={setSheet} away={!!snap?.away} decide={decide} />;
+  const sheets = <ChairSheets sheet={sheet} setSheet={setSheet} away={!!snap?.away} decide={decide} odWith={odWith} onChanged={load} />;
   if (sub) {
     let body: React.ReactNode = null;
     // same attendance and person screens as HR, read-only
@@ -390,7 +393,6 @@ function Approvals({ seg, setSeg, ods, away, setAway, setSheet }: { seg: 'od' | 
   const [routes, setRoutes] = useState<Map<string, Route>>(new Map());
   const [odAppr, setOdAppr] = useState<string>('chairman');
   const [lvAppr, setLvAppr] = useState<string>('hr');
-  const [retLv, setRetLv] = useState<{ id: string; reason: string } | null>(null);
   const loadAll = () => {
     chair.leaves().then(setLeaves).catch(() => setLeaves([]));
     hr.routes().then((r) => setRoutes(new Map(r.map((x) => [x.id, x])))).catch(() => undefined);
@@ -401,13 +403,9 @@ function Approvals({ seg, setSeg, ods, away, setAway, setSheet }: { seg: 'od' | 
   const rt = (id: string) => routes.get(id);
   const withWho = (id: string) => { const r = rt(id); return r && !r.can_decide ? `With ${r.approver_name}` : null; };
   const setOdApprover = async (v: string) => { const old = odAppr; setOdAppr(v); try { await hr.setApprover('od', v); toast('Saved · new OD requests follow this'); loadAll(); } catch { setOdAppr(old); toast('Could not save'); } };
-  const decideLv = async (id: string, d: 'approved' | 'returned', reason?: string) => {
-    try { await hr.decideLeave(id, d, reason); toast(d === 'approved' ? 'Approved · staff notified' : 'Returned · staff notified'); setRetLv(null); loadAll(); }
-    catch { toast('Could not save. Try again.'); }
-  };
   const dec = ods?.decided ?? [];
   const decRow = (o: OdItem) => (
-    <button key={o.id} className="lrow" onClick={() => setSheet({ t: 'od', o })}><Av n={o.who} /><span className="t"><b>{o.who}</b><span>{o.subject} · {o.decided_role === 'hr' ? 'HR · you were away' : 'You'}</span></span>
+    <button key={o.id} className="lrow" onClick={() => setSheet({ t: 'od', o })}><Av n={o.who} /><span className="t"><b>{o.who}</b><span>{o.subject} · {BY[o.decided_role ?? ''] ?? 'Reporting staff'}</span></span>
       <span className="v"><span className={`chip ${o.status === 'approved' ? 'c-ok' : 'c-bad'}`}>{cap(o.status)}</span><span style={{ display: 'block', marginTop: 4 }}>{(o.decided_at ?? '').slice(0, 10) === today ? fmtTime(o.decided_at) : fmtShortDay(new Date(o.decided_at ?? o.created_at))}</span></span></button>
   );
   return (
@@ -435,10 +433,13 @@ function Approvals({ seg, setSeg, ods, away, setAway, setSheet }: { seg: 'od' | 
             <div className="hd"><Av n={l.who} /><div className="t"><b>{l.who}</b><span>{l.hub} hub</span></div><span className="chip c-lv">{cap(l.leave_type)}</span></div>
             {l.reason && <p className="bd">{l.reason}</p>}
             <div className="meta"><span className="chip c-pend">{l.starts_on === l.ends_on ? fmtShortDay(new Date(l.starts_on)) : `${fmtShortDay(new Date(l.starts_on))} to ${fmtShortDay(new Date(l.ends_on))}`}</span>
-              <span className={`chip ${STC[l.status] ?? 'c-pend'}`}>{l.status === 'pending' ? (rt(l.id)?.can_decide ? 'Waiting for you' : `With ${rt(l.id)?.approver_name ?? 'HR'}`) : l.assigned_by_hr ? 'Assigned by HR' : cap(l.status)}</span></div>
-            {l.status === 'pending' && rt(l.id)?.can_decide && (retLv?.id === l.id
-              ? <div style={{ display: 'flex', gap: 8, marginTop: 10 }}><input className="inp" style={{ flex: 1 }} maxLength={300} placeholder="Reason to return" value={retLv.reason} onChange={(e) => setRetLv({ id: l.id, reason: e.target.value })} /><button className="btn dark" style={{ width: 'auto', padding: '0 16px' }} disabled={!retLv.reason.trim()} onClick={() => decideLv(l.id, 'returned', retLv.reason.trim())}>Return</button></div>
-              : <div className="acts"><button className="btn light" onClick={() => setRetLv({ id: l.id, reason: '' })}>Return</button><button className="btn dark" onClick={() => decideLv(l.id, 'approved')}><Icon n="check" />Approve</button></div>)}
+              <span className={`chip ${STC[l.status] ?? 'c-pend'}`}>{l.status === 'pending' ? (l.clarify_at ? 'Asked staff' : rt(l.id)?.can_decide ? 'Waiting for you' : `With ${rt(l.id)?.approver_name ?? 'HR'}`) : l.assigned_by_hr ? 'Assigned by HR' : cap(l.status)}</span></div>
+            {l.status === 'pending' && rt(l.id)?.can_decide && (
+              <div className="acts" style={{ gridTemplateColumns: 'repeat(3,minmax(0,1fr))' }}>
+                <button className="btn light" onClick={() => setSheet({ t: 'tl', kind: 'leave', id: l.id, start: 'ask' })}><Icon n="help" />Ask</button>
+                <button className="btn light" onClick={() => setSheet({ t: 'tl', kind: 'leave', id: l.id, start: 'return' })}>Return</button>
+                <button className="btn dark" onClick={() => setSheet({ t: 'tl', kind: 'leave', id: l.id, start: 'approve' })}><Icon n="check" />Approve</button></div>)}
+            <button className="more" style={{ display: 'block', margin: '8px auto 0' }} onClick={() => setSheet({ t: 'tl', kind: 'leave', id: l.id })}>Timeline</button>
           </div>))}
       </>)}
       {seg === 'done' && (<>
@@ -455,7 +456,7 @@ function Approvals({ seg, setSeg, ods, away, setAway, setSheet }: { seg: 'od' | 
 }
 
 // ---------------- sheets: OD detail, return, person ----------------
-function ChairSheets({ sheet, setSheet, away, decide }: { sheet: Sheet; setSheet: (s: Sheet) => void; away: boolean; decide: (o: OdItem, d: 'approved' | 'returned', reason?: string) => Promise<void> }) {
+function ChairSheets({ sheet, setSheet, away, decide, odWith, onChanged }: { sheet: Sheet; setSheet: (s: Sheet) => void; away: boolean; decide: (o: OdItem, d: 'approved' | 'returned', reason?: string) => Promise<void>; odWith: Map<string, string>; onChanged: () => void }) {
   const [chip, setChip] = useState<string | null>(null);
   const [err, setErr] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -464,6 +465,7 @@ function ChairSheets({ sheet, setSheet, away, decide }: { sheet: Sheet; setSheet
   const close = () => setSheet(null);
   if (sheet.t === 'account') return <AccountSheet name="Chairman" sub="Chairman · All hubs" onClose={close} />;
   if (sheet.t === 'person') return <PersonSheet s={sheet.s} onClose={close} />;
+  if (sheet.t === 'tl') return <RequestSheet kind={sheet.kind} id={sheet.id} start={sheet.start} onClose={close} onChanged={onChanged} />;
   const o = sheet.o, pending = o.status === 'pending';
   if (sheet.t === 'ret') return (<><div className="scrim" onClick={close} />
     <div className="sheet" role="dialog" aria-label="Return OD"><div className="grab" /><h3>Return OD</h3><p>Pick a reason.</p>
@@ -481,12 +483,15 @@ function ChairSheets({ sheet, setSheet, away, decide }: { sheet: Sheet; setSheet
       <div className="odk"><dl className="kv">
 <dt>When</dt><dd>{when(o)}</dd><dt>Duration</dt><dd>{duration(o)}</dd>
         <dt>Requested</dt><dd>{fmtShortDay(new Date(o.created_at))} · {fmtTime(o.created_at)}</dd><dt>Notice</dt><dd>{notice(o)}{quick(o) ? ' · quick' : ''}</dd>
-        {!pending && <><dt>Decided</dt><dd>{o.decided_role === 'hr' ? 'HR · you were away' : 'You'} · {fmtShortDay(new Date(o.decided_at ?? o.created_at))}</dd>{o.return_reason && <><dt>Reason</dt><dd>{o.return_reason}</dd></>}</>}
+        {!pending && <><dt>Decided</dt><dd>{BY[o.decided_role ?? ''] ?? 'Reporting staff'} · {fmtShortDay(new Date(o.decided_at ?? o.created_at))}</dd>{o.return_reason && <><dt>Reason</dt><dd>{o.return_reason}</dd></>}</>}
       </dl></div>
-      {pending && !away && <><p className="to" style={{ margin: '12px 0 0' }}>Selfie at the venue on check-in.</p>
-        <div className="two" style={{ marginTop: 14 }}><button className="btn light" onClick={() => setSheet({ t: 'ret', o })}>Return</button>
+      {pending && odWith.has(o.id) && <div className="meta" style={{ marginTop: 12 }}><span className="chip c-od">{odWith.get(o.id)}</span></div>}
+      {pending && !away && !odWith.has(o.id) && <><p className="to" style={{ margin: '12px 0 0' }}>Selfie at the venue on check-in.</p>
+        <div className="acts" style={{ gridTemplateColumns: 'repeat(3,minmax(0,1fr))' }}><button className="btn light" onClick={() => setSheet({ t: 'tl', kind: 'od', id: o.id, start: 'ask' })}><Icon n="help" />Ask</button>
+          <button className="btn light" onClick={() => setSheet({ t: 'ret', o })}>Return</button>
           <button className="btn dark" disabled={busy} onClick={async () => { setBusy(true); await decide(o, 'approved'); }}><Icon n="check" />Approve</button></div></>}
-      {pending && away && <p className="to" style={{ margin: '12px 0 0' }}>You’re Away. HR decides this one. Switch to In to decide.</p>}
+      {pending && away && !odWith.has(o.id) && <p className="to" style={{ margin: '12px 0 0' }}>You’re Away. HR decides this one. Switch to In to decide.</p>}
+      <button className="btn light" style={{ marginTop: 10 }} onClick={() => setSheet({ t: 'tl', kind: 'od', id: o.id })}><Icon n="list" />Timeline</button>
       <button className="btn ghost" style={{ marginTop: 6 }} onClick={close}>{pending ? 'Later' : 'Close'}</button></div></>);
 }
 

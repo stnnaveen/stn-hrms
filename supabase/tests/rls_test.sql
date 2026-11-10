@@ -959,3 +959,82 @@ end $$;
 select pg_temp.as_user('00000000-0000-0000-0000-0000000000f1');
 select set_setting('help_contact', '{"email": "ai@startuptn.in", "whatsapp": "", "phone": ""}');
 select pg_temp.reset();
+
+-- ---------- 34. approvals: ask for clarity, reply, timeline seen by HR and Chairman; calendar months ahead ----------
+select pg_temp.reset();
+update settings set value = '"reporting"' where key = 'leave_approver';
+update staff_roster set reports_to = 'arun@startuptn.in' where email = 'kavya@startuptn.in';
+select pg_temp.as_user('00000000-0000-0000-0000-000000000001');   -- Kavya asks for leave
+insert into leave_requests (id, user_id, leave_type, starts_on, ends_on, reason)
+values ('00000000-0000-0000-0000-0000000034a1', '00000000-0000-0000-0000-000000000001', 'casual', current_date + 50, current_date + 50, 'Family function');
+select pg_temp.as_user('00000000-0000-0000-0000-000000000002');   -- Arun, her reporting person
+do $$ declare j jsonb; begin
+  if (select jsonb_array_length(my_approvals()->'leave')) < 1 then raise exception 'FAIL reporting person does not see the leave'; end if;
+  perform ask_clarity('leave', '00000000-0000-0000-0000-0000000034a1', 'Which day exactly?');
+  j := request_timeline('leave', '00000000-0000-0000-0000-0000000034a1');
+  if not (j->>'clarify')::boolean or (j->>'can_decide')::boolean is not true then raise exception 'FAIL clarify state %', j; end if;
+  raise notice 'PASS 34 reporting person asks for clarity';
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-000000000001');
+do $$ declare j jsonb; begin
+  if (select count(*) from notifications where kind = 'clarify_asked') < 1 then raise exception 'FAIL staff not told about the question'; end if;
+  if not exists (select 1 from jsonb_array_elements(my_today()->'requests') x where (x->>'clarify')::boolean) then raise exception 'FAIL home does not show reply needed'; end if;
+  begin perform ask_clarity('leave', '00000000-0000-0000-0000-0000000034a1', 'self'); raise exception 'FAIL staff asked on own request';
+  exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
+  perform reply_clarity('leave', '00000000-0000-0000-0000-0000000034a1', 'The 2nd, cousin''s wedding');
+  begin perform reply_clarity('leave', '00000000-0000-0000-0000-0000000034a1', 'again'); raise exception 'FAIL second reply without a question';
+  exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
+  j := request_timeline('leave', '00000000-0000-0000-0000-0000000034a1');
+  if (j->>'mine')::boolean is not true or (j->>'clarify')::boolean then raise exception 'FAIL after reply %', j; end if;
+  begin perform count(*) from request_events; exception when insufficient_privilege then null; end;
+  if (select count(*) from request_events) <> 0 then raise exception 'FAIL staff reads request_events directly'; end if;
+  begin insert into request_events (kind, request_id, action) values ('leave', '00000000-0000-0000-0000-0000000034a1', 'approved'); raise exception 'FAIL staff wrote an event';
+  exception when insufficient_privilege then null; end;
+  raise notice 'PASS 34b staff replies once; cannot write or read the raw timeline';
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-000000000002');
+do $$ begin
+  if (select count(*) from notifications where kind = 'clarify_reply') < 1 then raise exception 'FAIL approver not told about the reply'; end if;
+  perform decide_leave('00000000-0000-0000-0000-0000000034a1', 'approved', 'Enjoy');
+  raise notice 'PASS 34c approver gets the reply and approves with a comment';
+end $$;
+-- someone unrelated cannot read the timeline
+select pg_temp.as_user('00000000-0000-0000-0000-000000000003');
+do $$ begin
+  begin perform request_timeline('leave', '00000000-0000-0000-0000-0000000034a1'); raise exception 'FAIL unrelated staff read the timeline';
+  exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
+  raise notice 'PASS 34d unrelated staff cannot read the timeline';
+end $$;
+-- HR and Chairman see the whole story
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000a1');
+do $$ declare j jsonb; acts text; begin
+  j := request_timeline('leave', '00000000-0000-0000-0000-0000000034a1');
+  select string_agg(x->>'action', ',' order by ord) into acts from jsonb_array_elements(j->'events') with ordinality t(x, ord);
+  if acts <> 'created,clarify,reply,approved' then raise exception 'FAIL timeline order %', acts; end if;
+  if (j->'events'->1->>'role') <> 'reporting' or (j->'events'->1->>'comment') <> 'Which day exactly?' or (j->'events'->2->>'role') <> 'staff'
+     or (j->'events'->3->>'comment') <> 'Enjoy' or (j->'events'->0->>'comment') <> 'Family function' then raise exception 'FAIL timeline details %', j->'events'; end if;
+  if (j->>'can_decide')::boolean then raise exception 'FAIL HR can decide a decided leave'; end if;
+  if (select count(*) from request_events where request_id = '00000000-0000-0000-0000-0000000034a1') <> 4 then raise exception 'FAIL HR reads events'; end if;
+  if routes_for('kavya@startuptn.in')->'leave'->>'route' <> 'reporting' then raise exception 'FAIL routes_for %', routes_for('kavya@startuptn.in'); end if;
+  raise notice 'PASS 34e HR sees the full timeline: created, question, reply, approval, each with comment and role';
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000c1');
+do $$ begin
+  if jsonb_array_length(request_timeline('leave', '00000000-0000-0000-0000-0000000034a1')->'events') <> 4 then raise exception 'FAIL Chairman timeline'; end if;
+  raise notice 'PASS 34f Chairman sees the same timeline';
+end $$;
+-- HR as approver can ask too; staff calendar shows holidays months ahead
+select pg_temp.reset();
+update settings set value = '"hr"' where key = 'leave_approver';
+update staff_roster set reports_to = null where email = 'kavya@startuptn.in';
+insert into holidays (day, name, kind) values (date_trunc('month', current_date + 95)::date + 2, 'Test office day', 'office') on conflict (day) do nothing;
+select pg_temp.as_user('00000000-0000-0000-0000-000000000001');
+do $$ declare j jsonb; begin
+  j := my_month((date_trunc('month', current_date + 95))::date);
+  if not exists (select 1 from jsonb_array_elements(j->'holidays') h where h->>'name' = 'Test office day' and h->>'kind' = 'office') then raise exception 'FAIL holiday ahead %', j->'holidays'; end if;
+  begin perform my_month((current_date + 500)::date); raise exception 'FAIL too far ahead';
+  exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
+  raise notice 'PASS 34g staff calendar shows holidays and office leave months ahead';
+end $$;
+select pg_temp.reset();
+delete from holidays where name = 'Test office day';

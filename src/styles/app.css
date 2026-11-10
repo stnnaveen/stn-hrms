@@ -582,3 +582,18 @@ button.gcard{width:100%}   /* HR summary card is a button: fill the card like th
 .io .chip.sm{padding:3px 9px;font-size:12px}
 select.inp{-webkit-appearance:none;-moz-appearance:none;appearance:none}   /* one chevron (ours), not the browser's too */
 .seg button{white-space:nowrap}
+
+/* request timeline (leave / OD): every step with who, role, time and comment */
+.tline2{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:12px}
+.tline2 li{display:grid;grid-template-columns:32px minmax(0,1fr);gap:10px;align-items:start;font-size:14px;color:var(--ph-ink)}
+.tline2 .ri{width:32px;height:32px;border-radius:10px}
+.tline2 small{display:block;font-size:12.5px;color:var(--ph-ink3);margin-top:2px}
+.tline2 .rl{font-size:11.5px;font-weight:600;color:var(--ph-ink3);background:var(--ph-surface);border-radius:6px;padding:1px 6px;margin-left:2px}
+.tline2 .cm{margin:6px 0 0;padding:8px 10px;background:var(--ph-surface);border-radius:12px;font-size:13.5px;color:var(--ph-ink);white-space:pre-wrap;word-break:break-word}
+/* calendar: holiday and office leave fill the day */
+.cal button.hol{background:#ECEBFB;color:#4B46B0}
+.cal button.hoff{background:#FFF0E3;color:#9A4B12}
+.cal button.today.hol,.cal button.today.hoff{background:var(--ph-navy);color:#fff}
+.legend .sq{width:10px;height:10px;border-radius:3px;display:inline-block}
+.sheet .acts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:14px}
+.sheet .acts .btn{height:46px;font-size:15px;border-radius:14px;gap:6px}

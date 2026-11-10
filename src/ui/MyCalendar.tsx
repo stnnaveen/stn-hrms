@@ -8,7 +8,8 @@ const CHIP: Record<string, string> = { ok: 'c-ok', warn: 'c-warn', bad: 'c-bad' 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 const istKey = (iso: string) => new Date(new Date(iso).getTime() + 330 * 60000).toISOString().slice(0, 10);
 
-/** Staff: own month — punch in / out, OD and leave. Tap a day for its times. Nothing else (CLAUDE.md rule 2). */
+/** Staff: own month — punch in / out, OD, leave, holidays and office leave (filled days, months ahead too).
+ *  Tap a day for its times. Nothing else (CLAUDE.md rule 2). Check-in stays open on holidays. */
 export function MyCalendar() {
   const now = new Date(Date.now() + 330 * 60000), todayKey = now.toISOString().slice(0, 10);
   const [ym, setYm] = useState(todayKey.slice(0, 7));
@@ -19,13 +20,14 @@ export function MyCalendar() {
   const first = new Date(Date.UTC(y, mo - 1, 1)).getUTCDay(), len = new Date(Date.UTC(y, mo, 0)).getUTCDate();
   const key = (n: number) => `${ym}-${String(n).padStart(2, '0')}`;
   const shift = (d: number) => { const t = new Date(Date.UTC(y, mo - 1 + d, 1)); setYm(t.toISOString().slice(0, 7)); setSel(''); };
-  const canNext = ym < todayKey.slice(0, 7);
+  const lastYm = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 12, 1)).toISOString().slice(0, 7);
+  const canNext = ym < lastYm;   // holidays and office leave are planned ahead
   const dayOf = (k: string) => m?.days.find((x) => x.day === k);
   const odsOf = (k: string) => (m?.od ?? []).filter((o) => istKey(o.starts_at) <= k && istKey(o.ends_at) >= k);
   const lvOf = (k: string) => (m?.leave ?? []).find((l) => l.from <= k && l.to >= k);
   const holOf = (k: string) => (m?.holidays ?? []).find((h) => h.day === k);
   const absOf = (k: string) => (m?.absent ?? []).includes(k);
-  const dot = (k: string) => { const lv = lvOf(k); if (lv && lv.status === 'approved') return 'var(--lv)'; const d = dayOf(k); if (d?.band) return BAND[d.band]; if (absOf(k)) return '#7A1F1F'; if (odsOf(k).some((o) => o.status === 'approved')) return 'var(--od)'; if (holOf(k)) return '#8C93A3'; return null; };
+  const dot = (k: string) => { const lv = lvOf(k); if (lv && lv.status === 'approved') return 'var(--lv)'; const d = dayOf(k); if (d?.band) return BAND[d.band]; if (absOf(k)) return '#7A1F1F'; if (odsOf(k).some((o) => o.status === 'approved')) return 'var(--od)'; return null; };
   const d = sel ? dayOf(sel) : undefined, ods = sel ? odsOf(sel) : [], lv = sel ? lvOf(sel) : undefined, hol = sel ? holOf(sel) : undefined, abs = sel ? absOf(sel) : false;
   return (
     <div className="card">
@@ -39,13 +41,14 @@ export function MyCalendar() {
         {Array.from({ length: first }, (_, i) => <button key={`b${i}`} className="blank" aria-hidden="true" />)}
         {Array.from({ length: len }, (_, i) => i + 1).map((n) => {
           const k = key(n), wd = new Date(Date.UTC(y, mo - 1, n)).getUTCDay(), c = dot(k);
-          return <button key={n} className={`${k === todayKey ? 'today' : ''} ${wd === 0 || wd === 6 ? 'off' : ''} ${k === sel ? 'sel' : ''}`} onClick={() => setSel(k)} aria-label={`${n}`}>
+          const h = holOf(k);
+          return <button key={n} className={`${k === todayKey ? 'today' : ''} ${wd === 0 || wd === 6 ? 'off' : ''} ${h ? (h.kind === 'office' ? 'hoff' : 'hol') : ''} ${k === sel ? 'sel' : ''}`} onClick={() => setSel(k)} aria-label={`${n}${h ? `, ${h.kind === 'office' ? 'Office leave' : 'Holiday'}: ${h.name}` : ''}`}>
             {n}<i style={{ background: c ?? 'transparent' }} /></button>;
         })}
       </div>
       <div className="legend">
         <span><i style={{ background: 'var(--ok)' }} />On time</span><span><i style={{ background: 'var(--warn)' }} />Slightly late</span><span><i style={{ background: 'var(--bad)' }} />Late</span>
-        <span><i style={{ background: 'var(--od)' }} />OD</span><span><i style={{ background: 'var(--lv)' }} />Leave</span><span><i style={{ background: '#8C93A3' }} />Holiday</span>
+        <span><i style={{ background: 'var(--od)' }} />OD</span><span><i style={{ background: 'var(--lv)' }} />Leave</span><span><i className="sq" style={{ background: '#ECEBFB', boxShadow: 'inset 0 0 0 1px #4B46B0' }} />Holiday</span><span><i className="sq" style={{ background: '#FFF0E3', boxShadow: 'inset 0 0 0 1px #9A4B12' }} />Office leave</span>
       </div>
       {sel && m && (
         <div style={{ borderTop: '1px solid var(--ph-line)', marginTop: 10, paddingTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>

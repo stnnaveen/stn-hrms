@@ -10,6 +10,7 @@ import { ToApprove } from '../ui/ToApprove';
 import { AccountSheet } from '../ui/AccountSheet';
 import { RefreshButton } from '../ui/RefreshButton';
 import { HelpButton } from '../ui/Help';
+import { RequestSheet } from '../ui/RequestSheet';
 
 const BAND_CHIP = {
   ok: <span className="chip c-ok"><i />On time</span>,
@@ -30,6 +31,7 @@ export function Home() {
   const [sheet, setSheet] = useState<null | 'early' | 'early1h' | 'out'>(null);
   const [notifs, setNotifs] = useState<Notif[]>([]);
   const [account, setAccount] = useState(false);
+  const [req, setReq] = useState<{ kind: 'od' | 'leave'; id: string } | null>(null);
   const [now, setNow] = useState(istMinutesNow());
   useEffect(() => { reload(); api.notifications().then(setNotifs); const t = setInterval(() => setNow(istMinutesNow()), 30000); return () => clearInterval(t); }, [reload]);
 
@@ -60,7 +62,7 @@ export function Home() {
   const avail = today.chairman_available ?? [];
   const resetDay = async () => { try { await api.resetTestDay(); await reload(); toast('Test day cleared'); } catch { toast('Could not reset'); } };
 
-  let topChip = <span className="chip c-mute"><i />Not checked in</span>;
+  let topChip = today.holiday ? <span className="chip c-mute"><i />{today.holiday.kind === 'office' ? 'Office leave' : 'Holiday'}</span> : <span className="chip c-mute"><i />Not checked in</span>;
   if (checkedIn && !checkedOut && m?.band) topChip = BAND_CHIP[m.band];
   if (checkedOut) topChip = <span className="chip c-mute"><i />Day done</span>;
 
@@ -100,6 +102,9 @@ export function Home() {
             <div><small>Hours</small><b>{hoursBetween(m?.in_time, m?.out_time)}</b><em>{p.hub ? `${p.hub} hub` : 'No hub'}</em></div>
           </div>
         </div>
+        {today.holiday && (
+          <div className="card row" style={{ marginTop: 12, background: today.holiday.kind === 'office' ? '#FFF0E3' : '#ECEBFB' }}><span className="ri c-pend"><Icon n="cal" /></span>
+            <span className="t"><b>{today.holiday.name}</b><span>{today.holiday.kind === 'office' ? 'Office leave' : 'Government holiday'} · check-in stays open</span></span></div>)}
         {today.test_mode && (
           <div className="card row" style={{ marginTop: 12, background: '#FFF4E0' }}><span className="ri c-warn"><Icon n="alert" /></span>
             <span className="t"><b>Test account</b><span>Each check-in starts the day fresh.</span></span>
@@ -145,11 +150,12 @@ export function Home() {
         <div className="card">
           {today.requests.length === 0 && <span style={{ color: 'var(--ph-ink3)', fontSize: 14 }}>No requests yet.</span>}
           {today.requests.map((r) => (
-            <div className="row" key={r.id}>
+            <button className="row" key={r.id} style={{ width: '100%', textAlign: 'left' }} onClick={() => setReq({ kind: r.type, id: r.id })}>
               <div className={`ri ${r.type === 'od' ? 'c-od' : 'c-lv'}`}><Icon n={r.type === 'od' ? 'brief' : 'leaf'} /></div>
               <div className="t"><b>{r.title}</b><span>{fmtShortDay(new Date(r.starts))}</span></div>
-              <span className={`chip ${STATUS_CHIP[r.status] ?? 'c-pend'}`}>{r.status[0].toUpperCase() + r.status.slice(1)}</span>
-            </div>
+              {r.clarify && r.status === 'pending' ? <span className="chip c-warn">Reply needed</span>
+                : <span className={`chip ${STATUS_CHIP[r.status] ?? 'c-pend'}`}>{r.status[0].toUpperCase() + r.status.slice(1)}</span>}
+            </button>
           ))}
         </div>
       </div>
@@ -173,7 +179,8 @@ export function Home() {
       </div>
       <button className={`fab ${fab ? 'open' : ''}`} onClick={() => setFab(!fab)} aria-label={fab ? 'Close' : 'New request'} aria-expanded={fab}><Icon n="plus" /></button>
 
-      {account && <AccountSheet name={p.full_name} sub={`${p.employee_code ? p.employee_code + ' · ' : ''}${p.hub ?? 'No'} hub`} onClose={() => setAccount(false)} />}
+      {account && <AccountSheet name={p.full_name} sub={`${p.employee_code ? p.employee_code + ' · ' : ''}${p.hub ?? 'No'} hub${p.reports_to ? ` · Reports to ${p.reports_to}` : ''}`} onClose={() => setAccount(false)} />}
+      {req && <RequestSheet kind={req.kind} id={req.id} onClose={() => setReq(null)} onChanged={() => void reload()} />}
       {sheet && <div className="scrim" onClick={() => setSheet(null)} />}
       {sheet === 'early' && (
         <div className="sheet" role="dialog" aria-label="Leaving early"><div className="grab" />

@@ -24,11 +24,13 @@ export interface BoardRow {
   in_time: string | null; out_time: string | null; source: 'app' | 'bio' | 'both'; in_src: 'app' | 'bio' | null; out_src: 'app' | 'bio' | null;
   in_punch: string | null; bio_in: string | null; bio_out: string | null;
 }
+export interface RoutesFor { leave: { route: string; name: string }; od: { route: string; name: string }; reports_to: string | null; reports_to_name: string | null; reports_to_signed_in: boolean }
+export interface HistoryItem { kind: 'od' | 'leave'; id: string; who: string; hub: string | null; title: string; status: string; decided_at: string; by: string | null }
 export interface Holiday { day: string; name: string; kind: 'govt' | 'office' }
 export interface DayMark { email: string; day: string; mark: 'absent' | 'leave'; leave_type: string | null; note: string | null }
 export interface Route { kind: 'od' | 'leave'; id: string; route: 'hr' | 'chairman' | 'reporting'; approver_name: string; can_decide: boolean }
-export interface LeaveReq { id: string; who: string; hub: string | null; leave_type: string; starts_on: string; ends_on: string; half_day: string | null; reason: string | null; status: string; created_at: string }
-export interface OdReq { id: string; who: string; hub: string | null; subject: string; note: string | null; venue_name: string; venue_place?: string | null; venue_url?: string | null; venue_lat?: number | null; venue_lng?: number | null; starts_at: string; ends_at: string; status: string; created_at: string }
+export interface LeaveReq { id: string; who: string; hub: string | null; leave_type: string; starts_on: string; ends_on: string; half_day: string | null; reason: string | null; status: string; created_at: string; clarify_at?: string | null }
+export interface OdReq { id: string; who: string; hub: string | null; subject: string; note: string | null; venue_name: string; venue_place?: string | null; venue_url?: string | null; venue_lat?: number | null; venue_lng?: number | null; starts_at: string; ends_at: string; status: string; created_at: string; clarify_at?: string | null }
 export interface Flag {
   id: string; kind: string; rule: string; details: Record<string, unknown>; status: string; staff_reason: string | null; created_at: string;
   user_id: string; who: string; hub: string | null;
@@ -156,14 +158,40 @@ const real = {
   async setDayMark(email: string, day: string, mark: 'absent' | 'leave' | null, leaveType?: string, note?: string) { const { error } = await sb!.rpc('set_day_mark', { p_email: email, p_day: day, p_mark: mark, p_leave_type: leaveType ?? null, p_note: note ?? null }); if (error) throw new ApiError(error.message.replace(/^.*?:\s*/, '')); },
   async setReportsTo(email: string, reportsTo: string | null) { const { error } = await sb!.rpc('set_reports_to', { p_email: email, p_reports_to: reportsTo }); if (error) throw new ApiError(error.message.replace(/^.*?:\s*/, '')); },
   async setApprover(kind: 'leave' | 'od', value: string) { const { error } = await sb!.rpc('set_approver', { p_kind: kind, p_value: value }); if (error) throw new ApiError(error.message); },
+  /** Light list for pickers: everyone on the staff list (name, hub, signed in or not). */
+  async rosterLite(): Promise<{ email: string; full_name: string; hub: string | null; invited: boolean }[]> {
+    const [r, p] = await Promise.all([
+      sb!.from('staff_roster').select('email, full_name, hub_name, is_test').in('role', ['staff', 'intern']).order('full_name'),
+      sb!.from('profiles').select('email, active').in('role', ['staff', 'intern'])
+    ]);
+    const act = new Map(((p.data ?? []) as { email: string; active: boolean }[]).map((x) => [x.email, x.active]));
+    return ((must(r) as { email: string; full_name: string; hub_name: string | null; is_test: boolean }[])).filter((x) => !x.is_test && act.get(x.email) !== false)
+      .map((x) => ({ email: x.email, full_name: x.full_name, hub: x.hub_name, invited: !act.has(x.email) }));
+  },
+  /** Where this person's leave and OD go now (approver settings + reporting person). */
+  async routesFor(email: string): Promise<RoutesFor> { return must(await sb!.rpc('routes_for', { p_email: email })) as RoutesFor; },
   async routes(): Promise<Route[]> { const { data, error } = await sb!.rpc('pending_routes'); if (error) return []; return (data ?? []) as Route[]; },
   async leaves(): Promise<LeaveReq[]> {
-    const r = must(await sb!.from('leave_requests').select('id, leave_type, starts_on, ends_on, half_day, reason, status, created_at, p:profiles!leave_requests_user_id_fkey(full_name, hub:hubs(name))').eq('status', 'pending').order('starts_on'));
+    const r = must(await sb!.from('leave_requests').select('id, leave_type, starts_on, ends_on, half_day, reason, status, created_at, clarify_at, p:profiles!leave_requests_user_id_fkey(full_name, hub:hubs(name))').eq('status', 'pending').order('starts_on'));
     return (r as unknown as (LeaveReq & { p: { full_name: string; hub: { name: string } | null } })[]).map((x) => ({ ...x, who: x.p.full_name, hub: x.p.hub?.name ?? null }));
   },
   async ods(): Promise<OdReq[]> {
-    const r = must(await sb!.from('od_requests').select('id, subject, note, venue_name, venue_place, venue_url, venue_lat, venue_lng, starts_at, ends_at, status, created_at, p:profiles!od_requests_user_id_fkey(full_name, hub:hubs(name))').eq('status', 'pending').order('starts_at'));
+    const r = must(await sb!.from('od_requests').select('id, subject, note, venue_name, venue_place, venue_url, venue_lat, venue_lng, starts_at, ends_at, status, created_at, clarify_at, p:profiles!od_requests_user_id_fkey(full_name, hub:hubs(name))').eq('status', 'pending').order('starts_at'));
     return (r as unknown as (OdReq & { p: { full_name: string; hub: { name: string } | null } })[]).map((x) => ({ ...x, who: x.p.full_name, hub: x.p.hub?.name ?? null }));
+  },
+  /** Leave and OD decided in the last 30 days (both kinds), newest first; each opens its timeline. */
+  async history(): Promise<HistoryItem[]> {
+    const since = new Date(Date.now() - 30 * 864e5).toISOString();
+    type R = { id: string; status: string; decided_at: string; decided_route: string | null; p: { full_name: string; hub: { name: string } | null } };
+    const [l, o] = await Promise.all([
+      sb!.from('leave_requests').select('id, leave_type, status, decided_at, decided_route, assigned_by_hr, p:profiles!leave_requests_user_id_fkey(full_name, hub:hubs(name))').in('status', ['approved', 'returned']).eq('assigned_by_hr', false).gte('decided_at', since),
+      sb!.from('od_requests').select('id, subject, status, decided_at, decided_route, p:profiles!od_requests_user_id_fkey(full_name, hub:hubs(name))').in('status', ['approved', 'returned']).gte('decided_at', since)
+    ]);
+    const out: HistoryItem[] = [
+      ...((must(l) as unknown as (R & { leave_type: string })[]).map((x) => ({ kind: 'leave' as const, id: x.id, who: x.p.full_name, hub: x.p.hub?.name ?? null, title: `${x.leave_type[0].toUpperCase()}${x.leave_type.slice(1)} leave`, status: x.status, decided_at: x.decided_at, by: x.decided_route }))),
+      ...((must(o) as unknown as (R & { subject: string })[]).map((x) => ({ kind: 'od' as const, id: x.id, who: x.p.full_name, hub: x.p.hub?.name ?? null, title: x.subject, status: x.status, decided_at: x.decided_at, by: x.decided_route })))
+    ];
+    return out.sort((a, b) => b.decided_at.localeCompare(a.decided_at));
   },
   async flags(): Promise<Flag[]> {
     const r = must(await sb!.from('flags')
@@ -270,6 +298,7 @@ const demo: typeof real = {
   async people() { await wait(); return D.people.map((p) => ({ ...p, geo: p.today?.in_time ? (p.full_name.startsWith('Vignesh') ? 'out' as const : 'in' as const) : null })); },
   async leaves() { await wait(); return D.leaves; },
   async ods() { await wait(); return D.ods; },
+  async history() { await wait(); return []; },
   async presenceDay(uid: string): Promise<PresenceDay> { await wait(); const t = (h: number, m: number) => { const d = new Date(); d.setUTCHours(h - 5, m - 30, 0, 0); return d.toISOString(); };
     return uid.endsWith('1') ? { tracked: true, from: t(10, 2), to: t(16, 30), inside_min: 312, outside_min: 48, od_min: 0, no_signal_min: 28, samples: 90, trips: [{ from: t(11, 40), to: t(12, 5), min: 25, max_m: 640 }, { from: t(15, 10), to: t(15, 33), min: 23, max_m: 1300 }] } : { tracked: false, inside_min: 0, outside_min: 0, od_min: 0, no_signal_min: 0, trips: [], samples: 0 }; },
   async presenceToday() { await wait(); return []; },
@@ -296,6 +325,8 @@ const demo: typeof real = {
   async setReportsTo() { await wait(); },
   async setApprover() { await wait(); },
   async routes() { await wait(); return []; },
+  async rosterLite() { await wait(); return D.people.map((x) => ({ email: x.email, full_name: x.full_name, hub: x.hub, invited: !!x.invited })); },
+  async routesFor() { await wait(); return { leave: { route: 'hr', name: 'HR' }, od: { route: 'chairman', name: 'Chairman' }, reports_to: null, reports_to_name: null, reports_to_signed_in: false }; },
   async personDetail(uid) {
     await wait();
     const p = D.people.find((x) => x.id === uid);
