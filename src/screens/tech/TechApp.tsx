@@ -14,14 +14,19 @@ import { Biometric } from './Biometric';
 import { bestFix, firstViewToday } from '../../device';
 import { parseCsv, pick, normDate, toCsv, download } from '../../lib/csv';
 import { buildReport } from '../../lib/report';
-import { api } from '../../lib/api';
+import { api, type HelpContact } from '../../lib/api';
 import { hr as hrApi, type Hub, type Person } from '../../lib/hr';
 const MapView = lazy(() => import('../../ui/MapView'));
 
 type Tab = 'home' | 'audit' | 'alerts' | 'accuracy' | 'setup';
 type Sub = { name: 'roles' } | { name: 'devices' } | { name: 'rules' } | { name: 'integrations' } | { name: 'radius' } | { name: 'purge' } | { name: 'selfies' } | { name: 'bulk' } | { name: 'report' } | { name: 'alert'; f: Flag } | { name: 'notifs' } | { name: 'biometric' };
 type Sheet = null | { t: 'account' } | { t: 'entry'; e: AuditRow } | { t: 'addlogin' } | { t: 'login'; l: RoleLogin } | { t: 'rule'; k: string; v: string }
-  | { t: 'device'; d: Device } | { t: 'exports' } | { t: 'privacy' } | { t: 'addtest' };
+  | { t: 'device'; d: Device } | { t: 'exports' } | { t: 'privacy' } | { t: 'addtest' } | { t: 'method'; h: Hub } | { t: 'help' };
+const METHOD: Record<string, [string, string]> = {
+  both: ['Both', 'Earliest in, latest out counts'],
+  bio: ['Fingerprint', 'Selfie only for OD venues'],
+  selfie: ['Selfie', 'Phone selfie and location']
+};
 
 const TINTS = ['#3B4A6B', '#5B4AA8', '#2F62D9', '#1F7A55', '#9C3F5A', '#7A5A2E', '#4E5464'];
 const tint = (s: string) => TINTS[[...s].reduce((a, c) => a + c.charCodeAt(0), 0) % TINTS.length];
@@ -46,7 +51,7 @@ const RULES: { k: string; l: string; s: string; u: string; type: 'time' | 'numbe
 ];
 const t12 = (hm: string | number | undefined) => { if (typeof hm !== 'string') return '—'; const [h, m] = hm.split(':').map(Number); return `${((h + 11) % 12) + 1}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`; };
 const ERR: Record<string, string> = {
-  not_yourself: 'You can’t remove your own login.', last_tech: 'Keep at least one Tech login.', is_staff: 'That email belongs to a staff member.', not_on_admin_list: 'Not on the admin list.',
+  not_yourself: 'You can’t remove your own login.', last_tech: 'Keep at least one Tech login.', is_staff: 'That email belongs to a staff member.', not_on_admin_list: 'Not on the admin list.', bad_value: 'Check the numbers and email.', bad_method: 'Pick a method.',
   bad_email: 'Enter a valid email.', out_of_range: 'Value is outside the allowed range.', bad_time: 'Enter a time like 10:00.',
   late_before_start: '“Late until” must be after “On time until”.', not_pending: 'Already decided.',
   already_added: 'That email is already a staff member.', radius_out_of_range: 'Radius must be 50 m to 3 km.'
@@ -481,7 +486,13 @@ function DevicesView({ onBack, setSheet, onChanged }: { onBack: () => void; setS
 
 function RulesView({ onBack, setSheet }: { onBack: () => void; setSheet: (s: Sheet) => void }) {
   const [s, setS] = useState<Settings | null>(null);
-  useEffect(() => { tech.settings().then(setS).catch(() => setS({})); }, []);
+  const [hubs, setHubs] = useState<Hub[] | null>(null);
+  const [help, setHelp] = useState<HelpContact | null>(null);
+  useEffect(() => {
+    tech.settings().then(setS).catch(() => setS({}));
+    hrApi.hubs().then((h) => setHubs(h.filter((x) => x.active))).catch(() => setHubs([]));
+    tech.helpContact().then(setHelp).catch(() => setHelp(null));
+  }, []);
   const show = (r: (typeof RULES)[number]) => (r.type === 'time' ? t12(s?.[r.k]) : `${s?.[r.k] ?? '—'} ${r.u}`);
   return (
     <div className="scr fade" style={{ paddingBottom: 40 }}>
@@ -492,6 +503,13 @@ function RulesView({ onBack, setSheet }: { onBack: () => void; setSheet: (s: She
         <div className="card" style={{ padding: '4px 16px' }}>{RULES.map((r) => <button key={r.k} className="setrow" onClick={() => setSheet({ t: 'rule', k: r.k, v: String(s[r.k] ?? '') })}><span className="t"><b>{r.l}</b><span>{r.s}</span></span><span className="v">{show(r)}</span><Icon n="chevR" /></button>)}</div>
         <div className="sec">Per hub</div>
         <div className="card row"><span className="ri c-pend"><Icon n="building" /></span><span className="t"><b>Radius and pin</b><span>HR sets each hub’s pin and radius</span></span></div>
+        <div className="sec">Check-in method</div>
+        <div className="card" style={{ padding: '4px 16px' }}>{!hubs ? <Spin /> : hubs.map((h) => (
+          <button key={h.id} className="setrow" onClick={() => setSheet({ t: 'method', h })}><span className="t"><b>{h.name}</b><span>{METHOD[h.checkin_method ?? 'both'][1]}</span></span>
+            <span className="v">{METHOD[h.checkin_method ?? 'both'][0]}</span><Icon n="chevR" /></button>))}</div>
+        <div className="sec">Help for staff</div>
+        <div className="card" style={{ padding: '4px 16px' }}>
+          <button className="setrow" onClick={() => setSheet({ t: 'help' })}><span className="t"><b>AI team contact</b><span>{help ? [help.whatsapp && 'WhatsApp', help.phone && 'Call', help.email && 'Email'].filter(Boolean).join(' · ') || 'Not set' : '—'}</span></span><Icon n="chevR" /></button></div>
         <p className="to">Changes apply from the next check-in and are logged.</p>
       </>}
     </div>
@@ -512,6 +530,24 @@ function Integrations({ svc, health, onBack }: { svc: ReturnType<typeof services
       <p className="to">Keys are never shown here. Region {health?.region || 'ap-south-1'}.</p>
     </div>
   );
+}
+
+// AI team contact shown on the staff Help button (WhatsApp, call, email). At least one.
+function HelpSheet({ wrap, close, run, busy, err }: { wrap: (l: string, n: React.ReactNode) => React.ReactNode; close: () => void; run: (fn: () => Promise<void>, ok: string) => Promise<void>; busy: boolean; err: string | null }) {
+  const [c, setC] = useState<HelpContact | null>(null);
+  useEffect(() => { tech.helpContact().then(setC).catch(() => setC({ email: '', whatsapp: '', phone: '' })); }, []);
+  const num = (v: string) => v === '' || /^\+?[0-9]{10,15}$/.test(v);
+  const ok = !!c && num(c.whatsapp) && num(c.phone) && (c.email === '' || /^[^\s@]+@[^\s@]+\.[A-Za-z]{2,}$/.test(c.email)) && !!(c.email || c.whatsapp || c.phone);
+  const set = (k: keyof HelpContact) => (e: React.ChangeEvent<HTMLInputElement>) => setC((x) => (x ? { ...x, [k]: e.target.value.trim() } : x));
+  return <>{wrap('AI team contact', !c ? <Spin /> : <>
+    <h3>AI team contact</h3><p>Staff see this on Help.</p>
+    <label className="fld"><span>WhatsApp</span><input inputMode="tel" placeholder="+919876543210" value={c.whatsapp} onChange={set('whatsapp')} /></label>
+    <label className="fld"><span>Call</span><input inputMode="tel" placeholder="+919876543210" value={c.phone} onChange={set('phone')} /></label>
+    <label className="fld"><span>Email</span><input inputMode="email" placeholder="ai@startuptn.in" value={c.email} onChange={set('email')} /></label>
+    {err && <div className="err">{err}</div>}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 14 }}>
+      <button className="btn dark" disabled={!ok || busy} onClick={() => run(() => tech.setHelpContact(c), 'Help contact saved')}>{busy ? 'Saving' : 'Save'}</button>
+      <button className="btn ghost" onClick={close}>Cancel</button></div></>)}</>;
 }
 
 // ---------------- sheets ----------------
@@ -583,6 +619,19 @@ function TechSheets({ sheet, setSheet, onChanged }: { sheet: Sheet; setSheet: (s
           <div className="two"><button className="btn light" onClick={() => setConfirm(false)}>Cancel</button><button className="btn danger" disabled={busy} onClick={() => run(() => tech.removeLogin(l.email), 'Login removed')}>Remove</button></div></>}
     </>);
   }
+  if (sheet.t === 'method') {
+    const h = sheet.h, cur = h.checkin_method ?? 'both';
+    return wrap(`${h.name} check-in`, <>
+      <h3>{h.name} check-in</h3><p>How staff at this hub check in.</p>
+      <div className="opts">{(['both', 'bio', 'selfie'] as const).map((m) => (
+        <button key={m} className="opt" disabled={busy} onClick={() => (m === cur ? close() : run(() => tech.setHubCheckin(h.id, m), `${h.name}: ${METHOD[m][0]}`))}>
+          <div className={`ri ${m === 'bio' ? 'c-ok' : m === 'selfie' ? 'c-od' : 'c-pend'}`}><Icon n={m === 'bio' ? 'scan' : m === 'selfie' ? 'cam' : 'check'} /></div>
+          <div><b>{METHOD[m][0]}</b><span>{METHOD[m][1]}</span></div>{m === cur && <Icon n="check" className="c" />}</button>))}</div>
+      {err && <div className="err">{err}</div>}
+      <p className="to">From the next check-in. Logged.</p>
+      <button className="btn ghost" style={{ marginTop: 8 }} onClick={close}>Cancel</button></>);
+  }
+  if (sheet.t === 'help') return <HelpSheet wrap={wrap} close={close} run={run} busy={busy} err={err} />;
   if (sheet.t === 'rule') {
     const r = RULES.find((x) => x.k === sheet.k)!;
     const n = Number(val), valid = r.type === 'time' ? /^([01]\d|2[0-3]):[0-5]\d$/.test(val) : val !== '' && n >= (r.min ?? 0) && n <= (r.max ?? 1e9);

@@ -856,3 +856,106 @@ do $$ begin
              and not exists (select 1 from unnest(coalesce(p.proconfig, '{}')) c where c like 'search_path=%')) then raise exception 'FAIL search_path'; end if;
   raise notice 'PASS 32g every listed function has a fixed search_path';
 end $$;
+
+-- ---------- 33. check-in method per hub; disputed selfie falls back to the fingerprint; help contact ----------
+-- Kavya (her hub, moved to Salem earlier) on 5 Nov: fingerprint in 09:41:12, out 18:05 (section 26). Add a selfie day: in 09:20, out 17:00.
+select pg_temp.reset();
+delete from attendance_days where user_id = '00000000-0000-0000-0000-000000000001' and day = '2026-11-05';
+insert into punches (id, user_id, kind, idempotency_key, client_time, server_time, lat, lng, target_type, band) values
+  ('00000000-0000-0000-0000-0000000033a1', '00000000-0000-0000-0000-000000000001', 'in', 'm33in', '2026-11-05 09:20+05:30', '2026-11-05 09:20+05:30', 13, 80, 'hub', 'ok'),
+  ('00000000-0000-0000-0000-0000000033a2', '00000000-0000-0000-0000-000000000001', 'out', 'm33out', '2026-11-05 17:00+05:30', '2026-11-05 17:00+05:30', 13, 80, 'hub', null);
+insert into attendance_days (user_id, day, in_punch, out_punch, in_time, out_time, band, early_out, status) values
+  ('00000000-0000-0000-0000-000000000001', '2026-11-05', '00000000-0000-0000-0000-0000000033a1', '00000000-0000-0000-0000-0000000033a2',
+   '2026-11-05 09:20+05:30', '2026-11-05 17:00+05:30', 'ok', true, 'present');
+do $$ declare r record; begin
+  select * into r from attendance_merged('2026-11-05', '2026-11-05', 'kavya@startuptn.in');
+  if r.method <> 'both' or r.in_time <> '2026-11-05 09:20+05:30' or r.out_time <> '2026-11-05 18:05+05:30' or r.in_src <> 'app' or r.out_src <> 'bio' or r.source <> 'both' or r.early_out then
+    raise exception 'FAIL both: earliest in, latest out %', r; end if;
+  raise notice 'PASS 33 both: earliest check-in and latest check-out from selfie or fingerprint';
+end $$;
+-- a dispute on the selfie check-in: the fingerprint time counts
+insert into flags (id, punch_id, user_id, kind, rule) values ('00000000-0000-0000-0000-0000000033f1', '00000000-0000-0000-0000-0000000033a1', '00000000-0000-0000-0000-000000000001', 'face', 'test');
+do $$ declare r record; begin
+  select * into r from attendance_merged('2026-11-05', '2026-11-05', 'kavya@startuptn.in');
+  if r.in_time <> '2026-11-05 09:41:12+05:30' or r.in_src <> 'bio' or r.in_punch is not null then raise exception 'FAIL disputed selfie should give way to fingerprint %', r; end if;
+  raise notice 'PASS 33b disputed selfie: fingerprint time used';
+end $$;
+update flags set status = 'valid' where id = '00000000-0000-0000-0000-0000000033f1';
+do $$ begin
+  if (select in_time from attendance_merged('2026-11-05', '2026-11-05', 'kavya@startuptn.in')) <> '2026-11-05 09:20+05:30' then raise exception 'FAIL cleared dispute: selfie should count again'; end if;
+  raise notice 'PASS 33c dispute cleared by HR: selfie counts again';
+end $$;
+-- a late flag is not a dispute about the selfie
+update flags set status = 'open', kind = 'late' where id = '00000000-0000-0000-0000-0000000033f1';
+do $$ begin
+  if (select in_src from attendance_merged('2026-11-05', '2026-11-05', 'kavya@startuptn.in')) <> 'app' then raise exception 'FAIL late question treated as a dispute'; end if;
+  raise notice 'PASS 33d a late-reason question does not replace the selfie time';
+end $$;
+-- only the Tech admin sets the method
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000a1');
+do $$ begin
+  begin perform set_hub_checkin((select hub_id from profiles where email = 'kavya@startuptn.in'), 'bio'); raise exception 'FAIL HR set the method';
+  exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
+  raise notice 'PASS 33e HR cannot change the check-in method';
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-000000000001');
+do $$ begin
+  begin perform set_hub_checkin((select id from hub_directory where name = 'Chennai'), 'selfie'); raise exception 'FAIL staff set the method';
+  exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
+  begin perform hr_board('2026-11-05', '2026-11-05'); raise exception 'FAIL staff read hr_board';
+  exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
+  begin perform attendance_merged('2026-11-05', '2026-11-05'); raise exception 'FAIL staff called attendance_merged';
+  exception when insufficient_privilege then null; end;
+  begin perform checkin_context('kavya@startuptn.in'); raise exception 'FAIL staff called checkin_context';
+  exception when insufficient_privilege then null; end;
+  if my_today()->>'checkin' <> 'both' or my_today()->'help'->>'email' is null then raise exception 'FAIL my_today method/help %', my_today(); end if;
+  if my_today()::text ~* 'radius|distance|inside|flag|face_sim' then raise exception 'FAIL my_today leaks a check'; end if;
+  raise notice 'PASS 33f staff: cannot set the method or read others; sees own method and help';
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000f1');
+select set_hub_checkin((select hub_id from profiles where email = 'kavya@startuptn.in'), 'bio');
+select pg_temp.reset();
+do $$ declare r record; begin
+  select * into r from attendance_merged('2026-11-05', '2026-11-05', 'kavya@startuptn.in');
+  if r.method <> 'bio' or r.in_time <> '2026-11-05 09:41:12+05:30' or r.out_time <> '2026-11-05 18:05+05:30' or r.source <> 'bio' then raise exception 'FAIL fingerprint-only hub %', r; end if;
+  if (select count(*) from audit_log where entity = 'hubs' and after->>'checkin_method' = 'bio') < 1 then raise exception 'FAIL method change not audited'; end if;
+  raise notice 'PASS 33g fingerprint-only hub: office selfie left out, change audited';
+end $$;
+-- fingerprint-only hub, OD day: the venue selfie still counts
+update attendance_days set status = 'od' where user_id = '00000000-0000-0000-0000-000000000001' and day = '2026-11-05';
+do $$ begin
+  if (select in_time from attendance_merged('2026-11-05', '2026-11-05', 'kavya@startuptn.in')) <> '2026-11-05 09:20+05:30' then raise exception 'FAIL OD selfie on fingerprint hub'; end if;
+  raise notice 'PASS 33h fingerprint-only hub: OD venue selfie counts';
+end $$;
+update attendance_days set status = 'present' where user_id = '00000000-0000-0000-0000-000000000001' and day = '2026-11-05';
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000f1');
+select set_hub_checkin((select hub_id from profiles where email = 'kavya@startuptn.in'), 'selfie');
+select pg_temp.reset();
+do $$ declare r record; begin
+  select * into r from attendance_merged('2026-11-05', '2026-11-05', 'kavya@startuptn.in');
+  if r.in_time <> '2026-11-05 09:20+05:30' or r.out_time <> '2026-11-05 17:00+05:30' or r.bio_in is not null or not r.early_out then raise exception 'FAIL selfie-only hub %', r; end if;
+  if exists (select 1 from attendance_merged('2026-11-01', '2026-11-30', 'kavya@startuptn.in') where bio_in is not null or source <> 'app') then raise exception 'FAIL fingerprint shown on selfie hub'; end if;
+  raise notice 'PASS 33i selfie-only hub: fingerprint left out';
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000f1');
+do $$ begin
+  begin perform set_hub_checkin((select hub_id from profiles where email = 'kavya@startuptn.in'), 'gps'); raise exception 'FAIL bad method saved';
+  exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
+  perform set_setting('help_contact', '{"email": "ai@startuptn.in", "whatsapp": "+919876543210", "phone": ""}');
+  begin perform set_setting('help_contact', '{"email": "x", "whatsapp": "<script>"}'); raise exception 'FAIL bad help contact saved';
+  exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
+  begin perform set_setting('help_contact', '{"email": "", "whatsapp": "", "phone": ""}'); raise exception 'FAIL empty help contact saved';
+  exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
+  raise notice 'PASS 33j method and help contact validated';
+end $$;
+select set_hub_checkin((select hub_id from profiles where email = 'kavya@startuptn.in'), 'both');
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000a1');
+do $$ begin
+  if (select count(*) from hr_board('2026-11-01', '2026-11-30') where email = 'kavya@startuptn.in' and day = '2026-11-05' and in_src = 'app') <> 1 then raise exception 'FAIL hr_board'; end if;
+  begin perform hr_board('2026-01-01', '2026-11-30'); raise exception 'FAIL long range';
+  exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
+  raise notice 'PASS 33k HR reads the merged board';
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000f1');
+select set_setting('help_contact', '{"email": "ai@startuptn.in", "whatsapp": "", "phone": ""}');
+select pg_temp.reset();

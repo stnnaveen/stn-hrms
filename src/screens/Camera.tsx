@@ -7,6 +7,7 @@ import { fmtTime, stamp } from '../lib/time';
 import { placeLabel } from '../lib/geo';
 import { Icon } from '../ui/Icon';
 import { PermHelp } from '../ui/PermHelp';
+import { HelpButton } from '../ui/Help';
 
 type Phase = 'starting' | 'align' | 'challenge' | 'count' | 'saving' | 'error';
 const CHALLENGE_TEXT = { blink: 'Blink once', turn: 'Turn your head a little' };
@@ -135,7 +136,8 @@ export function Camera() {
         </div>
         {(err === 'location_denied' || err === 'camera_denied') && <PermHelp what={[err === 'location_denied' ? 'location' : 'camera']} />}
         <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <button className="btn dark" onClick={() => { go('home'); setTimeout(() => go('camera'), 0); }}>Try again</button>
+          {err === 'use_fingerprint' ? null : <button className="btn dark" onClick={() => { go('home'); setTimeout(() => go('camera'), 0); }}>Try again</button>}
+          {err !== 'location_denied' && err !== 'camera_denied' && <HelpButton look="button" />}
           <button className="btn ghost" onClick={() => go('home')}>Back</button>
         </div>
       </div>
@@ -158,7 +160,7 @@ export function Camera() {
       <div className="hint">{hint}</div>
       <div className="bar">
         <button className="x" onClick={() => go('home')} aria-label="Close"><Icon n="x" /></button>
-        <b>{visit ? 'Venue check-in' : out ? 'Check out' : 'Check in'}</b><span style={{ width: 42 }} />
+        <b>{visit ? 'Venue check-in' : out ? 'Check out' : 'Check in'}</b><HelpButton look="bar" />
       </div>
       <div className="wm">
         <div className="loc">{fix ? <><Icon n="pin" size={16} />Location tagged</> : <><span className="spin" />Locating you</>}</div>
@@ -207,6 +209,7 @@ export function Result() {
         <p className="msg">{msg}</p>
         <div className="meta"><span className="chip c-pend"><Icon n="pin" size={14} />{place}</span></div>
         <div className="cta"><button className="btn dark" onClick={() => go('home')}>Done</button></div>
+        <div style={{ position: 'absolute', top: 'calc(env(safe-area-inset-top,0px) + 14px)', right: 18 }}><HelpButton /></div>
       </div>
     </div>
   );

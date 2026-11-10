@@ -76,5 +76,13 @@ for (const [origin, want] of [['https://stn-hrms.vercel.app', true], ['https://e
 }
 { const r = await fetch(`${SUPA_URL}/functions/v1/bio-sync`, { method: 'POST', headers: { 'x-bio-key': 'stnbio_' + '0'.repeat(64), 'Content-Type': 'application/json' }, body: '{}' }); out(r.status === 401, `fingerprint sync refuses a wrong key (${r.status})`); }
 { const r = await fetch(`${SUPA_URL}/auth/v1/token?grant_type=password`, { method: 'POST', headers: { apikey: ANON, 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'hr.ai@startuptn.in', password: '00000000' }) }); out(r.status === 400 || r.status === 429, `wrong test code refused (${r.status})`); }
+// ---- 10 Nov: check-in method per hub, merged board, help contact
+for (const [f, b] of [['hr_board', { p_from: '2026-11-01', p_to: '2026-11-02' }], ['set_hub_checkin', { p_hub: '00000000-0000-0000-0000-000000000000', p_method: 'selfie' }], ['attendance_merged', { p_from: '2026-11-01', p_to: '2026-11-02' }], ['checkin_context', { p_email: 'x@y.z' }], ['checkin_method_of', { p_email: 'x@y.z' }]]) {
+  const [a] = await rpc(anonH, f, b); const [c] = await rpc(st, f, b); out(a >= 400 && c >= 400, `${f} refused signed out and for staff (${a}, ${c})`);
+}
+{ const [c, t] = await rpc(st, 'my_today', {}); let j = null; try { j = JSON.parse(t.length >= 120 ? '{}' : t); } catch { /* long */ }
+  const [c2, full] = await fetch(`${SUPA_URL}/rest/v1/rpc/my_today`, { method: 'POST', headers: st, body: '{}' }).then(async (r) => [r.status, await r.text()]);
+  void c; void j; out(c2 === 200 && /"checkin"/.test(full) && !/radius|distance|inside|flag|face_sim/i.test(full), `staff: my_today has the method and help, no check details (${c2})`); }
+{ const [c] = await rpc(st, 'set_setting', { p_key: 'help_contact', p_value: { email: 'evil@x.com', whatsapp: '', phone: '' } }); out(c >= 400, `staff: cannot change the help contact (${c})`); }
 console.log(`SEC done: ${fails} failed`);
 process.exit(fails ? 1 : 0);

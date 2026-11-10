@@ -161,3 +161,10 @@ export async function hardRefresh(): Promise<void> {
   try { const r = await navigator.serviceWorker?.getRegistration(); await r?.update(); } catch { /* offline or no service worker */ }
   location.reload();
 }
+
+/** Open WhatsApp, the dialer or the mail app (v2: Capacitor opens these the same way). */
+export function openExternal(url: string) {
+  if (!/^(https:\/\/wa\.me\/|tel:|mailto:)/.test(url)) return;
+  if (url.startsWith('https:')) window.open(url, '_blank', 'noopener');
+  else window.location.href = url;
+}

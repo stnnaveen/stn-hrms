@@ -1,5 +1,6 @@
 import { isHomeScreenApp, phoneKind } from '../device';
 import { Icon } from './Icon';
+import { HelpButton } from './Help';
 
 /** Step-by-step fix when location or camera is blocked. iPhone often blocks without asking when
  *  Location Services or "Safari Websites" is set to Never, so we show exactly where to switch it on. */
@@ -28,6 +29,7 @@ export function PermHelp({ what }: { what: Array<'location' | 'camera'> }) {
     <div className="card" style={{ marginTop: 14 }}>
       <div className="row"><span className="ri c-warn"><Icon n="alert" /></span><span className="t"><b>{loc && cam ? 'Location and camera are off' : loc ? 'Location is off' : 'Camera is off'}</b><span>{k === 'iphone' ? 'iPhone' : k === 'android' ? 'Android' : 'This browser'} · fix in a minute</span></span></div>
       <ol className="steps">{steps.map((s) => <li key={s}>{s}</li>)}</ol>
+      <div style={{ marginTop: 10 }}><HelpButton look="button" /></div>
     </div>
   );
 }

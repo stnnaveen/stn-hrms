@@ -14,7 +14,14 @@ export interface Today {
   ods_today?: { id: string; subject: string; venue_name: string; starts_at: string; ends_at: string; status: string }[];
   chairman_available?: { starts_at: string; ends_at: string; place: string | null; note: string | null }[];
   od_today?: { id: string; subject: string; venue_name: string; venue_place: string | null; venue_url: string | null; starts_at: string; ends_at: string; visited_at: string | null } | null;
+  /** The day as it counts: selfie and fingerprint merged by the hub's check-in method (server decides). */
+  day?: { in_time: string | null; out_time: string | null; band: 'ok' | 'warn' | 'bad' | null; early_out: boolean; in_src: 'app' | 'bio' | null; out_src: 'app' | 'bio' | null } | null;
+  /** Hub check-in method set by the Tech admin: bio = fingerprint only (selfie for OD venues), selfie, both. */
+  checkin?: CheckinMethod;
+  help?: HelpContact | null;
 }
+export type CheckinMethod = 'bio' | 'selfie' | 'both';
+export interface HelpContact { email: string; whatsapp: string; phone: string }
 export interface MyFinger { today: { in_at: string; out_at: string | null; band: 'ok' | 'warn' | 'bad' } | null; month: { on_time: number; late: number; early: number; finger_days: number } | null }
 export interface MyMonth {
   month: string;
@@ -57,7 +64,7 @@ async function invoke<T>(body: Record<string, unknown> | FormData): Promise<T> {
 }
 
 // Codes that mean "this check-in will never be accepted" (drop it from the phone's queue) vs "try again later" (keep it).
-const FINAL_REFUSALS = new Set(['already_checked_in', 'already_checked_out', 'not_checked_in', 'check_in_first', 'no_od_now', 'already_visited', 'bad_selfie', 'bad_location', 'bad_time', 'bad_request', 'bad_selfie_key', 'not_active', 'device_revoked']);
+const FINAL_REFUSALS = new Set(['use_fingerprint', 'already_checked_in', 'already_checked_out', 'not_checked_in', 'check_in_first', 'no_od_now', 'already_visited', 'bad_selfie', 'bad_location', 'bad_time', 'bad_request', 'bad_selfie_key', 'not_active', 'device_revoked']);
 const RETRYABLE = new Set(['network', 'upload_failed', 'save_failed', 'not_signed_in', 'upload_unavailable', 'too_many']);
 const SAVE_TIMEOUT_MS = 40000;   // after this the phone keeps the check-in and sends it later; staff are never stuck
 const withTimeout = <T,>(pr: Promise<T>, ms: number) => Promise.race([pr, new Promise<T>((_, rej) => setTimeout(() => rej(new ApiError('network')), ms))]);
@@ -224,6 +231,8 @@ const demo = {
         : demoState.email.startsWith('ai@') ? { full_name: 'Tech admin', employee_code: null, role: 'tech', hub: null, face_status: 'none', consented: true }
         : { full_name: 'Kavya R', employee_code: 'STN0142', role: 'staff', hub: 'Chennai', face_status: 'approved', consented: demoState.consented },
       today: demoState.today, month: { on_time: 18, late: 2, early: 1 }, requests: demoState.requests, od_today: demoState.odToday,
+      checkin: 'both', help: { email: 'ai@startuptn.in', whatsapp: '', phone: '' },
+      day: demoState.today ? { in_time: demoState.today.in_time, out_time: demoState.today.out_time, band: demoState.today.band, early_out: demoState.today.early_out, in_src: 'app', out_src: demoState.today.out_time ? 'app' : null } : null,
       test_mode: true, ods_today: demoState.odToday ? [{ id: demoState.odToday.id, subject: demoState.odToday.subject, venue_name: demoState.odToday.venue_name, starts_at: demoState.odToday.starts_at, ends_at: demoState.odToday.ends_at, status: 'approved' }] : [],
       chairman_available: [{ starts_at: new Date(Date.now() + 36e5).toISOString(), ends_at: new Date(Date.now() + 3 * 36e5).toISOString(), place: 'Chennai hub', note: 'Walk in for quick reviews' }]
     };
@@ -274,6 +283,7 @@ export function errorText(code: string): string {
     consent_needed: 'Please accept the consent first.',
     already_checked_in: 'You are already checked in.',
     not_checked_in: 'Check in first.',
+    use_fingerprint: 'Use the fingerprint device.',
     already_checked_out: 'You are already checked out.',
     no_hub: 'No hub set for you yet. Ask HR.',
     check_in_first: 'Check in for the day first.',

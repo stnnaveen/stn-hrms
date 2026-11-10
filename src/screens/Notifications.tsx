@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useApp } from '../App';
 import { api, type Notif } from '../lib/api';
+import { HelpButton } from '../ui/Help';
 import { Icon } from '../ui/Icon';
 
 const KIND: Record<string, [string, string]> = {
@@ -48,6 +49,7 @@ export function Notifications({ onBackOverride }: { onBackOverride?: () => void 
         );
       })}
     </div>
+      {!onBackOverride && <div style={{ position: 'absolute', right: 20, bottom: 'calc(env(safe-area-inset-bottom,0px) + 24px)', zIndex: 5 }}><HelpButton /></div>}
       {reasonFor && (<>
         <div className="scrim" onClick={() => setReasonFor(null)} />
         <div className="sheet" role="dialog" aria-label="Add a reason"><div className="grab" />

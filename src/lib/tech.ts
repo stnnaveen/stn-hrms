@@ -1,6 +1,6 @@
 // Tech admin data layer (PRD TA-01..TA-09). Tech reads everything (RLS), and changes roles, rules and phones
 // only through Tech-only RPCs. Health comes from the check-in function and names services, never keys.
-import { sb, DEMO, ApiError } from './api';
+import { sb, DEMO, ApiError, type CheckinMethod, type HelpContact } from './api';
 import type { Flag } from './hr';
 import { fetchAll } from './fetchAll';
 
@@ -149,6 +149,10 @@ const real = {
     return Object.fromEntries(rows.map((r) => [r.key, r.value as string | number]));
   },
   async setSetting(key: string, value: string | number) { const { error } = await sb!.rpc('set_setting', { p_key: key, p_value: value }); rpcErr(error); },
+  /** Check-in method per hub: bio (fingerprint; selfie only for OD venues), selfie, or both. Logged. */
+  async setHubCheckin(hubId: string, method: CheckinMethod) { const { error } = await sb!.rpc('set_hub_checkin', { p_hub: hubId, p_method: method }); rpcErr(error); },
+  async helpContact(): Promise<HelpContact> { const r = must(await sb!.from('settings').select('value').eq('key', 'help_contact').maybeSingle()) as { value: HelpContact } | null; return r?.value ?? { email: '', whatsapp: '', phone: '' }; },
+  async setHelpContact(c: HelpContact) { const { error } = await sb!.rpc('set_setting', { p_key: 'help_contact', p_value: c }); rpcErr(error); },
   /** CSV text for download. Every export is logged (PRD TA-08). */
   /** Same radius decision the check-in uses, run on the server. */
   async radiusTest(point: { lat: number; lng: number; accuracy: number | null }, t: { hub_id?: string; target?: { lat: number; lng: number; radius_m: number } }): Promise<RadiusResult> {
@@ -221,6 +225,7 @@ function toCsv(head: string[], rows: string[][]) {
 const wait = (ms = 250) => new Promise((r) => setTimeout(r, ms));
 const ago = (m: number) => new Date(Date.now() - m * 60000).toISOString();
 const DS = {
+  help: { email: 'ai@startuptn.in', whatsapp: '', phone: '' } as HelpContact,
   settings: { office_start: '10:00', late_until: '10:15', office_end: '18:00', face_threshold: 80, same_point_days: 5, offline_flag_minutes: 30, clock_gap_minutes: 2, jump_kmh: 150, od_notice_hours: 12 } as Settings,
   logins: [
     { email: 'hr@startuptn.in', name: 'HR team', role: 'hr', signedIn: true, active: true, temp: false },
@@ -285,6 +290,9 @@ const demo: typeof real = {
   async resetDevices(userId) { await wait(); DS.active = DS.active.filter((x) => x.userId !== userId); },
   async settings() { await wait(); return { ...DS.settings }; },
   async setSetting(key, value) { await wait(); DS.settings[key] = value; },
+  async setHubCheckin() { await wait(); },
+  async helpContact() { await wait(); return { ...DS.help }; },
+  async setHelpContact(c) { await wait(); DS.help = { ...c }; },
   async radiusTest(point, t) {
     await wait(300); const c = t.target ?? { lat: 13.0321, lng: 80.2436, radius_m: 300 };
     const R = 6371000, toR = (d: number) => (d * Math.PI) / 180, dl = toR(point.lat - c.lat), dg = toR(point.lng - c.lng);

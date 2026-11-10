@@ -18,6 +18,12 @@ export interface Person {
   absentToday?: boolean; markNote?: string | null;                       // HR marked this day absent (or leave)
   reports_to?: string | null;                                            // reporting person's email
 }
+/** One person-day as the server counts it (hr_board): merged by the hub's check-in method. */
+export interface BoardRow {
+  email: string; user_id: string | null; day: string; method: 'bio' | 'selfie' | 'both'; band: 'ok' | 'warn' | 'bad' | null; status: string; early_out: boolean;
+  in_time: string | null; out_time: string | null; source: 'app' | 'bio' | 'both'; in_src: 'app' | 'bio' | null; out_src: 'app' | 'bio' | null;
+  in_punch: string | null; bio_in: string | null; bio_out: string | null;
+}
 export interface Holiday { day: string; name: string; kind: 'govt' | 'office' }
 export interface DayMark { email: string; day: string; mark: 'absent' | 'leave'; leave_type: string | null; note: string | null }
 export interface Route { kind: 'od' | 'leave'; id: string; route: 'hr' | 'chairman' | 'reporting'; approver_name: string; can_decide: boolean }
@@ -30,7 +36,7 @@ export interface Flag {
     quality_score: number | null; face_similarity: number | null; selfie_key: string | null; mocked: boolean | null;
     target_type?: string | null; target_id?: string | null; inside?: boolean | null } | null;
 }
-export interface Hub { id: string; name: string; lat: number; lng: number; radius_m: number; maps_url: string | null; active: boolean; staff?: number; pin_set_at?: string | null }
+export interface Hub { id: string; name: string; lat: number; lng: number; radius_m: number; maps_url: string | null; active: boolean; staff?: number; pin_set_at?: string | null; checkin_method?: 'bio' | 'selfie' | 'both' }
 export interface Pin { server_time: string; lat: number; lng: number; accuracy_m: number | null }
 export interface DayPunch { id?: string; kind: 'in' | 'out'; server_time: string; lat: number; lng: number; place_name: string | null; band: string | null; early_out: boolean; selfie_key: string | null; distance_m: number | null; inside?: boolean | null; accuracy_m?: number | null; target_type?: string | null; target_id?: string | null }
 export interface PresenceDay { tracked: boolean; reason?: string; from?: string; to?: string; inside_min: number; outside_min: number; od_min: number; no_signal_min: number;
@@ -91,16 +97,20 @@ const real = {
   async today(): Promise<HrToday> { return must(await sb!.rpc('hr_today')) as HrToday; },
   async people(day: string = istToday()): Promise<Person[]> {
     const ps = must(await sb!.from('profiles').select('id, full_name, email, role, designation, phone, employee_code, active, face_status, hub:hubs(name)').in('role', ['staff', 'intern']).order('full_name'));
-    const days = must(await sb!.from('attendance_days').select('user_id, in_time, out_time, band, status, in_punch').eq('day', day));
-    const ins = (days as { in_punch: string | null }[]).map((d) => d.in_punch).filter(Boolean) as string[];
+    // the day as it counts: selfie and fingerprint merged on the server by each hub's check-in method
+    const board = must(await sb!.rpc('hr_board', { p_from: day, p_to: day })) as BoardRow[];
+    const byEmail = new Map(board.map((b) => [b.email, b]));
+    const ins = board.map((b) => b.in_punch).filter(Boolean) as string[];
     const geo = new Map<string, boolean | null>();
     if (ins.length) for (const x of must(await sb!.from('punches').select('id, inside').in('id', ins)) as { id: string; inside: boolean | null }[]) geo.set(x.id, x.inside);
-    const byUser = new Map((days as { user_id: string }[]).map((d) => [d.user_id, d]));
-    const people = (ps as unknown as (Person & { hub: { name: string } | null })[]).map((p) => {
-      const d = byUser.get(p.id) as (Person['today'] & { in_punch: string | null }) | undefined;
-      const g = d?.in_punch ? geo.get(d.in_punch) : undefined;
-      return { ...p, hub: p.hub?.name ?? null, today: d ?? null, geo: g == null ? null : g ? 'in' as const : 'out' as const };
-    });
+    const dayOf = (email: string) => {
+      const b = byEmail.get(email); if (!b) return { today: null, geo: null, bio: null };
+      const g = b.in_punch ? geo.get(b.in_punch) : undefined;
+      return { today: { in_time: b.in_time, out_time: b.out_time, band: b.band, status: b.status },
+        geo: g == null ? null : g ? 'in' as const : 'out' as const,
+        bio: b.bio_in ? { in_at: b.bio_in, out_at: b.bio_out, band: b.in_src === 'bio' ? b.band ?? 'ok' : 'ok' } : null };
+    };
+    const people = (ps as unknown as (Person & { hub: { name: string } | null })[]).map((p) => ({ ...p, hub: p.hub?.name ?? null, ...dayOf(p.email) }));
     const roster = must(await sb!.from('staff_roster').select('email, full_name, role, designation, hub_name, phone, employee_code, is_test').in('role', ['staff', 'intern'])) as
       { email: string; full_name: string; role: string; designation: string | null; hub_name: string | null; phone: string | null; employee_code: string | null; is_test: boolean }[];
     const tests = new Set(roster.filter((r) => r.is_test).map((r) => r.email));
@@ -108,18 +118,8 @@ const real = {
     const known = new Set(people.map((p) => p.email));
     const invited: Person[] = roster.filter((r) => !known.has(r.email)).map((r) => ({
       id: `invite:${r.email}`, full_name: r.full_name, email: r.email, role: r.role, designation: r.designation, hub: r.hub_name, phone: r.phone,
-      employee_code: r.employee_code, active: true, face_status: 'none', invited: true, today: null, test: r.is_test }));
-    // today's fingerprint (first punch = in, out after 20 min): merged into today; earliest in decides the colour
-    const bioRows = ((await sb!.rpc('bio_attendance', { p_from: day, p_to: day })).data ?? []) as { email: string; in_at: string; out_at: string | null; band: string }[];
-    const bioBy = new Map(bioRows.map((b) => [b.email, b]));
-    const all = [...people, ...invited].map((p) => {
-      const b = bioBy.get(p.email); if (!b) return p;
-      const t = p.today;
-      const appFirst = !!t?.in_time && t.in_time <= b.in_at;
-      const out = [t?.out_time, b.out_at].filter(Boolean).sort().pop() ?? null;
-      return { ...p, bio: { in_at: b.in_at, out_at: b.out_at, band: b.band },
-        today: { in_time: appFirst ? t!.in_time : b.in_at, out_time: out, band: appFirst ? t!.band : b.band, status: t?.status ?? 'present' } };
-    });
+      employee_code: r.employee_code, active: true, face_status: 'none', invited: true, test: r.is_test, ...dayOf(r.email) }));
+    const all: Person[] = [...people, ...invited];
     // approved OD / leave today and disputes raised today (signed-in staff only: requests and flags need an account)
     const t0 = new Date(`${day}T00:00:00+05:30`).toISOString(), t1 = new Date(`${day}T23:59:59+05:30`).toISOString();
     const [odR, lvR, flR] = await Promise.all([
@@ -179,7 +179,7 @@ const real = {
   /** 5-minute link to view a selfie, from S3 or Supabase Storage (the server knows which). Requests made together go as one call. */
   selfieUrl(key: string | null): Promise<string | null> { return key ? selfieLink(key) : Promise.resolve(null); },
   async hubs(): Promise<Hub[]> {
-    const hs = must(await sb!.from('hubs').select('id, name, lat, lng, radius_m, maps_url, active, pin_set_at').order('name')) as Hub[];
+    const hs = must(await sb!.from('hubs').select('id, name, lat, lng, radius_m, maps_url, active, pin_set_at, checkin_method').order('name')) as Hub[];
     const ps = must(await sb!.from('profiles').select('hub_id').in('role', ['staff', 'intern']).eq('active', true)) as { hub_id: string | null }[];
     return hs.map((h) => ({ ...h, staff: ps.filter((p) => p.hub_id === h.id).length }));
   },

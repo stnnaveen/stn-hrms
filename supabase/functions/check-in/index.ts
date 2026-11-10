@@ -281,14 +281,14 @@ async function handle(req: Request): Promise<Response> {
   // everything this save needs, fetched at the same time
   const [{ data: existing }, { data: dayRow }, settings, { data: od }, { data: hubRow }, { data: history }, { data: testMode }, { data: leaveOd }] = await Promise.all([
     db.from('punches').select('server_time, kind, band, early_out, place_name, lat, lng').eq('idempotency_key', body.idempotency_key).maybeSingle(),
-    db.from('attendance_days').select('in_time, out_time').eq('user_id', user.id).eq('day', today).maybeSingle(),
+    db.from('attendance_days').select('in_time, out_time, status').eq('user_id', user.id).eq('day', today).maybeSingle(),
     loadSettings(db),
     // target: an approved OD covering now (from 30 min before) beats the hub (PRD LC-04)
     db.from('od_requests').select('id, venue_lat, venue_lng, venue_radius_m')
       .eq('user_id', user.id).eq('status', 'approved')
       .lte('starts_at', new Date(now.getTime() + 30 * 60000).toISOString()).gte('ends_at', now.toISOString())
       .not('venue_lat', 'is', null).limit(1).maybeSingle(),
-    profile.hub_id ? db.from('hubs').select('id, lat, lng, radius_m').eq('id', profile.hub_id).single() : Promise.resolve({ data: null }),
+    profile.hub_id ? db.from('hubs').select('id, lat, lng, radius_m, checkin_method').eq('id', profile.hub_id).single() : Promise.resolve({ data: null }),
     db.from('punches').select('kind, lat, lng, accuracy_m, server_time').eq('user_id', user.id).order('server_time', { ascending: false }).limit(20),
     db.rpc('is_test_mode', { p_uid: user.id }),
     // check-out to go to one of today's ODs (approved or waiting): not an early leave
@@ -298,13 +298,25 @@ async function handle(req: Request): Promise<Response> {
       : Promise.resolve({ data: null })
   ]);
   if (existing) return json(reply(existing));
-  let day = dayRow as { in_time: string | null; out_time: string | null } | null;
+  let day = dayRow as { in_time: string | null; out_time: string | null; status: string } | null;
   // test staff: a new check-in clears today's earlier ones, and check-out can be repeated
   if (testMode === true && body.kind === 'in' && day?.in_time) {
     const { data: res } = await asUser.rpc('reset_my_test_day');
     await removeSelfies(db, res?.selfie_keys ?? []);
     day = null;
   }
+  // ---- the hub's check-in method (Tech admin): bio = fingerprint only, the selfie is for OD venues; both = either one
+  const method: string = (hubRow as { checkin_method?: string } | null)?.checkin_method ?? 'both';
+  if (method === 'bio' && !od && body.kind !== 'visit' && !(body.kind === 'out' && day?.status === 'od')) return json({ error: 'use_fingerprint' }, 409);
+  // a fingerprint check-in today lets the selfie check out (both) or check in at the OD venue
+  let bioIn: string | null | undefined;
+  const fingerIn = async () => {
+    if (bioIn === undefined) { const { data } = await db.rpc('checkin_context', { p_email: user.email }); bioIn = data?.bio_in ?? null; }
+    return method !== 'selfie' && !!bioIn;
+  };
+  if (body.kind === 'in' && day && !day.in_time && day.out_time) return json({ error: 'already_checked_out' }, 409);
+  if (body.kind === 'out' && !day?.in_time && !(await fingerIn())) return json({ error: 'not_checked_in' }, 409);
+  if (body.kind === 'visit' && !day?.in_time && !(await fingerIn())) return json({ error: 'check_in_first' }, 409);
   // the selfie upload starts now and runs while the rules are checked
   const tUp0 = Date.now();
   const uploadP: Promise<boolean> = body.action !== 'punch' ? Promise.resolve(true) : (async () => {
@@ -318,9 +330,7 @@ async function handle(req: Request): Promise<Response> {
   let uploadMs = 0;
   uploadP.then(() => { uploadMs = Date.now() - tUp0; });
   if (body.kind === 'in' && day?.in_time) return json({ error: 'already_checked_in' }, 409);
-  if (body.kind === 'out' && !day?.in_time) return json({ error: 'not_checked_in' }, 409);
   if (body.kind === 'out' && day?.out_time && testMode !== true) return json({ error: 'already_checked_out' }, 409);
-  if (body.kind === 'visit' && !day?.in_time) return json({ error: 'check_in_first' }, 409);
 
   if (body.kind === 'visit') {
     if (!od) return json({ error: 'no_od_now' }, 409);
@@ -385,7 +395,9 @@ async function handle(req: Request): Promise<Response> {
     ev.flags.length ? db.from('flags').insert(ev.flags.map((f) => ({ punch_id: punch.id, user_id: user.id, kind: f.kind, rule: f.rule, details: f.details }))) : Promise.resolve(),
     body.kind === 'visit' ? Promise.resolve()   // venue proof only; the day's check-in and check-out stay as they are
       : body.kind === 'in' ? db.from('attendance_days').insert({ user_id: user.id, day: today, in_punch: punch.id, in_time: now.toISOString(), band: ev.band, status: target.type === 'od' ? 'od' : 'present' })
-      : db.from('attendance_days').update({ out_punch: punch.id, out_time: now.toISOString(), early_out: ev.earlyOut, leave_od_id: leaveOd?.id ?? null }).eq('user_id', user.id).eq('day', today)
+      : day ? db.from('attendance_days').update({ out_punch: punch.id, out_time: now.toISOString(), early_out: ev.earlyOut, leave_od_id: leaveOd?.id ?? null }).eq('user_id', user.id).eq('day', today)
+      // checked in on the fingerprint, out by selfie: the day row starts with the check-out
+      : db.from('attendance_days').insert({ user_id: user.id, day: today, out_punch: punch.id, out_time: now.toISOString(), early_out: ev.earlyOut, leave_od_id: leaveOd?.id ?? null, status: target.type === 'od' ? 'od' : 'present' })
   ]);
 
   if (!placeName) {

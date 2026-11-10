@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { useApp } from '../App';
 import { api, ApiError, errorText, type Venue } from '../lib/api';
 import { readClipboard } from '../device';
+import { HelpButton } from '../ui/Help';
 import { Icon } from '../ui/Icon';
 import { placeLabel } from '../lib/geo';
 
@@ -20,7 +21,7 @@ export function parseVenue(v: string): { lat: number; lng: number } | null {
 }
 
 function Title({ small, big, onBack }: { small: string; big: string; onBack: () => void }) {
-  return <div className="ttl"><button className="rbtn" onClick={onBack} aria-label="Back"><Icon n="chevL" /></button><div className="mid"><small>{small}</small><b>{big}</b></div><span className="sp" /></div>;
+  return <div className="ttl"><button className="rbtn" onClick={onBack} aria-label="Back"><Icon n="chevL" /></button><div className="mid"><small>{small}</small><b>{big}</b></div><HelpButton /></div>;
 }
 
 export function ODForm() {

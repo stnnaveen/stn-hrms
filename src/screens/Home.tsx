@@ -9,6 +9,7 @@ import { MyCalendar } from '../ui/MyCalendar';
 import { ToApprove } from '../ui/ToApprove';
 import { AccountSheet } from '../ui/AccountSheet';
 import { RefreshButton } from '../ui/RefreshButton';
+import { HelpButton } from '../ui/Help';
 
 const BAND_CHIP = {
   ok: <span className="chip c-ok"><i />On time</span>,
@@ -35,23 +36,32 @@ export function Home() {
   if (!today) return <div className="center"><span className="spin dark" /></div>;
   const p = today.profile, d = today.today;
   const first = p.full_name.split(' ')[0];
-  const checkedIn = !!d?.in_time, checkedOut = !!d?.out_time;
-  const due = checkedIn && !checkedOut && now >= 1080;
-  const [inT, inAp] = splitTime(d?.in_time);
-  const [outT, outAp] = splitTime(d?.out_time);
+  // the hub's check-in method (Tech admin): bio = fingerprint only, selfie only for OD venues; both = either one
+  const method = today.checkin ?? 'both';
+  // the day as it counts (server merges selfie and fingerprint); falls back to the selfie day
+  const m = today.day ?? (d ? { in_time: d.in_time, out_time: d.out_time, band: d.band, early_out: d.early_out, in_src: 'app' as const, out_src: d.out_time ? 'app' as const : null } : null);
+  const appIn = !!d?.in_time, appOut = !!d?.out_time;
+  const checkedIn = !!m?.in_time, checkedOut = appOut || (!!m?.out_time && m.out_src === 'bio');
   const unread = notifs.some((n) => !n.read_at);
-  // this month: app and fingerprint days merged when the person uses the eSSL device
-  const month = finger?.month && finger.month.finger_days > 0 ? finger.month : today.month;
+  const month = today.month;   // merged on the server
   // approved OD today: the venue check-in opens 30 min before the start (same window the server uses)
   const od = today.od_today ?? null;
   const odFrom = od ? new Date(od.starts_at).getTime() - 30 * 60000 : 0;
   const odOpen = !!od && Date.now() >= odFrom && Date.now() <= new Date(od.ends_at).getTime();
   const odsLeft = (today.ods_today ?? []).filter((o) => new Date(o.ends_at).getTime() > Date.now());
+  // what the selfie button does: fingerprint-only hubs use it only at an OD venue (or to close an OD day)
+  const action: 'in' | 'out' | 'done' | 'finger' =
+    checkedOut ? 'done'
+      : method === 'bio' ? (appIn ? (d?.status === 'od' ? 'out' : 'finger') : (odOpen && !checkedIn ? 'in' : m?.out_time ? 'done' : 'finger'))
+        : checkedIn ? 'out' : 'in';
+  const due = action === 'out' && now >= 1080;
+  const [inT, inAp] = splitTime(m?.in_time);
+  const [outT, outAp] = splitTime(m?.out_time);
   const avail = today.chairman_available ?? [];
   const resetDay = async () => { try { await api.resetTestDay(); await reload(); toast('Test day cleared'); } catch { toast('Could not reset'); } };
 
   let topChip = <span className="chip c-mute"><i />Not checked in</span>;
-  if (checkedIn && !checkedOut && d?.band) topChip = BAND_CHIP[d.band];
+  if (checkedIn && !checkedOut && m?.band) topChip = BAND_CHIP[m.band];
   if (checkedOut) topChip = <span className="chip c-mute"><i />Day done</span>;
 
   const startCheckout = () => {
@@ -68,6 +78,7 @@ export function Home() {
         <div className="hdr">
           <button className="av" onClick={() => setAccount(true)} aria-label={`${p.full_name}, account and log out`}>{p.full_name.split(' ').map((w) => w[0]).join('').slice(0, 2)}</button>
           <div className="r">
+            <HelpButton />
             <RefreshButton />
             <button className="rbtn" onClick={() => go('notifs')} aria-label="Notifications"><Icon n="bell" />{unread && <span className="badge" />}</button>
           </div>
@@ -86,7 +97,7 @@ export function Home() {
           <div className="gcard">
             <div><small>Check in</small><b>{inT}</b><em>{checkedIn ? inAp : 'By 10:00'}</em></div>
             <div><small>Check out</small><b>{outT}</b><em>{checkedOut ? outAp : 'From 6:00'}</em></div>
-            <div><small>Hours</small><b>{hoursBetween(d?.in_time, d?.out_time)}</b><em>{p.hub ? `${p.hub} hub` : 'No hub'}</em></div>
+            <div><small>Hours</small><b>{hoursBetween(m?.in_time, m?.out_time)}</b><em>{p.hub ? `${p.hub} hub` : 'No hub'}</em></div>
           </div>
         </div>
         {today.test_mode && (
@@ -152,11 +163,13 @@ export function Home() {
       </>)}
 
       <div className="dock">
-        {checkedOut
+        {action === 'done'
           ? <div className="ci done"><button className="orb" disabled aria-label="Done for today"><Icon n="check" /></button><span className="cap">Done for today</span></div>
-          : checkedIn
+          : action === 'finger'
+            ? <div className="ci done"><button className="orb" disabled aria-label="Use the fingerprint device"><Icon n="scan" /></button><span className="cap">{checkedIn ? 'Fingerprint out' : 'Fingerprint in'}</span></div>
+          : action === 'out'
             ? <div className={`ci ${festive ? 'dw' : ''}`}><button className="orb" onClick={(e) => { crackers(e.currentTarget); startCheckout(); }} aria-label="Check out"><Icon n="out" /></button><span className="cap">Check out</span></div>
-            : <div className={`ci ${festive ? 'dw' : ''}`}><button className="orb" onClick={(e) => { crackers(e.currentTarget); setCamMode('in'); go('camera'); }} aria-label="Check in"><Icon n="scan" /></button><span className="cap">Check in</span></div>}
+            : <div className={`ci ${festive ? 'dw' : ''}`}><button className="orb" onClick={(e) => { crackers(e.currentTarget); setCamMode('in'); go('camera'); }} aria-label="Check in"><Icon n="scan" /></button><span className="cap">{method === 'bio' ? 'Venue check-in' : 'Check in'}</span></div>}
       </div>
       <button className={`fab ${fab ? 'open' : ''}`} onClick={() => setFab(!fab)} aria-label={fab ? 'Close' : 'New request'} aria-expanded={fab}><Icon n="plus" /></button>
 
