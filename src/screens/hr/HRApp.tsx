@@ -4,7 +4,7 @@ import { useApp } from '../../App';
 import { api, errorText, ApiError } from '../../lib/api';
 import { hr, type HistoryItem, type MarkQuery, type RoutesFor, FLAG_LABEL, type Flag, type HrToday, type Hub, type LeaveReq, type OdReq, type Person, type PersonDetail, type Pin, type DayPunch, type Route, type Holiday } from '../../lib/hr';
 import { placeLabel, googleMapsUrl, appleMapsUrl, fmtDistance } from '../../lib/geo';
-import { fmtShortDay, fmtTime, greeting, outChip } from '../../lib/time';
+import { fmtShortDay, fmtTime, hoursBetween, greeting, outChip } from '../../lib/time';
 const MapView = lazy(() => import('../../ui/MapView'));
 import { Icon } from '../../ui/Icon';
 import { Notifications } from '../Notifications';
@@ -18,12 +18,13 @@ import { Fingerprint } from './Fingerprint';
 import { Holidays } from './Holidays';
 import { MarkDay } from './MarkDay';
 import { RequestSheet } from '../../ui/RequestSheet';
+import { LiveMap, OutToday } from './Tracking';
 import { PersonCalendar } from '../../ui/MyCalendar';
 import { RefreshButton } from '../../ui/RefreshButton';
 
 type Tab = 'home' | 'staff' | 'approvals' | 'disputes';
 type Sub = { name: 'today' } | { name: 'person'; p: Person } | { name: 'dispute'; f: Flag } | { name: 'hubs' } | { name: 'hub'; h: Hub | null }
-  | { name: 'add' } | { name: 'long'; p?: Person } | { name: 'notifs' } | { name: 'finger' } | { name: 'holidays' };
+  | { name: 'add' } | { name: 'long'; p?: Person } | { name: 'notifs' } | { name: 'finger' } | { name: 'holidays' } | { name: 'live' } | { name: 'outside' };
 
 const TINTS = ['#3B4A6B', '#5B4AA8', '#2F62D9', '#1F7A55', '#9C3F5A', '#7A5A2E', '#4E5464'];
 const tint = (s: string) => TINTS[[...s].reduce((a, c) => a + c.charCodeAt(0), 0) % TINTS.length];
@@ -40,6 +41,13 @@ function Head({ small, big, right }: { small: string; big: string; right?: React
   return <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 16 }}><div><small style={{ fontSize: 13, color: 'var(--ph-ink3)' }}>{small}</small><b style={{ display: 'block', fontSize: 26, fontWeight: 600, letterSpacing: '-.02em' }}>{big}</b></div>{right}</div>;
 }
 function Spin() { return <div className="center" style={{ height: 240 }}><span className="spin dark" /></div>; }
+// hours worked: check-in to check-out; still in today = so far
+const istDayOf = (iso: string) => new Date(new Date(iso).getTime() + 330 * 60000).toISOString().slice(0, 10);
+export function worked(i: string | null | undefined, o: string | null | undefined) {
+  if (!i) return null;
+  if (!o && istDayOf(i) !== new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10)) return null;
+  return <small>{hoursBetween(i, o)}{o ? ' worked' : ' so far'}</small>;
+}
 function dayChip(p: Person) {
   const t = p.today;
   if (p.absentToday && !t?.in_time) return <span className="chip c-bad">Absent</span>;
@@ -48,7 +56,7 @@ function dayChip(p: Person) {
   if (!t?.in_time) return <span className="chip c-pend">Not in</span>;
   if (t.status === 'od') return <span className="chip c-od">OD</span>;
   const c = t.band === 'ok' ? 'c-ok' : t.band === 'warn' ? 'c-warn' : 'c-bad';
-  return <span className="io"><span className={`chip ${c}`}>In {fmtTime(t.in_time)}</span>{t.out_time && <span className={`chip sm ${outChip(t.out_time)}`}>Out {fmtTime(t.out_time)}</span>}</span>;
+  return <span className="io"><span className={`chip ${c}`}>In {fmtTime(t.in_time)}</span>{t.out_time && <span className={`chip sm ${outChip(t.out_time)}`}>Out {fmtTime(t.out_time)}</span>}{worked(t.in_time, t.out_time)}</span>;
 }
 const hubsOf = (ps: Person[] | null) => [...new Set((ps ?? []).map((p) => p.hub).filter((h): h is string => !!h))].sort();
 
@@ -76,6 +84,8 @@ export function HRApp() {
       case 'notifs': return <NotifWrap onBack={back} />;
       case 'finger': return <Fingerprint onBack={back} />;
       case 'holidays': return <Holidays onBack={back} />;
+      case 'live': return <LiveMap onBack={back} />;
+      case 'outside': return <OutToday onBack={back} />;
     }
   }
   const pend = (counts?.pending_leave ?? 0) + (counts?.chairman_away ? counts?.pending_od ?? 0 : 0);
@@ -139,6 +149,8 @@ function Home({ c, open, setTab }: { c: HrToday | null; open: (s: Sub) => void; 
       </div>
       <div className="card" style={{ padding: '4px 16px', marginTop: 12 }}>
         {c.holiday && <div className="setrow" style={{ cursor: 'default' }}><span className="ri c-lv"><Icon n="cal" /></span><span className="t"><b>{c.holiday.kind === 'office' ? 'Office leave today' : 'Holiday today'}</b><span>{c.holiday.name}</span></span></div>}
+        <button className="setrow" onClick={() => open({ name: 'live' })}><span className="ri c-od"><Icon n="pin" /></span><span className="t"><b>Live map</b><span>Where everyone is now · 10 AM–6 PM</span></span><Icon n="chevR" /></button>
+        <button className="setrow" onClick={() => open({ name: 'outside' })}><span className="ri c-bad"><Icon n="clock" /></span><span className="t"><b>Out of office</b><span>Who went out and for how long</span></span><Icon n="chevR" /></button>
         <button className="setrow" onClick={() => open({ name: 'holidays' })}><span className="ri c-lv"><Icon n="cal" /></span><span className="t"><b>Holidays</b><span>Government holidays · office leave days</span></span><Icon n="chevR" /></button>
         <button className="setrow" onClick={() => open({ name: 'finger' })}><span className="ri c-ok"><Icon n="scan" /></span><span className="t"><b>Fingerprint</b><span>eSSL punches this month · test</span></span><Icon n="chevR" /></button>
       </div>

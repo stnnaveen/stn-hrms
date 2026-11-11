@@ -100,5 +100,14 @@ for (const [f, b] of [['set_staff_approver', { p_email: 'naveenflop+staff@gmail.
 { const [c, t] = await fetch(`${SUPA_URL}/rest/v1/rpc/my_month`, { method: 'POST', headers: st, body: JSON.stringify({ p_month: '2026-11-01' }) }).then(async (r) => [r.status, await r.text()]); out(c === 200 && /"queries"/.test(t) && !/radius|distance|inside|flag|face/i.test(t), `staff: own calendar has queries, no check details (${c})`); }
 { const [c] = await rpc(st, 'raise_mark_query', { p_day: '2020-01-01', p_message: 'test' }); out(c >= 400, `staff: no query on an unmarked day (${c})`); }
 { const r = await fetch(`${SUPA_URL}/rest/v1/mark_queries`, { method: 'POST', headers: st, body: JSON.stringify({ email: 'x@y.z', user_id: me, day: '2026-11-01', mark: 'absent', message: 'x' }) }); out(r.status >= 400, `staff cannot write a query directly (${r.status})`); }
+// ---- 11 Nov: phones never blocked, live tracking
+{ const Z = '00000000-0000-0000-0000-000000000000';
+  for (const [f, b] of [['phone_swaps', { p_user: Z }], ['notify_admins', { p_kind: 'x', p_title: 'x', p_body: 'x', p_data: {} }], ['presence_window', { p_user: Z }], ['presence_day_calc', { p_user: Z, p_day: '2026-11-01' }], ['presence_rows', { p_day: '2026-11-01' }], ['presence_watch', {}], ['presence_summary', { p_day: '2026-11-01' }]]) {
+    const [a] = await rpc(anonH, f, b); const [c] = await rpc(st, f, b); out(a >= 400 && c >= 400, `internal ${f} not callable signed out or as staff (${a}, ${c})`);
+  }
+  for (const [f, b] of [['live_locations', {}], ['presence_board', { p_day: '2026-11-01' }]]) {
+    const [a] = await rpc(anonH, f, b); const [c] = await rpc(st, f, b); out(a >= 400 && c >= 400, `${f}: HR and Chairman only (${a}, ${c})`);
+  }
+}
 console.log(`SEC done: ${fails} failed`);
 process.exit(fails ? 1 : 0);

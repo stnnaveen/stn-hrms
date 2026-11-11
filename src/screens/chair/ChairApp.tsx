@@ -18,10 +18,12 @@ import { GeoFlag } from '../../ui/GeoFlag';
 import { PunchMap } from '../../ui/PunchMap';
 import { RefreshButton } from '../../ui/RefreshButton';
 import { RequestSheet } from '../../ui/RequestSheet';
+import { LiveMap, OutToday } from '../hr/Tracking';
+import { worked } from '../hr/HRApp';
 
 type Tab = 'home' | 'people' | 'approvals';
 type ListKind = 'red' | 'in' | 'late' | 'notin' | 'out' | 'od' | 'lv' | 'early' | 'last';
-type Sub = { name: 'list'; kind: ListKind } | { name: 'hub'; hub: string } | { name: 'alerts' } | { name: 'alert'; f: Flag } | { name: 'notifs' } | { name: 'person'; p: Person };
+type Sub = { name: 'list'; kind: ListKind } | { name: 'hub'; hub: string } | { name: 'alerts' } | { name: 'alert'; f: Flag } | { name: 'notifs' } | { name: 'person'; p: Person } | { name: 'live' } | { name: 'outside' };
 type Sheet = null | { t: 'od'; o: OdItem } | { t: 'ret'; o: OdItem } | { t: 'person'; s: Staff } | { t: 'account' }
   | { t: 'tl'; kind: 'od' | 'leave' | 'mark'; id: string; start?: 'ask' | 'return' | 'approve' };
 const BY: Record<string, string> = { chairman: 'You', hr: 'HR' };
@@ -70,7 +72,7 @@ function statusChip(s: Staff) {
   if (s.cat === 'notin') return <span className="chip c-pend">Not in</span>;
   if (s.cat === 'od') return <span className="chip c-od">OD</span>;
   return <span className="io"><span className={`chip ${s.band === 'ok' ? 'c-ok' : s.band === 'warn' ? 'c-warn' : 'c-bad'}`}>In {fmtTime(s.inTime)}</span>
-    {s.outTime && <span className={`chip sm ${outChip(s.outTime)}`}>Out {fmtTime(s.outTime)}</span>}</span>;
+    {s.outTime && <span className={`chip sm ${outChip(s.outTime)}`}>Out {fmtTime(s.outTime)}</span>}{worked(s.inTime, s.outTime)}</span>;
 }
 
 // Chairman dashboard tiles -> the HR attendance filters
@@ -124,6 +126,8 @@ export function ChairApp() {
     if (sub.name === 'list') body = <Today initial={ATT[sub.kind]} initialHub={hub === 'All' ? '' : hub} initialSort={{ k: 'time', dir: sub.kind === 'last' || sub.kind === 'out' ? -1 : 1 }} onBack={back} onPerson={(p) => open({ name: 'person', p })} />;
     if (sub.name === 'person') body = <PersonView p={sub.p} onBack={back} readOnly />;
     if (sub.name === 'hub') body = <HubView hub={sub.hub} staff={snap?.staff ?? []} onBack={back} onPerson={(s) => open({ name: 'person', p: asPerson(s) })} />;
+    if (sub.name === 'live') body = <LiveMap onBack={back} />;
+    if (sub.name === 'outside') body = <OutToday onBack={back} />;
     if (sub.name === 'alerts') body = <Alerts onBack={back} onOpen={(f) => open({ name: 'alert', f })} />;
     if (sub.name === 'alert') body = <AlertView f={sub.f} onBack={back} />;
     if (sub.name === 'notifs') body = <div style={{ position: 'absolute', inset: 0 }}><Notifications onBackOverride={back} /></div>;
@@ -259,6 +263,10 @@ function Home({ snap, view, hub, setHub, ods, odWith, open, setSheet, setAway, g
           <button onClick={() => open({ name: 'list', kind: 'notin' })}><small>Not in</small><b>{notin.length}</b><em>{evening ? 'absent' : 'yet'}</em></button>
           <button onClick={() => open({ name: 'list', kind: 'out' })}><small>Checked out</small><b>{outs.length}</b><em>{evening ? `${still.length} still in` : 'from 6 PM'}</em></button>
         </div>
+      </div>
+      <div className="card" style={{ padding: '4px 16px', marginTop: 12 }}>
+        <button className="setrow" onClick={() => open({ name: 'live' })}><span className="ri c-od"><Icon n="pin" /></span><span className="t"><b>Live map</b><span>Where everyone is now · 10 AM–6 PM</span></span><Icon n="chevR" /></button>
+        <button className="setrow" onClick={() => open({ name: 'outside' })}><span className="ri c-bad"><Icon n="clock" /></span><span className="t"><b>Out of office</b><span>Who went out and for how long</span></span><Icon n="chevR" /></button>
       </div>
 
       <div className="sec">OD for you · {ods?.pending.length ?? 0} <button onClick={() => goApprovals('od')}>See all</button></div>

@@ -9,7 +9,8 @@ const KIND: Record<string, [string, string]> = {
   od_approved: ['c-ok', 'check'], od_returned: ['c-bad', 'x'], leave_approved: ['c-ok', 'check'], leave_returned: ['c-bad', 'x'],
   leave_assigned: ['c-lv', 'leaf'], reason_asked: ['c-warn', 'alert'], od_new: ['c-od', 'brief'], leave_new: ['c-lv', 'leaf'], device_new: ['c-pend', 'shield'],
   clarify_asked: ['c-warn', 'help'], clarify_reply: ['c-od', 'chat'],
-  mark_query: ['c-warn', 'help'], mark_approved: ['c-ok', 'check'], mark_returned: ['c-bad', 'x']
+  mark_query: ['c-warn', 'help'], mark_approved: ['c-ok', 'check'], mark_returned: ['c-bad', 'x'],
+  away: ['c-bad', 'pin'], no_signal: ['c-pend', 'pin'], mock_location: ['c-bad', 'alert'], presence_summary: ['c-od', 'clock'], phone_swaps: ['c-warn', 'shield']
 };
 
 function ago(iso: string) {

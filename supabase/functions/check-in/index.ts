@@ -230,20 +230,21 @@ async function handle(req: Request): Promise<Response> {
   if (!profile?.active) return json({ error: 'not_active' }, 403);
   if (!profile.consent_at) return json({ error: 'consent_needed' }, 403);
 
-  // ---- phone binding: first phone is bound; any other waits for the Tech admin (PRD LC-06)
+  // ---- phones never block (11 Nov): a new or reset phone is added and works at once; the face match checks the
+  // person. More than 2 changes of phone in a month raise a dispute for HR (after the punch is saved, below).
   let device = devices?.find((d) => d.device_key === body.device_key);
   if (!device) {
-    const first = !devices?.some((d) => d.status === 'active');
     const { data: created } = await db.from('devices').insert({
       user_id: user.id, device_key: body.device_key, platform: body.platform ?? 'web',
-      user_agent: req.headers.get('user-agent'), status: first ? 'active' : 'pending'
+      user_agent: req.headers.get('user-agent'), status: 'active', approved_at: new Date().toISOString()
     }).select('id, device_key, status').single();
     device = created!;
-    if (!first) {
-      await db.rpc('notify_role', { p_role: 'tech', p_kind: 'device_new', p_title: 'New phone request', p_body: profile.full_name, p_data: { device_id: device.id } });
+    if (devices?.length) {
+      await db.rpc('notify_role', { p_role: 'tech', p_kind: 'device_new', p_title: 'Phone changed', p_body: profile.full_name, p_data: { device_id: device.id } });
     }
+  } else if (device.status !== 'active') {
+    await db.from('devices').update({ status: 'active', approved_at: new Date().toISOString() }).eq('id', device.id);   // reset or old phone: back in use
   }
-  if (device.status !== 'active') return json({ error: device.status === 'pending' ? 'device_pending' : 'device_revoked' }, 403);
 
   // ---- start: signed upload URL
   if (body.action === 'start') {
@@ -393,6 +394,7 @@ async function handle(req: Request): Promise<Response> {
 
   await Promise.all([
     ev.flags.length ? db.from('flags').insert(ev.flags.map((f) => ({ punch_id: punch.id, user_id: user.id, kind: f.kind, rule: f.rule, details: f.details }))) : Promise.resolve(),
+    phoneSwapCheck(db, user.id, punch.id, device.id),
     body.kind === 'visit' ? Promise.resolve()   // venue proof only; the day's check-in and check-out stay as they are
       : body.kind === 'in' ? db.from('attendance_days').insert({ user_id: user.id, day: today, in_punch: punch.id, in_time: now.toISOString(), band: ev.band, status: target.type === 'od' ? 'od' : 'present' })
       : day ? db.from('attendance_days').update({ out_punch: punch.id, out_time: now.toISOString(), early_out: ev.earlyOut, leave_od_id: leaveOd?.id ?? null }).eq('user_id', user.id).eq('day', today)
@@ -541,11 +543,29 @@ async function verifyPresenceToken(token: string): Promise<string | null> {
 // (or the venue of an approved OD at that time), store them, and raise one 'away' dispute + tell HR when someone has
 // been outside longer than the alert setting.
 // deno-lint-ignore no-explicit-any
+// More than 2 changes of phone this month: one dispute for HR per month (never blocks; staff are not told)
+// deno-lint-ignore no-explicit-any
+async function phoneSwapCheck(db: any, uid: string, punchId: string, deviceId: string) {
+  try {
+    const { data: prev } = await db.from('punches').select('device_id').eq('user_id', uid).neq('id', punchId).not('device_id', 'is', null)
+      .order('server_time', { ascending: false }).limit(1).maybeSingle();
+    if (!prev || prev.device_id === deviceId) return;
+    const { data: n } = await db.rpc('phone_swaps', { p_user: uid });
+    if ((n ?? 0) <= 2) return;
+    const month = `${istDay(new Date()).slice(0, 7)}-01T00:00:00+05:30`;
+    const { data: seen } = await db.from('flags').select('id').eq('user_id', uid).eq('kind', 'device').like('rule', 'R-06b%').gte('created_at', month).limit(1).maybeSingle();
+    if (seen) return;
+    await db.from('flags').insert({ punch_id: punchId, user_id: uid, kind: 'device', rule: `R-06b phone changed ${n} times this month`, details: { swaps: n } });
+    const { data: me } = await db.from('profiles').select('full_name').eq('id', uid).maybeSingle();
+    await db.rpc('notify_admins', { p_kind: 'phone_swaps', p_title: 'Phone changed often', p_body: `${me?.full_name ?? 'Staff'} · ${n} times this month`, p_data: { user_id: uid } });
+  } catch { /* never block the punch */ }
+}
+
 async function presence(db: any, uid: string, raw: Record<string, unknown>[]): Promise<{ ok: true; stored: number }> {
   const today = istDay(new Date());
   const [{ data: prof }, { data: day }, { data: cfg }] = await Promise.all([
     db.from('profiles').select('active, role, hub_id, presence_consent_at').eq('id', uid).single(),
-    db.from('attendance_days').select('in_time, out_time, status').eq('user_id', uid).eq('day', today).maybeSingle(),
+    db.rpc('presence_window', { p_user: uid }),   // selfie or fingerprint check-in (merged day)
     db.from('settings').select('key, value').in('key', ['presence_enabled', 'presence_alert_minutes', 'office_start', 'office_end'])
   ]);
   const set = Object.fromEntries((cfg ?? []).map((r: { key: string; value: unknown }) => [r.key, r.value]));
@@ -592,7 +612,7 @@ async function presence(db: any, uid: string, raw: Record<string, unknown>[]): P
     if (!seen) {
       const { data: me } = await db.from('profiles').select('full_name').eq('id', uid).single();
       await db.from('flags').insert({ user_id: uid, kind: 'mock_location', rule: 'R-03 fake GPS app detected (store app, work hours)', details: { at: fake.at, lat: fake.lat, lng: fake.lng } });
-      await db.rpc('notify_role', { p_role: 'hr', p_kind: 'mock_location', p_title: 'Fake GPS detected', p_body: me?.full_name ?? 'Staff', p_data: { user_id: uid } });
+      await db.rpc('notify_admins', { p_kind: 'mock_location', p_title: 'Fake GPS detected', p_body: me?.full_name ?? 'Staff', p_data: { user_id: uid } });
     }
   }
 
@@ -609,7 +629,7 @@ async function presence(db: any, uid: string, raw: Record<string, unknown>[]): P
         const mins = Math.round((Date.parse(last.at) - Date.parse(firstOut.at)) / 60000);
         const { data: me } = await db.from('profiles').select('full_name').eq('id', uid).single();
         await db.from('flags').insert({ user_id: uid, kind: 'away', rule: `R-12 outside the radius ${mins}+ min in work hours`, details: { since: firstOut.at, minutes: mins, distance_m: last.distance_m } });
-        await db.rpc('notify_role', { p_role: 'hr', p_kind: 'away', p_title: 'Away from hub', p_body: `${me?.full_name ?? 'Staff'} · outside ${mins} min`, p_data: { user_id: uid } });
+        await db.rpc('notify_admins', { p_kind: 'away', p_title: 'Away from hub', p_body: `${me?.full_name ?? 'Staff'} · outside ${mins} min`, p_data: { user_id: uid } });
       }
     }
   }

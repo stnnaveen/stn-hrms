@@ -110,7 +110,7 @@ export default function App() {
   // Store app only: work-hours location between check-in and check-out (ends at office close + 5 min)
   useEffect(() => {
     if (!isStoreApp()) return;
-    const t = today?.today;
+    const t = today?.day ?? today?.today;   // merged day: fingerprint staff are tracked too
     const staff = today && ['staff', 'intern'].includes(today.profile.role);
     if (!staff || !t?.in_time || t.out_time) { void stopPresence(); return; }
     const day = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);

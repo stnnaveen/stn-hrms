@@ -44,6 +44,8 @@ export interface Pin { server_time: string; lat: number; lng: number; accuracy_m
 export interface DayPunch { id?: string; kind: 'in' | 'out'; server_time: string; lat: number; lng: number; place_name: string | null; band: string | null; early_out: boolean; selfie_key: string | null; distance_m: number | null; inside?: boolean | null; accuracy_m?: number | null; target_type?: string | null; target_id?: string | null }
 export interface PresenceDay { tracked: boolean; reason?: string; from?: string; to?: string; inside_min: number; outside_min: number; od_min: number; no_signal_min: number;
   trips: { from: string; to: string; min: number; max_m: number; ongoing?: boolean }[]; samples: number; last_at?: string | null; last_inside?: boolean | null }
+export interface LiveRow { user_id: string; full_name: string; hub: string | null; lat: number | null; lng: number | null; accuracy_m: number | null; at: string | null; inside: boolean | null; target_type: string | null; state: 'inside' | 'outside' | 'od' | 'no_signal' | 'not_started' | 'checked_out'; checked_in: boolean }
+export interface PresenceRow { user_id: string; full_name: string; hub: string | null; inside_min: number; outside_min: number; od_min: number; no_signal_min: number; trips: number; longest_trip: number; last_at: string | null; last_inside: boolean | null; tracked: boolean; samples: number }
 export interface PresenceNow { user_id: string; outside_min: number; no_signal_min: number; trips: number; last_at: string | null; last_inside: boolean | null }
 export interface PersonDetail {
   holidays?: Holiday[]; marks?: DayMark[];
@@ -277,6 +279,8 @@ const real = {
   async askReason(id: string) { const { error } = await sb!.rpc('ask_flag_reason', { p_flag: id }); if (error) throw new ApiError('save_failed'); },
   async presenceDay(uid: string): Promise<PresenceDay> { return must(await sb!.rpc('presence_day', { p_user: uid })) as PresenceDay; },
   async presenceToday(): Promise<PresenceNow[]> { return must(await sb!.rpc('presence_today')) as PresenceNow[]; },
+  async liveLocations(): Promise<LiveRow[]> { return must(await sb!.rpc('live_locations')) as LiveRow[]; },
+  async presenceBoard(day: string): Promise<PresenceRow[]> { return must(await sb!.rpc('presence_board', { p_day: day })) as PresenceRow[]; },
   async askPunchReason(punchId: string, kind: 'late' | 'early_out') { const { error } = await sb!.rpc('ask_punch_reason', { p_punch: punchId, p_kind: kind }); if (error) throw new ApiError('save_failed'); },
   async decideFlag(id: string, d: 'valid' | 'violation') { const { error } = await sb!.rpc('decide_flag', { p_flag: id, p_decision: d }); if (error) throw new ApiError('save_failed'); }
 };
@@ -315,6 +319,13 @@ const demo: typeof real = {
   async presenceDay(uid: string): Promise<PresenceDay> { await wait(); const t = (h: number, m: number) => { const d = new Date(); d.setUTCHours(h - 5, m - 30, 0, 0); return d.toISOString(); };
     return uid.endsWith('1') ? { tracked: true, from: t(10, 2), to: t(16, 30), inside_min: 312, outside_min: 48, od_min: 0, no_signal_min: 28, samples: 90, trips: [{ from: t(11, 40), to: t(12, 5), min: 25, max_m: 640 }, { from: t(15, 10), to: t(15, 33), min: 23, max_m: 1300 }] } : { tracked: false, inside_min: 0, outside_min: 0, od_min: 0, no_signal_min: 0, trips: [], samples: 0 }; },
   async presenceToday() { await wait(); return []; },
+  async liveLocations(): Promise<LiveRow[]> { await wait(); const ago = (m: number) => new Date(Date.now() - m * 60000).toISOString();
+    return [{ user_id: 'u1', full_name: 'Kavya R', hub: 'Chennai', lat: 13.0108, lng: 80.2206, accuracy_m: 12, at: ago(2), inside: true, target_type: 'hub', state: 'inside', checked_in: true },
+      { user_id: 'u2', full_name: 'Arun K', hub: 'Chennai', lat: 13.0412, lng: 80.2337, accuracy_m: 20, at: ago(4), inside: false, target_type: 'hub', state: 'outside', checked_in: true },
+      { user_id: 'u3', full_name: 'Meena S', hub: 'Chennai', lat: 13.0067, lng: 80.2571, accuracy_m: 35, at: ago(41), inside: true, target_type: 'hub', state: 'no_signal', checked_in: true }]; },
+  async presenceBoard(): Promise<PresenceRow[]> { await wait(); return [{ user_id: 'u2', full_name: 'Arun K', hub: 'Chennai', inside_min: 300, outside_min: 95, od_min: 0, no_signal_min: 0, trips: 2, longest_trip: 70, last_at: null, last_inside: false, tracked: true, samples: 120 },
+      { user_id: 'u3', full_name: 'Meena S', hub: 'Chennai', inside_min: 340, outside_min: 0, od_min: 0, no_signal_min: 45, trips: 0, longest_trip: 0, last_at: null, last_inside: true, tracked: true, samples: 80 },
+      { user_id: 'u1', full_name: 'Kavya R', hub: 'Chennai', inside_min: 410, outside_min: 0, od_min: 0, no_signal_min: 0, trips: 0, longest_trip: 0, last_at: null, last_inside: true, tracked: true, samples: 140 }]; },
   async askPunchReason() { await wait(); },
   async flags() { await wait(); return D.flags; },
   async pins(uid) {

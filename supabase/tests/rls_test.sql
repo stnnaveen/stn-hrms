@@ -1147,3 +1147,80 @@ end $$;
 select pg_temp.reset();
 update staff_roster set leave_approver = null, od_approver = null, reports_to = null where email = 'kavya@startuptn.in';
 delete from day_marks where email = 'kavya@startuptn.in' and day >= date_trunc('month', current_date)::date;
+
+-- ---------- 36. phones never block; live tracking alerts, map and summary ----------
+select pg_temp.reset();
+do $$ declare d1 uuid; d2 uuid; i int; begin
+  insert into devices (user_id, device_key, status) values ('00000000-0000-0000-0000-000000000002', 'ph-a', 'active') returning id into d1;
+  insert into devices (user_id, device_key, status) values ('00000000-0000-0000-0000-000000000002', 'ph-b', 'revoked') returning id into d2;
+  for i in 0..4 loop   -- a, b, a, b, a: 4 changes this month
+    insert into punches (user_id, kind, idempotency_key, client_time, server_time, lat, lng, target_type, device_id)
+    values ('00000000-0000-0000-0000-000000000002', 'in', 'swap' || i, now() - make_interval(mins => 50 - i * 10), now() - make_interval(mins => 50 - i * 10), 13, 80, 'hub', case when i % 2 = 0 then d1 else d2 end);
+  end loop;
+  if phone_swaps('00000000-0000-0000-0000-000000000002') <> 4 then raise exception 'FAIL phone_swaps %', phone_swaps('00000000-0000-0000-0000-000000000002'); end if;
+  raise notice 'PASS 36 phone changes counted for the month';
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-000000000001');
+do $$ begin
+  begin perform phone_swaps('00000000-0000-0000-0000-000000000001'); raise exception 'FAIL staff called phone_swaps';
+  exception when insufficient_privilege then null; end;
+  begin perform presence_watch(); raise exception 'FAIL staff called presence_watch';
+  exception when insufficient_privilege then null; end;
+  begin perform presence_board(current_date); raise exception 'FAIL staff read presence_board';
+  exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
+  begin perform live_locations(); raise exception 'FAIL staff read live_locations';
+  exception when raise_exception then if sqlerrm like 'FAIL%' then raise; end if; end;
+  begin perform presence_day_calc('00000000-0000-0000-0000-000000000001', current_date); raise exception 'FAIL presence_day_calc callable';
+  exception when insufficient_privilege then null; end;
+  raise notice 'PASS 36b tracking data and jobs are not open to staff';
+end $$;
+-- Kavya checked in an hour ago, no location since: the watcher raises one alert, not two
+select pg_temp.reset();
+update settings set value = '"00:00"' where key = 'office_start';
+update settings set value = '"23:59"' where key = 'office_end';
+update settings set value = '"00:00"' where key = 'late_until';
+delete from attendance_days where user_id = '00000000-0000-0000-0000-000000000001' and day = (now() at time zone 'Asia/Kolkata')::date;
+insert into attendance_days (user_id, day, in_time, band, status) values ('00000000-0000-0000-0000-000000000001', (now() at time zone 'Asia/Kolkata')::date, now() - interval '1 hour', 'ok', 'present');
+delete from flags where user_id = '00000000-0000-0000-0000-000000000001' and kind = 'no_signal';
+update hubs set checkin_method = 'selfie' where id = (select hub_id from profiles where email = 'kavya@startuptn.in');   -- leave out test fingerprint rows for today
+do $$ declare n int; begin
+  if (now() at time zone 'Asia/Kolkata')::time < '00:25' then raise notice 'PASS 36c skipped (just after midnight IST)'; return; end if;
+  n := presence_watch();
+  if not exists (select 1 from flags where user_id = '00000000-0000-0000-0000-000000000001' and kind = 'no_signal' and rule like 'R-13 location never started%') then raise exception 'FAIL no not-started alert'; end if;
+  if (select count(*) from notifications where kind = 'no_signal') < 2 then raise exception 'FAIL HR and Chairman not both told'; end if;
+  perform presence_watch();
+  if (select count(*) from flags where user_id = '00000000-0000-0000-0000-000000000001' and kind = 'no_signal') <> 1 then raise exception 'FAIL repeated alert'; end if;
+  -- a location arrives (outside the hub), then goes quiet for 30 min: one new alert
+  update flags set created_at = now() - interval '45 minutes' where user_id = '00000000-0000-0000-0000-000000000001' and kind = 'no_signal';   -- the first alert was earlier
+  insert into presence_samples (user_id, at, source, lat, lng, target_type, inside, distance_m) values
+    ('00000000-0000-0000-0000-000000000001', now() - interval '40 minutes', 'watch', 13.05, 80.25, 'hub', false, 4000),
+    ('00000000-0000-0000-0000-000000000001', now() - interval '30 minutes', 'watch', 13.05, 80.25, 'hub', false, 4000);
+  perform presence_watch();
+  if (select count(*) from flags where user_id = '00000000-0000-0000-0000-000000000001' and kind = 'no_signal') <> 2 then raise exception 'FAIL silence after samples not alerted'; end if;
+  raise notice 'PASS 36c no-location alerts: once per silence, to HR and Chairman';
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000c1');
+do $$ declare r record; begin
+  select * into r from live_locations() where full_name like 'Kavya%';
+  if r.state <> 'no_signal' or r.lat <> 13.05 then raise exception 'FAIL live map row %', r; end if;
+  select * into r from presence_board((now() at time zone 'Asia/Kolkata')::date) where full_name like 'Kavya%';
+  if not r.tracked or r.outside_min < 5 or r.no_signal_min < 20 then raise exception 'FAIL out-time board %', r; end if;
+  raise notice 'PASS 36d Chairman sees the live map and who went out';
+end $$;
+select pg_temp.reset();
+do $$ begin
+  if not (presence_summary() ->> 'sent')::boolean then raise exception 'FAIL summary not sent'; end if;
+  if (select count(*) from notifications where kind = 'presence_summary') < 2 then raise exception 'FAIL summary not to HR and Chairman'; end if;
+  raise notice 'PASS 36e daily summary to HR and Chairman';
+end $$;
+-- fingerprint-only check-in is tracked too (merged day)
+do $$ begin
+  if presence_day_calc('00000000-0000-0000-0000-000000000001', (now() at time zone 'Asia/Kolkata')::date) ->> 'tracked' <> 'true' then raise exception 'FAIL tracked'; end if;
+  raise notice 'PASS 36f tracking follows the merged (selfie or fingerprint) day';
+end $$;
+update settings set value = '"10:00"' where key = 'office_start';
+update settings set value = '"18:00"' where key = 'office_end';
+update settings set value = '"10:05"' where key = 'late_until';
+delete from presence_samples where user_id = '00000000-0000-0000-0000-000000000001';
+delete from attendance_days where user_id = '00000000-0000-0000-0000-000000000001' and day = (now() at time zone 'Asia/Kolkata')::date;
+update hubs set checkin_method = 'both' where id = (select hub_id from profiles where email = 'kavya@startuptn.in');
