@@ -25,7 +25,10 @@ const q = {
   admin_allow: `select r.role, r.email in ('hr.ai@startuptn.in','ai@startuptn.in','chairman.ai@startuptn.in','chairmanoffice@startuptn.in','hr@startuptn.in') as allowed, left(r.email, 3) || '…@' || split_part(r.email, '@', 2) as who, coalesce(p.active, false) as signed_up_active from staff_roster r left join profiles p on p.email = r.email where r.role in ('hr', 'chairman', 'tech') order by 1, 3`,
   custom_admins: `select count(*) from profiles where custom_role_id is not null`,
   buckets: `select id, public from storage.buckets`,
-  extensions: `select extname, extversion from pg_extension order by 1`
+  extensions: `select extname, extversion from pg_extension order by 1`,
+  cron_jobs: `select jobname, schedule, active from cron.job order by 1`,
+  merged_today: `select (m.user_id is not null) as has_app, coalesce(p.role::text, r.role::text, '?') as role, m.status, m.source, count(*) from attendance_merged((now() at time zone 'Asia/Kolkata')::date, (now() at time zone 'Asia/Kolkata')::date) m left join profiles p on p.id = m.user_id left join staff_roster r on r.email = m.email where m.in_time is not null group by 1, 2, 3, 4 order by 5 desc`,
+  tracking_today: `select kind, status, count(*) from flags where kind in ('no_signal', 'away', 'device') and created_at > now() - interval '1 day' group by 1, 2`
 };
 for (const [k, qq] of Object.entries(q)) console.log(`AUD db ${k}: ${JSON.stringify(await sql(qq)).slice(0, 700)}`);
 const [ss, sec] = await api('/secrets');
