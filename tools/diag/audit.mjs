@@ -27,7 +27,7 @@ const q = {
   buckets: `select id, public from storage.buckets`,
   extensions: `select extname, extversion from pg_extension order by 1`,
   cron_jobs: `select jobname, schedule, active from cron.job order by 1`,
-  merged_today: `select (m.user_id is not null) as has_app, coalesce(p.role::text, r.role::text, '?') as role, m.status, m.source, count(*) from attendance_merged((now() at time zone 'Asia/Kolkata')::date, (now() at time zone 'Asia/Kolkata')::date) m left join profiles p on p.id = m.user_id left join staff_roster r on r.email = m.email where m.in_time is not null group by 1, 2, 3, 4 order by 5 desc`,
+  merged_today: `with t as (select (now() at time zone 'Asia/Kolkata')::date d), bp as (select distinct bpp.email from bio_punches b join bio_people bpp on bpp.link_id = b.link_id and bpp.device_code = b.device_code, t where (b.punched_at at time zone 'Asia/Kolkata')::date = t.d and bpp.email is not null) select (select count(*) from attendance_days a, t where a.day = t.d and a.in_time is not null) as app_days, (select count(*) from bp) as finger_people, (select count(*) from bp join profiles p on p.email = bp.email) as finger_with_app, (select count(*) from bp join staff_roster r on r.email = bp.email where r.role in ('staff', 'intern')) as finger_staff_role, (select string_agg(distinct r.role::text, ',') from bp join staff_roster r on r.email = bp.email) as roles`,
   tracking_today: `select kind, status, count(*) from flags where kind in ('no_signal', 'away', 'device') and created_at > now() - interval '1 day' group by 1, 2`
 };
 for (const [k, qq] of Object.entries(q)) console.log(`AUD db ${k}: ${JSON.stringify(await sql(qq)).slice(0, 700)}`);
