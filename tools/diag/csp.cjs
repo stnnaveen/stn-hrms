@@ -31,7 +31,7 @@ const APP = process.env.APP_URL || 'https://stn-hrms.vercel.app';
     await p.goto(APP); await p.waitForTimeout(6000);
     const tabs = await p.locator('nav.tabs button').allInnerTexts().catch(() => []);
     console.log(`CSP ${who} tabs: ${tabs.map((t) => t.trim()).join(' | ')}`);
-    for (let i = 0; i < tabs.length; i++) { await p.locator('nav.tabs button').nth(i).click().catch(() => {}); await p.waitForTimeout(2500); if (who === 'hr' && i === 1) await shot('staff'); }
+    for (let i = 0; i < tabs.length; i++) { await p.locator('nav.tabs button').nth(i).click().catch(() => {}); await p.waitForTimeout(2500); if (who === 'hr' && i === 1) { await p.waitForTimeout(7000); await shot('staff'); } }
     if (who !== 'staff') {   // a person page has maps
       await p.locator('nav.tabs button').nth(1).click().catch(() => {}); await p.waitForTimeout(2500);
       await p.locator('.row, .person, li').filter({ hasText: /Chennai|Coimbatore|Madurai/ }).first().click().catch(() => {}); await p.waitForTimeout(5000);
