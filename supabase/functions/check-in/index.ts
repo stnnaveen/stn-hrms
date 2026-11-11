@@ -555,7 +555,7 @@ async function phoneSwapCheck(db: any, uid: string, punchId: string, deviceId: s
     const month = `${istDay(new Date()).slice(0, 7)}-01T00:00:00+05:30`;
     const { data: seen } = await db.from('flags').select('id').eq('user_id', uid).eq('kind', 'device').like('rule', 'R-06b%').gte('created_at', month).limit(1).maybeSingle();
     if (seen) return;
-    await db.from('flags').insert({ punch_id: punchId, user_id: uid, kind: 'device', rule: `R-06b phone changed ${n} times this month`, details: { swaps: n } });
+    await db.from('flags').insert({ user_id: uid, kind: 'device', rule: `R-06b phone changed ${n} times this month`, details: { swaps: n, punch_id: punchId } });   // not tied to the punch: its time still counts
     const { data: me } = await db.from('profiles').select('full_name').eq('id', uid).maybeSingle();
     await db.rpc('notify_admins', { p_kind: 'phone_swaps', p_title: 'Phone changed often', p_body: `${me?.full_name ?? 'Staff'} · ${n} times this month`, p_data: { user_id: uid } });
   } catch { /* never block the punch */ }

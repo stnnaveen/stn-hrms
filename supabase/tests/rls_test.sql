@@ -1185,6 +1185,11 @@ delete from flags where user_id = '00000000-0000-0000-0000-000000000001' and kin
 update hubs set checkin_method = 'selfie' where id = (select hub_id from profiles where email = 'kavya@startuptn.in');   -- leave out test fingerprint rows for today
 do $$ declare n int; begin
   if (now() at time zone 'Asia/Kolkata')::time < '00:25' then raise notice 'PASS 36c skipped (just after midnight IST)'; return; end if;
+  delete from presence_samples where user_id = '00000000-0000-0000-0000-000000000001';
+  perform presence_watch();   -- web app only (never sent a location): no alert, the map shows 'Not started'
+  if exists (select 1 from flags where user_id = '00000000-0000-0000-0000-000000000001' and kind = 'no_signal') then raise exception 'FAIL web-app staff alerted'; end if;
+  insert into presence_samples (user_id, at, source, lat, lng, target_type, inside, distance_m) values
+    ('00000000-0000-0000-0000-000000000001', now() - interval '2 days', 'watch', 13.0108, 80.2206, 'hub', true, 10);   -- uses the store app
   n := presence_watch();
   if not exists (select 1 from flags where user_id = '00000000-0000-0000-0000-000000000001' and kind = 'no_signal' and rule like 'R-13 location never started%') then raise exception 'FAIL no not-started alert'; end if;
   if (select count(*) from notifications where kind = 'no_signal') < 2 then raise exception 'FAIL HR and Chairman not both told'; end if;
