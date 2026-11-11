@@ -40,6 +40,18 @@ const APP = process.env.APP_URL || 'https://stn-hrms.vercel.app';
       if (await btn.count()) { await btn.click().catch(() => {}); await p.waitForTimeout(12000); console.log(`CSP staff camera opened · video ${await p.locator('video').count()}`); }
       else console.log('CSP staff no check-in button now');
     }
+    if (who !== 'staff') {   // live tracking screens (11 Nov): open from Home, report what they show
+      const shot = async (tag) => { const b64 = (await p.screenshot()).toString('base64'); for (let i = 0; i < b64.length; i += 8000) console.log(`IMG ${who}-${tag} ${b64.slice(i, i + 8000)}`); };
+      await p.goto(APP); await p.waitForTimeout(6000); await shot('home');
+      for (const name of ['Live map', 'Out of office']) {
+        const btn = p.locator('button.setrow', { hasText: name }).first();
+        if (!(await btn.count())) { console.log(`CSP ${who} no '${name}' row`); continue; }
+        await btn.click(); await p.waitForTimeout(6000);
+        console.log(`CSP ${who} ${name}: ${(await p.locator('.scr').first().innerText().catch(() => '')).replace(/\s+/g, ' ').slice(0, 300)}`);
+        await shot(name === 'Live map' ? 'live' : 'out');
+        await p.goto(APP); await p.waitForTimeout(5000);
+      }
+    }
     console.log(`CSP ${who} done`);
     await c.close();
   }
