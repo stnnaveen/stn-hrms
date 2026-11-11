@@ -3,6 +3,8 @@
 name: Android app
 on:
   workflow_dispatch: {}   # manual only: a private repository has limited Actions minutes
+permissions:
+  contents: write   # the phone-download release only
 jobs:
   apk:
     runs-on: ubuntu-latest
@@ -37,12 +39,17 @@ jobs:
           chmod +x gradlew
           ./gradlew --no-daemon assembleDebug
           mkdir -p ../out && cp app/build/outputs/apk/debug/app-debug.apk "../out/StartupTN-HR-$(date +%Y%m%d)-${GITHUB_SHA::7}.apk"
-          "$ANDROID_HOME"/build-tools/*/aapt dump permissions app/build/outputs/apk/debug/app-debug.apk 2>/dev/null | sed 's/^/PERM /' | head -40 || true
+          a2=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)aapt2
+          "$a2" dump permissions app/build/outputs/apk/debug/app-debug.apk | sed 's/^/PERM /' | head -40 || true
       - uses: actions/upload-artifact@v4
         with: { name: startuptn-hr-android, path: out/*.apk, retention-days: 30 }
-      - name: APK as text (manual runs only, for hand-off)
-        if: github.event_name == 'workflow_dispatch'
-        run: base64 -w 0 out/*.apk | fold -w 8000 | sed 's/^/APK /'
+      - name: Phone download (GitHub Releases, tag android-test; repo stays private)
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          gh release view android-test >/dev/null 2>&1 || gh release create android-test --prerelease --title "Android test app" --notes "Debug build for pilot phones. Install: open on the phone, download the APK, allow install from this source."
+          gh release delete-asset android-test StartupTN-HR.apk -y 2>/dev/null || true
+          cp out/*.apk out/StartupTN-HR.apk && gh release upload android-test out/StartupTN-HR.apk --clobber
+          gh release edit android-test --notes "Debug build for pilot phones · $(date -u +'%d %b %Y %H:%M') UTC · ${GITHUB_SHA::7}. Install: download StartupTN-HR.apk on the phone, open it, allow install from this source."
   smoke:
     # opens the built APK on an Android emulator and saves screenshots + log, to prove it starts
     needs: apk
