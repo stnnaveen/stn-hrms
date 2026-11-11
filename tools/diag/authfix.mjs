@@ -1,15 +1,13 @@
-// One-off (9 Nov security hardening): tighten Supabase Auth settings. Changes only the fields below and prints before / after.
-// Sign-in codes expire in 10 minutes (was 1 hour); minimum password length 8 (only the test logins use a fixed code;
-// staff sign in with emailed codes); the future app address hrapp.startuptn.in is allowed for sign-in links.
-const { REF, SUPABASE_ACCESS_TOKEN } = process.env;
+// One-off (11 Nov): sign-in emails now go through Gmail (noreplyhr@startuptn.in). Raise Supabase's email limit
+// from 30 to 150 an hour (rollout day: ~90 staff, retries), then send one test sign-in code and print what Auth answers.
+const { REF, SUPABASE_ACCESS_TOKEN, SUPA_URL, ANON } = process.env;
 const H = { Authorization: `Bearer ${SUPABASE_ACCESS_TOKEN}`, 'Content-Type': 'application/json' };
 const url = `https://api.supabase.com/v1/projects/${REF}/config/auth`;
-const KEYS = ['mailer_otp_exp', 'password_min_length', 'uri_allow_list', 'site_url', 'rate_limit_verify', 'rate_limit_otp'];
-const show = (tag, a) => { for (const k of KEYS) console.log(`AF ${tag} ${k} = ${JSON.stringify(a?.[k])}`); };
 const before = await (await fetch(url, { headers: H })).json();
-show('before', before);
-const allow = new Set(String(before.uri_allow_list ?? '').split(',').map((x) => x.trim()).filter(Boolean));
-for (const u of ['https://stn-hrms.vercel.app', 'https://hrapp.startuptn.in']) allow.add(u);
-const r = await fetch(url, { method: 'PATCH', headers: H, body: JSON.stringify({ mailer_otp_exp: 600, password_min_length: Math.max(8, Number(before.password_min_length ?? 0)), uri_allow_list: [...allow].join(',') }) });
-console.log(`AF patch ${r.status}`);
-show('after', await (await fetch(url, { headers: H })).json());
+console.log(`AF before rate_limit_email_sent=${before.rate_limit_email_sent} smtp=${before.smtp_host}`);
+const r = await fetch(url, { method: 'PATCH', headers: H, body: JSON.stringify({ rate_limit_email_sent: 150 }) });
+console.log(`AF patch ${r.status} ${r.ok ? '' : (await r.text()).slice(0, 200)}`);
+const after = await (await fetch(url, { headers: H })).json();
+console.log(`AF after rate_limit_email_sent=${after.rate_limit_email_sent}`);
+const t = await fetch(`${SUPA_URL}/auth/v1/otp`, { method: 'POST', headers: { apikey: ANON, 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'ai@startuptn.in', create_user: true }) });
+console.log(`AF test ai… ${t.status} ${(await t.text()).slice(0, 200)}`);
