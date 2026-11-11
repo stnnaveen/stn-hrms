@@ -51,7 +51,7 @@ jobs:
         run: node tools/diag/authfix.mjs
       - name: Security audit (settings, advisor, database facts)
         if: ${{ inputs.audit == 'yes' }}
-        run: node tools/diag/audit.mjs
+        run: node tools/diag/audit.mjs && node tools/diag/mailtest.mjs
       - name: Check-in actions probe
         if: ${{ inputs.awscheck == 'yes' }}
         run: node tools/diag/fnprobe.mjs
