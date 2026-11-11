@@ -30,3 +30,13 @@ const q = {
 for (const [k, qq] of Object.entries(q)) console.log(`AUD db ${k}: ${JSON.stringify(await sql(qq)).slice(0, 700)}`);
 const [ss, sec] = await api('/secrets');
 console.log(`AUD secrets ${ss}: ${(Array.isArray(sec) ? sec.map((x) => x.name).sort() : []).join(', ')}`);   // names only, never values
+// ---- sign-in email (SMTP / Resend): settings without the password, then recent auth errors about mail (emails masked)
+console.log(`AUD mail smtp_host=${a?.smtp_host} port=${a?.smtp_port} user=${a?.smtp_user} sender=${a?.smtp_sender_name} admin=${a?.smtp_admin_email} pass_set=${!!a?.smtp_pass} max_freq=${a?.smtp_max_frequency} rate_email=${a?.rate_limit_email_sent} external_email=${a?.external_email_enabled}`);
+{
+  const end = new Date(), start = new Date(Date.now() - 24 * 3600e3);
+  const q = "select timestamp, event_message from auth_logs where regexp_contains(lower(event_message), 'mail|smtp|resend|rate limit|550|535|421|451|quota|otp') order by timestamp desc limit 40";
+  const u = `https://api.supabase.com/v1/projects/${REF}/analytics/endpoints/logs?sql=${encodeURIComponent(q)}&iso_timestamp_start=${start.toISOString()}&iso_timestamp_end=${end.toISOString()}`;
+  const r = await fetch(u, { headers: { Authorization: `Bearer ${SUPABASE_ACCESS_TOKEN}` } }); const j = await r.json().catch(() => ({}));
+  console.log(`AUD maillog ${r.status} ${j.error ? JSON.stringify(j.error).slice(0, 200) : ''}`);
+  for (const x of (j.result ?? [])) console.log('AUD maillog', new Date(Number(x.timestamp) / 1000).toISOString().slice(0, 19), String(x.event_message).replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+/g, (m) => m.slice(0, 3) + '…@' + m.split('@')[1]).replace(/\s+/g, ' ').slice(0, 330));
+}
