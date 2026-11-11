@@ -1229,3 +1229,17 @@ update settings set value = '"10:05"' where key = 'late_until';
 delete from presence_samples where user_id = '00000000-0000-0000-0000-000000000001';
 delete from attendance_days where user_id = '00000000-0000-0000-0000-000000000001' and day = (now() at time zone 'Asia/Kolkata')::date;
 update hubs set checkin_method = 'both' where id = (select hub_id from profiles where email = 'kavya@startuptn.in');
+-- fingerprint staff who never signed in to the app still show (state 'no_app'), with no alert
+insert into staff_roster (email, full_name, role, hub_name) values ('noapp.test@startuptn.in', 'Noapp Test', 'staff', (select name from hubs limit 1)) on conflict do nothing;
+insert into bio_people (link_id, device_code, email, matched) values ('00000000-0000-0000-0000-0000000000b1', '7777', 'noapp.test@startuptn.in', 'manual') on conflict do nothing;
+insert into bio_punches (link_id, essl_table, essl_log_id, device_code, punched_at) values ('00000000-0000-0000-0000-0000000000b1', 'DeviceLogs', 7777, '7777', now() - interval '2 hours');
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000c1');
+do $$ declare r record; begin
+  select * into r from live_locations() where full_name = 'Noapp Test';
+  if r.state is distinct from 'no_app' or r.user_id is not null then raise exception 'FAIL no-app person on the live map %', r; end if;
+  select * into r from presence_board((now() at time zone 'Asia/Kolkata')::date) where full_name = 'Noapp Test';
+  if r.full_name is null or r.tracked then raise exception 'FAIL no-app person on the out-of-office list %', r; end if;
+  raise notice 'PASS 36g fingerprint staff without the app are listed as No app';
+end $$;
+select pg_temp.reset();
+delete from bio_punches where device_code = '7777'; delete from bio_people where device_code = '7777'; delete from staff_roster where email = 'noapp.test@startuptn.in';
