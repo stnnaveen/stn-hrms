@@ -51,7 +51,10 @@ jobs:
         run: node tools/diag/authfix.mjs
       - name: Security audit (settings, advisor, database facts)
         if: ${{ inputs.audit == 'yes' }}
-        run: node tools/diag/audit.mjs && node tools/diag/mailtest.mjs
+        run: |
+          node tools/diag/audit.mjs && node tools/diag/mailtest.mjs
+          for n in resend._domainkey.startuptn.in send.startuptn.in _dmarc.startuptn.in startuptn.in; do echo "DNS TXT $n: $(dig +short TXT $n | tr "\n" " " | cut -c1-160)"; done
+          echo "DNS MX send.startuptn.in: $(dig +short MX send.startuptn.in | tr "\n" " ")"
       - name: Check-in actions probe
         if: ${{ inputs.awscheck == 'yes' }}
         run: node tools/diag/fnprobe.mjs
