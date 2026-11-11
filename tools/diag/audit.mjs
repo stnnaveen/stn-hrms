@@ -35,12 +35,13 @@ console.log(`AUD mail smtp_host=${a?.smtp_host} port=${a?.smtp_port} user=${a?.s
 {
   const end = new Date(), start = new Date(Date.now() - 24 * 3600e3);
   let j = {}, r = { status: 0 };
-  for (const [ep, q] of [['logs.all', "select timestamp, event_message from auth_logs where regexp_contains(lower(event_message), 'mail|smtp|resend|rate limit|550|535|421|451|quota|otp|error') order by timestamp desc limit 40"],
-                         ['logs.all', "select timestamp, event_message from auth_logs order by timestamp desc limit 40"]]) {
+  for (const [ep, q] of [['logs', "select timestamp, event_message, response.status_code from edge_logs cross join unnest(metadata) as m cross join unnest(m.request) as request cross join unnest(m.response) as response where request.path like '%/auth/v1/otp%' order by timestamp desc limit 40"],
+                         ['logs', "select timestamp, event_message, metadata from auth_logs order by timestamp desc limit 30"]]) {
     const u = `https://api.supabase.com/v1/projects/${REF}/analytics/endpoints/${ep}?sql=${encodeURIComponent(q)}&iso_timestamp_start=${start.toISOString()}&iso_timestamp_end=${end.toISOString()}`;
     r = await fetch(u, { headers: { Authorization: `Bearer ${SUPABASE_ACCESS_TOKEN}` } }); j = await r.json().catch(() => ({}));
     console.log(`AUD maillog ${ep} ${r.status} ${j.error ? JSON.stringify(j.error).slice(0, 200) : ''} rows ${(j.result ?? []).length}`);
-    if ((j.result ?? []).length) break;
+    for (const x of (j.result ?? [])) console.log('AUD maillog', new Date(Number(x.timestamp) / 1000).toISOString().slice(0, 19), x.status_code ?? '', String(x.event_message).replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+/g, (m) => m.slice(0, 3) + '…@' + m.split('@')[1]).replace(/\s+/g, ' ').slice(0, 330));
   }
-  for (const x of (j.result ?? [])) console.log('AUD maillog', new Date(Number(x.timestamp) / 1000).toISOString().slice(0, 19), String(x.event_message).replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+/g, (m) => m.slice(0, 3) + '…@' + m.split('@')[1]).replace(/\s+/g, ' ').slice(0, 330));
+  j = {};
+  for (const x of (j.result ?? [])) console.log('AUD maillog', new Date(Number(x.timestamp) / 1000).toISOString().slice(0, 19), x.status_code ?? '', String(x.event_message).replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+/g, (m) => m.slice(0, 3) + '…@' + m.split('@')[1]).replace(/\s+/g, ' ').slice(0, 330));
 }
