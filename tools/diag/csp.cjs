@@ -27,10 +27,11 @@ const APP = process.env.APP_URL || 'https://stn-hrms.vercel.app';
     const seen = new Set();
     p.on('console', (m) => { const t = m.text(); if (/^CSPV|Content Security Policy|Refused to/.test(t) && !seen.has(t)) { seen.add(t); total++; console.log(`CSP ${who} ${t.slice(0, 220)}`); } });
     p.on('pageerror', (e) => console.log(`CSP ${who} pageerror ${e.message.slice(0, 160)}`));
+    const shot = async (tag) => { const b64 = (await p.screenshot()).toString('base64'); for (let i = 0; i < b64.length; i += 8000) console.log(`IMG ${who}-${tag} ${b64.slice(i, i + 8000)}`); };
     await p.goto(APP); await p.waitForTimeout(6000);
     const tabs = await p.locator('nav.tabs button').allInnerTexts().catch(() => []);
     console.log(`CSP ${who} tabs: ${tabs.map((t) => t.trim()).join(' | ')}`);
-    for (let i = 0; i < tabs.length; i++) { await p.locator('nav.tabs button').nth(i).click().catch(() => {}); await p.waitForTimeout(2500); }
+    for (let i = 0; i < tabs.length; i++) { await p.locator('nav.tabs button').nth(i).click().catch(() => {}); await p.waitForTimeout(2500); if (who === 'hr' && i === 1) await shot('staff'); }
     if (who !== 'staff') {   // a person page has maps
       await p.locator('nav.tabs button').nth(1).click().catch(() => {}); await p.waitForTimeout(2500);
       await p.locator('.row, .person, li').filter({ hasText: /Chennai|Coimbatore|Madurai/ }).first().click().catch(() => {}); await p.waitForTimeout(5000);
@@ -41,7 +42,6 @@ const APP = process.env.APP_URL || 'https://stn-hrms.vercel.app';
       else console.log('CSP staff no check-in button now');
     }
     if (who !== 'staff') {   // live tracking screens (11 Nov): open from Home, report what they show
-      const shot = async (tag) => { const b64 = (await p.screenshot()).toString('base64'); for (let i = 0; i < b64.length; i += 8000) console.log(`IMG ${who}-${tag} ${b64.slice(i, i + 8000)}`); };
       await p.goto(APP); await p.waitForTimeout(6000); await shot('home');
       for (const name of ['Live map', 'Out of office']) {
         const btn = p.locator('button.setrow', { hasText: name }).first();
