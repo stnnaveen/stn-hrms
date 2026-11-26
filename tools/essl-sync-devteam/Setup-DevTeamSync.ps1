@@ -22,6 +22,10 @@ if ($IsWindows -ne $false) {
   $me = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
   if (-not $me.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { Fail 'Open PowerShell with "Run as administrator" and run this again.' }
 }
+# never touch the StartupTN copy: its task name and folder are off limits
+$OursRoot = Split-Path -Parent $OursConfig
+if ($Task -eq 'StartupTN eSSL Sync') { Fail 'That task name belongs to the StartupTN sync. Use another name.' }
+if ($OursRoot -and ([IO.Path]::GetFullPath($Root).TrimEnd('\','/') -eq [IO.Path]::GetFullPath($OursRoot).TrimEnd('\','/'))) { Fail 'That folder belongs to the StartupTN sync. Use another folder.' }
 $Program = Join-Path (Join-Path (Split-Path -Parent $Here) 'essl-sync') 'stn-essl-sync.ps1'
 if (-not (Test-Path $Program)) { Fail "Sync program not found at $Program. Keep the bundle folders together." }
 
