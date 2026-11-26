@@ -105,7 +105,7 @@ for (const [f, b] of [['set_staff_approver', { p_email: 'naveenflop+staff@gmail.
   for (const [f, b] of [['phone_swaps', { p_user: Z }], ['notify_admins', { p_kind: 'x', p_title: 'x', p_body: 'x', p_data: {} }], ['presence_window', { p_user: Z }], ['presence_day_calc', { p_user: Z, p_day: '2026-11-01' }], ['presence_rows', { p_day: '2026-11-01' }], ['presence_watch', {}], ['presence_summary', { p_day: '2026-11-01' }]]) {
     const [a] = await rpc(anonH, f, b); const [c] = await rpc(st, f, b); out(a >= 400 && c >= 400, `internal ${f} not callable signed out or as staff (${a}, ${c})`);
   }
-  for (const [f, b] of [['live_locations', {}], ['presence_board', { p_day: '2026-11-01' }]]) {
+  for (const [f, b] of [['live_locations', {}], ['presence_board', { p_day: '2026-11-01' }], ['bio_report', { p_from: '2026-11-01', p_to: '2026-11-02' }]]) {
     const [a] = await rpc(anonH, f, b); const [c] = await rpc(st, f, b); out(a >= 400 && c >= 400, `${f}: HR and Chairman only (${a}, ${c})`);
   }
 }
