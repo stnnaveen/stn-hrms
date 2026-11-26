@@ -109,5 +109,28 @@ for (const [f, b] of [['set_staff_approver', { p_email: 'naveenflop+staff@gmail.
     const [a] = await rpc(anonH, f, b); const [c] = await rpc(st, f, b); out(a >= 400 && c >= 400, `${f}: HR and Chairman only (${a}, ${c})`);
   }
 }
+// ---- 26 Nov: fingerprint report, live figures as HR (counts only, no names)
+{ const g2 = await (await fetch(`${SUPA_URL}/auth/v1/admin/generate_link`, { method: 'POST', headers: svc, body: JSON.stringify({ type: 'magiclink', email: 'hr.ai@startuptn.in' }) })).json();
+  const s2 = await (await fetch(`${SUPA_URL}/auth/v1/verify`, { method: 'POST', headers: { apikey: ANON, 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'magiclink', token_hash: g2.hashed_token ?? g2.properties?.hashed_token }) })).json();
+  if (s2.access_token) {
+    const hrH = { apikey: ANON, Authorization: `Bearer ${s2.access_token}`, 'Content-Type': 'application/json' };
+    const t = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10), m1 = t.slice(0, 8) + '01';
+    const post = (f, b) => fetch(`${SUPA_URL}/rest/v1/rpc/${f}`, { method: 'POST', headers: hrH, body: JSON.stringify(b) }).then(async (r) => [r.status, await r.json().catch(() => null)]);
+    const t0 = Date.now(); const [c, rows] = await post('bio_report', { p_from: m1, p_to: t }); const ms = Date.now() - t0;
+    out(c === 200 && Array.isArray(rows), `bio_report as HR for ${m1}..${t} (${c}, ${Array.isArray(rows) ? rows.length : 0} rows, ${ms} ms)`);
+    if (Array.isArray(rows)) {
+      const by = {}; for (const r of rows) by[r.status] = (by[r.status] ?? 0) + 1;
+      const ppl = new Set(rows.map((r) => r.device_code)).size, matched = new Set(rows.filter((r) => r.email).map((r) => r.device_code)).size;
+      const quiet = [...new Set(rows.map((r) => r.device_code))].filter((d) => !rows.some((r) => r.device_code === d && r.punches > 0));
+      console.log(`REP people=${ppl} matched=${matched} no_entry_in_range=${quiet.length} (unmatched ${quiet.filter((d) => !rows.some((r) => r.device_code === d && r.email)).length}) by_status=${JSON.stringify(by)}`);
+      const today = rows.filter((r) => r.day === t), [, rng] = await post('bio_range', { p_from: t, p_to: t });
+      const inToday = today.filter((r) => r.in_at).length, rngIn = Array.isArray(rng) ? rng.length : -1;
+      out(inToday === rngIn, `report today in-count matches bio_range (${inToday} vs ${rngIn})`);
+      const sameIn = Array.isArray(rng) && rng.every((x) => { const r = today.find((y) => y.device_code === x.device_code); return r && new Date(r.in_at).getTime() === new Date(x.first_at).getTime(); });
+      out(sameIn, 'report today in-times equal bio_range first punches');
+      out(rows.every((r) => !(r.status === 'present' && !r.in_at) && !(r.status === 'absent' && r.in_at)), 'report statuses consistent with in-times');
+    }
+  } else out(false, 'HR test login for report check');
+}
 console.log(`SEC done: ${fails} failed`);
 process.exit(fails ? 1 : 0);
