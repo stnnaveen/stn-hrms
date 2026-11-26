@@ -1243,3 +1243,52 @@ do $$ declare r record; begin
 end $$;
 select pg_temp.reset();
 delete from bio_punches where device_code = '7777'; delete from bio_people where device_code = '7777'; delete from staff_roster where email = 'noapp.test@startuptn.in';
+
+-- 37. Fingerprint report: every eSSL person x every day, with in/out, no out, absent, leave, holiday, week off
+insert into bio_links (id, name, key_hash) values ('00000000-0000-0000-0000-0000000000b7', 'Report test', 'reporthash') on conflict do nothing;
+insert into bio_devices (link_id, essl_id, name, kind) values
+  ('00000000-0000-0000-0000-0000000000b7', 71, 'Chennai Entry', 'biometric'), ('00000000-0000-0000-0000-0000000000b7', 72, 'eSSL Manual', 'manual') on conflict do nothing;
+insert into bio_people (link_id, device_code, essl_code, essl_name, email, matched) values
+  ('00000000-0000-0000-0000-0000000000b7', 'R1', 'STNR1', 'ARUN K', 'arun@startuptn.in', 'manual'),
+  ('00000000-0000-0000-0000-0000000000b7', 'R2', 'STNR2', 'OLD STAFF', null, 'none') on conflict do nothing;
+insert into bio_punches (link_id, essl_table, essl_log_id, essl_device_id, device_code, punched_at) values
+  ('00000000-0000-0000-0000-0000000000b7', 'R', 1, 71, 'R1', '2026-11-09 09:55+05:30'),   -- Mon in
+  ('00000000-0000-0000-0000-0000000000b7', 'R', 2, 71, 'R1', '2026-11-09 09:58+05:30'),   -- double punch, ignored
+  ('00000000-0000-0000-0000-0000000000b7', 'R', 3, 71, 'R1', '2026-11-09 18:10+05:30'),   -- Mon out
+  ('00000000-0000-0000-0000-0000000000b7', 'R', 4, 71, 'R1', '2026-11-10 10:20+05:30'),   -- Tue in, never out
+  ('00000000-0000-0000-0000-0000000000b7', 'R', 5, 72, 'R1', '2026-11-15 11:00+05:30'),   -- Sun manual entry only
+  ('00000000-0000-0000-0000-0000000000b7', 'R', 6, 71, 'R2', '2026-11-09 09:40+05:30')
+on conflict do nothing;
+insert into leave_requests (user_id, leave_type, starts_on, ends_on, status) values ('00000000-0000-0000-0000-000000000002', 'casual', '2026-11-11', '2026-11-11', 'approved');
+insert into day_marks (email, day, mark) values ('arun@startuptn.in', '2026-11-12', 'absent') on conflict do nothing;
+insert into holidays (day, name, kind) values ('2026-11-13', 'Report test holiday', 'office') on conflict (day) do nothing;
+select pg_temp.as_user('00000000-0000-0000-0000-000000000001');
+do $$ begin
+  begin perform * from bio_report('2026-11-09', '2026-11-15'); raise exception 'FAIL staff read the fingerprint report';
+  exception when others then if sqlerrm like 'FAIL%' then raise; end if; end;
+  raise notice 'PASS 37a staff cannot read the fingerprint report';
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000f1');
+do $$ declare s text; r record; begin
+  select string_agg(status, ',' order by day) into s from bio_report('2026-11-09', '2026-11-15') where device_code = 'R1';
+  if s is distinct from 'present,no_out,leave,absent,holiday,week_off,week_off' then raise exception 'FAIL report statuses for R1: %', s; end if;
+  select string_agg(status, ',' order by day) into s from bio_report('2026-11-09', '2026-11-15') where device_code = 'R2';
+  if s is distinct from 'no_out,absent,absent,absent,holiday,week_off,week_off' then raise exception 'FAIL report statuses for R2 (not matched): %', s; end if;
+  select * into r from bio_report('2026-11-09', '2026-11-09') where device_code = 'R1';
+  if r.in_at <> '2026-11-09 09:55+05:30' or r.out_at <> '2026-11-09 18:10+05:30' or r.punches <> 3 or r.band <> 'ok' or jsonb_array_length(r.entries) <> 3 or r.full_name <> 'Arun K'
+    then raise exception 'FAIL report in/out for R1: %', r; end if;
+  select * into r from bio_report('2026-11-10', '2026-11-10') where device_code = 'R1';
+  if r.out_at is not null or r.band <> 'bad' then raise exception 'FAIL report no-out day: %', r; end if;
+  if (select note from bio_report('2026-11-15', '2026-11-15') where device_code = 'R1') not like '%manual/mobile entry%' then raise exception 'FAIL report manual entry note'; end if;
+  if (select note from bio_report('2026-11-12', '2026-11-12') where device_code = 'R1') not like '%Marked absent%' then raise exception 'FAIL report HR absent note'; end if;
+  if (select note from bio_report('2026-11-13', '2026-11-13') where device_code = 'R2') not like '%holiday%' then raise exception 'FAIL report holiday name'; end if;
+  if exists (select 1 from bio_report(current_date, current_date + 5) where day > (now() at time zone 'Asia/Kolkata')::date) then raise exception 'FAIL report shows future days'; end if;
+  begin perform * from bio_report('2026-01-01', '2026-06-01'); raise exception 'FAIL report allowed a long range';
+  exception when others then if sqlerrm like 'FAIL%' then raise; end if; end;
+  raise notice 'PASS 37b fingerprint report: in/out, no out, absent, leave, holiday, week off, manual entries, all eSSL people';
+end $$;
+select pg_temp.reset();
+delete from leave_requests where user_id = '00000000-0000-0000-0000-000000000002' and starts_on = '2026-11-11';
+delete from day_marks where email = 'arun@startuptn.in' and day = '2026-11-12';
+delete from holidays where day = '2026-11-13' and name = 'Report test holiday';
+delete from bio_links where id = '00000000-0000-0000-0000-0000000000b7';

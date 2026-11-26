@@ -12,6 +12,11 @@ export interface BioDayRow { day: string; code: string; esslCode: string | null;
 export interface BioPersonDay { day: string; in_at: string; out_at: string | null; punches: number; band: 'ok' | 'warn' | 'bad' }
 export interface BioDiff { code: string; name: string | null; our_in: string | null; essl_in: string | null; our_out: string | null; essl_out: string | null }
 export interface BioCheck { day: string; essl_rows: number | null; stored_rows: number; orphans: number; compared: number; in_agree: number; out_agree: number; essl_filled: number; differ: BioDiff[]; essl_reported_at: string | null }
+export type BioStatus = 'present' | 'no_out' | 'absent' | 'leave' | 'od' | 'holiday' | 'week_off';
+export interface BioEntry { at: string; dir: string | null; device: string | null; kind: 'biometric' | 'manual' | 'mobile' }
+/** Fingerprint report: one row per eSSL person per day (matched to staff or not). */
+export interface BioReportRow { day: string; code: string; esslCode: string | null; esslName: string | null; email: string | null; name: string | null; hub: string | null;
+  status: BioStatus; inAt: string | null; outAt: string | null; band: 'ok' | 'warn' | 'bad' | null; punches: number; entries: BioEntry[]; note: string }
 export interface BioPunch { at: string; direction: string | null; device: string | null; hub: string | null; code: string; esslName: string | null; email: string | null; name: string | null; userId: string | null }
 
 const istToday = () => new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
@@ -74,6 +79,13 @@ const real = {
     return ((data ?? []) as { day: string; device_code: string; essl_code: string | null; essl_name: string | null; email: string | null; full_name: string | null; hub: string | null; user_id: string | null; first_at: string; last_at: string | null; punches: number; band: 'ok' | 'warn' | 'bad'; app_in: string | null; app_out: string | null; app_status: string | null }[])
       .map((r) => ({ day: r.day, code: r.device_code, esslCode: r.essl_code, esslName: r.essl_name, email: r.email, name: r.full_name, hub: r.hub, userId: r.user_id, first: r.first_at, last: r.last_at, punches: r.punches, band: r.band, appIn: r.app_in, appOut: r.app_out, appStatus: r.app_status }));
   },
+  async report(from: string, to: string): Promise<BioReportRow[]> {
+    const { data, error } = await sb!.rpc('bio_report', { p_from: from, p_to: to }); rpcErr(error);
+    return ((data ?? []) as { day: string; device_code: string; essl_code: string | null; essl_name: string | null; email: string | null; full_name: string | null; hub: string | null;
+      status: BioStatus; in_at: string | null; out_at: string | null; band: BioReportRow['band']; punches: number; entries: BioEntry[]; note: string | null }[])
+      .map((r) => ({ day: r.day, code: r.device_code, esslCode: r.essl_code, esslName: r.essl_name, email: r.email, name: r.full_name, hub: r.hub, status: r.status,
+        inAt: r.in_at, outAt: r.out_at, band: r.band, punches: r.punches, entries: r.entries ?? [], note: r.note ?? '' }));
+  },
   async verify(from: string, to: string): Promise<BioCheck[]> {
     const { data, error } = await sb!.rpc('bio_verify', { p_from: from, p_to: to }); rpcErr(error);
     return (data ?? []) as BioCheck[];
@@ -109,6 +121,24 @@ const demo: typeof real = {
     await wait(); const d = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
     return [{ day: d, code: '56', esslCode: 'STN056', esslName: 'Kavya', email: 'kavya@startuptn.in', name: 'Kavya R', hub: 'Chennai', userId: 's1', first: ago(300), last: ago(4), punches: 4, band: 'ok' as const, appIn: ago(296), appOut: null, appStatus: 'present' },
             { day: d, code: '16', esslCode: '016', esslName: 'Arun K', email: null, name: null, hub: null, userId: null, first: ago(280), last: null, punches: 1, band: 'bad' as const, appIn: null, appOut: null, appStatus: null }];
+  },
+  async report(from: string, to: string) {
+    await wait();
+    const out: BioReportRow[] = [], today = istToday();
+    const at = (d: string, hm: string) => new Date(`${d}T${hm}:00+05:30`).toISOString();
+    for (let t = new Date(`${to > today ? today : to}T12:00:00Z`); t >= new Date(`${from}T12:00:00Z`); t = new Date(t.getTime() - 864e5)) {
+      const d = t.toISOString().slice(0, 10), wd = t.getUTCDay(), off = wd === 0 || wd === 6;
+      const p = (code: string, esslName: string, email: string | null, name: string | null, inHm: string | null, outHm: string | null): BioReportRow => {
+        const e: BioEntry[] = [inHm, outHm].filter(Boolean).map((hm) => ({ at: at(d, hm!), dir: null, device: 'Biometric', kind: 'biometric' as const }));
+        const status: BioStatus = inHm ? (outHm || d === today ? 'present' : 'no_out') : off ? 'week_off' : 'absent';
+        return { day: d, code, esslCode: code === '56' ? 'STN056' : code, esslName, email, name, hub: email ? 'Chennai' : null, status, inAt: inHm ? at(d, inHm) : null, outAt: outHm ? at(d, outHm) : null,
+          band: inHm ? (inHm <= '10:00' ? 'ok' : inHm <= '10:05' ? 'warn' : 'bad') : null, punches: e.length, entries: e, note: '' };
+      };
+      out.push(p('56', 'Kavya R', 'kavya@startuptn.in', 'Kavya R', off ? null : '09:52', off || d === today ? null : '18:07'));
+      out.push(p('16', 'Arun K', null, null, off || wd === 3 ? null : '10:12', null));
+      out.push(p('61', 'Temp Staff', null, null, null, null));
+    }
+    return out;
   },
   async verify() { await wait(); const d = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10); return [{ day: d, essl_rows: 2, stored_rows: 2, orphans: 0, compared: 1, in_agree: 1, out_agree: 1, essl_filled: 0, differ: [], essl_reported_at: ago(3) }]; },
   async personDays() { await wait(); return [{ day: new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10), in_at: ago(300), out_at: null, punches: 2, band: 'ok' as const }, { day: new Date(Date.now() - 864e5 + 330 * 60000).toISOString().slice(0, 10), in_at: ago(24 * 60 + 290), out_at: ago(24 * 60 - 200), punches: 3, band: 'bad' as const }]; },
