@@ -16,7 +16,8 @@ export type BioStatus = 'present' | 'no_out' | 'absent' | 'leave' | 'od' | 'holi
 export interface BioEntry { at: string; dir: string | null; device: string | null; kind: 'biometric' | 'manual' | 'mobile' }
 /** Fingerprint report: one row per eSSL person per day (matched to staff or not). */
 export interface BioReportRow { day: string; code: string; esslCode: string | null; esslName: string | null; email: string | null; name: string | null; hub: string | null;
-  status: BioStatus; inAt: string | null; outAt: string | null; band: 'ok' | 'warn' | 'bad' | null; punches: number; entries: BioEntry[]; note: string }
+  status: BioStatus; inAt: string | null; outAt: string | null; band: 'ok' | 'warn' | 'bad' | null; punches: number; entries: BioEntry[]; note: string;
+  designation: string | null; staffCode: string | null }
 export interface BioPunch { at: string; direction: string | null; device: string | null; hub: string | null; code: string; esslName: string | null; email: string | null; name: string | null; userId: string | null }
 
 const istToday = () => new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
@@ -82,9 +83,11 @@ const real = {
   async report(from: string, to: string): Promise<BioReportRow[]> {
     const { data, error } = await sb!.rpc('bio_report_json', { p_from: from, p_to: to }); rpcErr(error);   // one JSON array: no 1,000-row cap
     return ((data ?? []) as { day: string; device_code: string; essl_code: string | null; essl_name: string | null; email: string | null; full_name: string | null; hub: string | null;
-      status: BioStatus; in_at: string | null; out_at: string | null; band: BioReportRow['band']; punches: number; entries: BioEntry[]; note: string | null }[])
+      status: BioStatus; in_at: string | null; out_at: string | null; band: BioReportRow['band']; punches: number; entries: BioEntry[]; note: string | null;
+      designation: string | null; staff_code: string | null }[])
       .map((r) => ({ day: r.day, code: r.device_code, esslCode: r.essl_code, esslName: r.essl_name, email: r.email, name: r.full_name, hub: r.hub, status: r.status,
-        inAt: r.in_at, outAt: r.out_at, band: r.band, punches: r.punches, entries: r.entries ?? [], note: r.note ?? '' }));
+        inAt: r.in_at, outAt: r.out_at, band: r.band, punches: r.punches, entries: r.entries ?? [], note: r.note ?? '',
+        designation: r.designation, staffCode: r.staff_code }));
   },
   async verify(from: string, to: string): Promise<BioCheck[]> {
     const { data, error } = await sb!.rpc('bio_verify', { p_from: from, p_to: to }); rpcErr(error);
@@ -132,7 +135,8 @@ const demo: typeof real = {
         const e: BioEntry[] = [inHm, outHm].filter(Boolean).map((hm) => ({ at: at(d, hm!), dir: null, device: 'Biometric', kind: 'biometric' as const }));
         const status: BioStatus = inHm ? (outHm || d === today ? 'present' : 'no_out') : off ? 'week_off' : 'absent';
         return { day: d, code, esslCode: code === '56' ? 'STN056' : code, esslName, email, name, hub: email ? 'Chennai' : null, status, inAt: inHm ? at(d, inHm) : null, outAt: outHm ? at(d, outHm) : null,
-          band: inHm ? (inHm <= '10:00' ? 'ok' : inHm <= '10:05' ? 'warn' : 'bad') : null, punches: e.length, entries: e, note: '' };
+          band: inHm ? (inHm <= '10:00' ? 'ok' : inHm <= '10:05' ? 'warn' : 'bad') : null, punches: e.length, entries: e, note: '',
+          designation: email ? 'Associate' : null, staffCode: email ? 'STN0056' : null };
       };
       out.push(p('56', 'Kavya R', 'kavya@startuptn.in', 'Kavya R', off ? null : '09:52', off || d === today ? null : '18:07'));
       out.push(p('16', 'Arun K', null, null, off || wd === 3 ? null : '10:12', null));

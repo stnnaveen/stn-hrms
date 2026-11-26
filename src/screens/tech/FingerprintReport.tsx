@@ -85,12 +85,39 @@ export function FingerprintReport({ onBack }: { onBack: () => void }) {
       .sort((a, b) => b.absent - a.absent || (a.r.name ?? a.r.esslName ?? '').localeCompare(b.r.name ?? b.r.esslName ?? ''));
   }, [rows, q, f, showQuiet, quiet]);
 
-  const csv = () => download(`fingerprint-report-${from}-to-${to}.csv`, toCsv(
-    ['date', 'day', 'essl_code', 'essl_name', 'staff_name', 'staff_email', 'hub', 'status', 'in', 'out', 'hours', 'late', 'punches', 'all_entries', 'note'],
-    (rows ?? []).map((r) => [r.day, new Date(`${r.day}T12:00:00Z`).toLocaleDateString('en-IN', { weekday: 'short', timeZone: 'UTC' }), r.esslCode ?? r.code, r.esslName, r.name, r.email, r.hub,
-      ST[r.status].l, r.inAt ? fmtTime(r.inAt) : '', r.outAt ? fmtTime(r.outAt) : '', r.inAt && r.outAt ? dur(mins(r.inAt, r.outAt)) : '',
-      r.band === 'bad' ? 'Late' : r.band === 'warn' ? 'Slightly late' : '', r.punches,
-      r.entries.map((e) => `${fmtTime(e.at)}${e.kind !== 'biometric' ? ` (${e.kind})` : ''}`).join(' | '), r.note])));
+  // HR sheet format: one row pair per staff member (punch in / punch out), a column pair per date (time, working hrs / remarks)
+  const csv = () => {
+    const list2 = scoped, dates = [...new Set(list2.map((r) => r.day))].sort();
+    const hm = (iso: string) => new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' });
+    const dmy = (d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(0, 4)}`;
+    const head = ['Sl.no', 'Staff Name', 'Designation', 'Staff code'];
+    dates.forEach((d, i) => head.push(`${i === 0 ? 'Date ' : ''}(${dmy(d)})`, 'Working hrs / Remarks'));
+    const people = [...new Map(list2.map((r) => [r.code, r])).values()]
+      .sort((a, b) => (a.name ?? a.esslName ?? '').localeCompare(b.name ?? b.esslName ?? ''));
+    const out: (string | number)[][] = [];
+    people.forEach((p, n) => {
+      const l1: (string | number)[] = [n + 1, p.name ?? p.esslName ?? '', p.designation ?? '', p.staffCode ?? p.esslCode ?? p.code];
+      const l2: (string | number)[] = ['', '', '', ''];
+      for (const d of dates) {
+        const r = list2.find((x) => x.code === p.code && x.day === d);
+        if (!r) { l1.push('', ''); l2.push('', ''); continue; }
+        const late = r.band === 'bad' ? 'Late entry' : '';
+        const extra = r.note ? r.note : '';
+        if (r.inAt) {
+          const early = r.outAt && outChip(r.outAt) === 'c-bad' ? 'Early check out' : '';
+          const noOut = !r.outAt ? (r.status === 'no_out' ? 'No punch out' : 'Still in') : '';
+          const rem = [late, early, noOut].filter(Boolean).join(' / ');
+          l1.push(`${hm(r.inAt)} (punch in)`, r.outAt ? `${dur(mins(r.inAt, r.outAt)).replace(/h (\d+)m/, ':$1').replace(/^(\d+):/, '$1:')} Hrs` : '-');
+          l2.push(r.outAt ? `${hm(r.outAt)} (punch out)` : noOut.toLowerCase(), [rem, extra].filter(Boolean).join(' · ') || '-');
+        } else {
+          const word = r.status === 'absent' ? 'no entry' : r.status === 'week_off' ? 'week off' : r.status === 'holiday' ? 'holiday' : r.status === 'leave' ? 'leave' : 'OD';
+          l1.push(word, '-'); l2.push('', extra);
+        }
+      }
+      out.push(l1, l2);
+    });
+    download(`fingerprint-report-${from}-to-${to}.csv`, toCsv(head, out));
+  };
 
   const who = (r: BioReportRow) => r.name ?? r.esslName ?? r.code;
   const inOut = (r: BioReportRow) => r.inAt ? (

@@ -1291,6 +1291,8 @@ end $$;
 select pg_temp.as_user('00000000-0000-0000-0000-0000000000f1');
 do $$ begin
   if jsonb_array_length(bio_report_json('2026-11-09', '2026-11-15')) <> (select count(*) from bio_report('2026-11-09', '2026-11-15')) then raise exception 'FAIL bio_report_json row count'; end if;
+  if (select designation from bio_report('2026-11-09', '2026-11-09') where device_code = 'R1') is distinct from (select designation from staff_roster where email = 'arun@startuptn.in') then raise exception 'FAIL report designation'; end if;
+  if not (bio_report_json('2026-11-09', '2026-11-09') -> 0 ? 'staff_code') then raise exception 'FAIL report JSON has no staff_code'; end if;
   raise notice 'PASS 37c fingerprint report as one JSON array';
 end $$;
 select pg_temp.as_user('00000000-0000-0000-0000-000000000001');
