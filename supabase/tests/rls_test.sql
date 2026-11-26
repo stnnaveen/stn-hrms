@@ -1287,6 +1287,19 @@ do $$ declare s text; r record; begin
   exception when others then if sqlerrm like 'FAIL%' then raise; end if; end;
   raise notice 'PASS 37b fingerprint report: in/out, no out, absent, leave, holiday, week off, manual entries, all eSSL people';
 end $$;
+-- 37c. the report comes back whole as one JSON array (no 1,000-row API cap)
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000f1');
+do $$ begin
+  if jsonb_array_length(bio_report_json('2026-11-09', '2026-11-15')) <> (select count(*) from bio_report('2026-11-09', '2026-11-15')) then raise exception 'FAIL bio_report_json row count'; end if;
+  raise notice 'PASS 37c fingerprint report as one JSON array';
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-000000000001');
+do $$ begin
+  begin perform bio_report_json('2026-11-09', '2026-11-15'); raise exception 'FAIL staff read bio_report_json';
+  exception when others then if sqlerrm like 'FAIL%' then raise; end if; end;
+  raise notice 'PASS 37d staff cannot read the report JSON';
+end $$;
+select pg_temp.reset();
 select pg_temp.reset();
 delete from leave_requests where user_id = '00000000-0000-0000-0000-000000000002' and starts_on = '2026-11-11';
 delete from day_marks where email = 'arun@startuptn.in' and day = '2026-11-12';

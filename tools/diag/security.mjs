@@ -105,7 +105,7 @@ for (const [f, b] of [['set_staff_approver', { p_email: 'naveenflop+staff@gmail.
   for (const [f, b] of [['phone_swaps', { p_user: Z }], ['notify_admins', { p_kind: 'x', p_title: 'x', p_body: 'x', p_data: {} }], ['presence_window', { p_user: Z }], ['presence_day_calc', { p_user: Z, p_day: '2026-11-01' }], ['presence_rows', { p_day: '2026-11-01' }], ['presence_watch', {}], ['presence_summary', { p_day: '2026-11-01' }]]) {
     const [a] = await rpc(anonH, f, b); const [c] = await rpc(st, f, b); out(a >= 400 && c >= 400, `internal ${f} not callable signed out or as staff (${a}, ${c})`);
   }
-  for (const [f, b] of [['live_locations', {}], ['presence_board', { p_day: '2026-11-01' }], ['bio_report', { p_from: '2026-11-01', p_to: '2026-11-02' }]]) {
+  for (const [f, b] of [['live_locations', {}], ['presence_board', { p_day: '2026-11-01' }], ['bio_report', { p_from: '2026-11-01', p_to: '2026-11-02' }], ['bio_report_json', { p_from: '2026-11-01', p_to: '2026-11-02' }]]) {
     const [a] = await rpc(anonH, f, b); const [c] = await rpc(st, f, b); out(a >= 400 && c >= 400, `${f}: HR and Chairman only (${a}, ${c})`);
   }
 }
@@ -116,8 +116,8 @@ for (const [f, b] of [['set_staff_approver', { p_email: 'naveenflop+staff@gmail.
     const hrH = { apikey: ANON, Authorization: `Bearer ${s2.access_token}`, 'Content-Type': 'application/json' };
     const t = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10), m1 = t.slice(0, 8) + '01';
     const post = (f, b) => fetch(`${SUPA_URL}/rest/v1/rpc/${f}`, { method: 'POST', headers: hrH, body: JSON.stringify(b) }).then(async (r) => [r.status, await r.json().catch(() => null)]);
-    const t0 = Date.now(); const [c, rows] = await post('bio_report', { p_from: m1, p_to: t }); const ms = Date.now() - t0;
-    out(c === 200 && Array.isArray(rows), `bio_report as HR for ${m1}..${t} (${c}, ${Array.isArray(rows) ? rows.length : 0} rows, ${ms} ms)`);
+    const t0 = Date.now(); const [c, rows] = await post('bio_report_json', { p_from: m1, p_to: t }); const ms = Date.now() - t0;
+    out(c === 200 && Array.isArray(rows), `bio_report_json as HR for ${m1}..${t} (${c}, ${Array.isArray(rows) ? rows.length : 0} rows, ${ms} ms)`);
     if (Array.isArray(rows)) {
       const by = {}; for (const r of rows) by[r.status] = (by[r.status] ?? 0) + 1;
       const ppl = new Set(rows.map((r) => r.device_code)).size, matched = new Set(rows.filter((r) => r.email).map((r) => r.device_code)).size;

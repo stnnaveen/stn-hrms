@@ -80,7 +80,7 @@ const real = {
       .map((r) => ({ day: r.day, code: r.device_code, esslCode: r.essl_code, esslName: r.essl_name, email: r.email, name: r.full_name, hub: r.hub, userId: r.user_id, first: r.first_at, last: r.last_at, punches: r.punches, band: r.band, appIn: r.app_in, appOut: r.app_out, appStatus: r.app_status }));
   },
   async report(from: string, to: string): Promise<BioReportRow[]> {
-    const { data, error } = await sb!.rpc('bio_report', { p_from: from, p_to: to }); rpcErr(error);
+    const { data, error } = await sb!.rpc('bio_report_json', { p_from: from, p_to: to }); rpcErr(error);   // one JSON array: no 1,000-row cap
     return ((data ?? []) as { day: string; device_code: string; essl_code: string | null; essl_name: string | null; email: string | null; full_name: string | null; hub: string | null;
       status: BioStatus; in_at: string | null; out_at: string | null; band: BioReportRow['band']; punches: number; entries: BioEntry[]; note: string | null }[])
       .map((r) => ({ day: r.day, code: r.device_code, esslCode: r.essl_code, esslName: r.essl_name, email: r.email, name: r.full_name, hub: r.hub, status: r.status,

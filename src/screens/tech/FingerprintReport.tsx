@@ -44,6 +44,7 @@ export function FingerprintReport({ onBack }: { onBack: () => void }) {
   const [q, setQ] = useState('');
   const [view, setView] = useState<'day' | 'person'>('day');
   const [open, setOpen] = useState<string | null>(null);
+  const [showQuiet, setShowQuiet] = useState(false);
 
   const span = Math.round((new Date(`${to}T12:00:00Z`).getTime() - new Date(`${from}T12:00:00Z`).getTime()) / 864e5);
   const bad = !from || !to || span < 0 ? 'From must be on or before To.' : span >= MAX_DAYS ? `Pick ${MAX_DAYS} days or fewer.` : '';
@@ -57,7 +58,12 @@ export function FingerprintReport({ onBack }: { onBack: () => void }) {
     const s = q.trim().toLowerCase();
     return !s || [r.name, r.esslName, r.esslCode, r.code, r.email].some((x) => (x ?? '').toLowerCase().includes(s));
   };
-  const scoped = (rows ?? []).filter(match);
+  // eSSL entries not matched to staff and with no punch in the range (usually people who left): hidden unless asked
+  const quiet = useMemo(() => {
+    const seen = new Set((rows ?? []).filter((r) => r.punches > 0 || r.email).map((r) => r.code));
+    return new Set((rows ?? []).filter((r) => !seen.has(r.code)).map((r) => r.code));
+  }, [rows]);
+  const scoped = (rows ?? []).filter((r) => (showQuiet || !quiet.has(r.code)) && match(r));
   const count = (fn: (s: BioStatus) => boolean) => scoped.filter((r) => fn(r.status)).length;
   const tiles: { k: Filter; l: string; n: number; c?: string }[] = [
     { k: 'present', l: 'Present', n: count((s) => s === 'present' || s === 'no_out'), c: 'var(--ok-ink)' },
@@ -77,7 +83,7 @@ export function FingerprintReport({ onBack }: { onBack: () => void }) {
       return { r, days, present: c(['present', 'no_out']), absent: c(['absent']), noOut: c(['no_out']), away: c(['leave', 'od']), off: c(['holiday', 'week_off']), late };
     }).filter((p) => f === 'all' || p.days.some((d) => (f === 'present' ? d.status === 'present' || d.status === 'no_out' : inFilter(d.status, f))))
       .sort((a, b) => b.absent - a.absent || (a.r.name ?? a.r.esslName ?? '').localeCompare(b.r.name ?? b.r.esslName ?? ''));
-  }, [rows, q, f]);
+  }, [rows, q, f, showQuiet, quiet]);
 
   const csv = () => download(`fingerprint-report-${from}-to-${to}.csv`, toCsv(
     ['date', 'day', 'essl_code', 'essl_name', 'staff_name', 'staff_email', 'hub', 'status', 'in', 'out', 'hours', 'late', 'punches', 'all_entries', 'note'],
@@ -137,7 +143,8 @@ export function FingerprintReport({ onBack }: { onBack: () => void }) {
             <button key={t.k} className="tile" onClick={() => setF(f === t.k ? 'all' : t.k)} style={{ outline: f === t.k ? '2px solid var(--ph-navy)' : 'none', textAlign: 'left' }}>
               <b style={{ color: t.n ? t.c : undefined }}>{t.n}</b><span>{t.l}</span></button>))}
         </div>
-        <p className="to" style={{ textAlign: 'left', margin: '8px 4px 0' }}>{people} in eSSL · {matched} matched to staff · {span + 1} day{span ? 's' : ''}{f !== 'all' ? ` · showing ${tiles.find((t) => t.k === f)?.l ?? ''}` : ''}</p>
+        <p className="to" style={{ textAlign: 'left', margin: '8px 4px 0' }}>{people} in eSSL · {matched} matched to staff · {span + 1} day{span ? 's' : ''}{f !== 'all' ? ` · showing ${tiles.find((t) => t.k === f)?.l ?? ''}` : ''}
+          {quiet.size > 0 && <> · <button style={{ color: 'var(--ok)', font: 'inherit' }} onClick={() => setShowQuiet(!showQuiet)}>{showQuiet ? `Hide ${quiet.size} not matched with no entry` : `Show ${quiet.size} not matched with no entry`}</button></>}</p>
         <div className="pillrow" role="group" aria-label="View" style={{ marginTop: 10 }}>
           <button className={`pill ${view === 'day' ? 'on' : ''}`} onClick={() => { setView('day'); setOpen(null); }}>By day</button>
           <button className={`pill ${view === 'person' ? 'on' : ''}`} onClick={() => { setView('person'); setOpen(null); }}>By person</button>
