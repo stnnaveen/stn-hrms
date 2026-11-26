@@ -6,7 +6,7 @@ import { useApp } from '../../App';
 import { ApiError } from '../../lib/api';
 import { bio, type BioReportRow, type BioStatus } from '../../lib/bio';
 import { fmtShortDay, fmtTime, outChip } from '../../lib/time';
-import { toCsv, download } from '../../lib/csv';
+import { writeXlsx, type Cell } from '../../lib/xlsx';
 import { Icon } from '../../ui/Icon';
 
 const ist = (ms = Date.now()) => new Date(ms + 330 * 60000).toISOString().slice(0, 10);
@@ -85,7 +85,8 @@ export function FingerprintReport({ onBack }: { onBack: () => void }) {
       .sort((a, b) => b.absent - a.absent || (a.r.name ?? a.r.esslName ?? '').localeCompare(b.r.name ?? b.r.esslName ?? ''));
   }, [rows, q, f, showQuiet, quiet]);
 
-  // HR sheet format: one row pair per staff member (punch in / punch out), a column pair per date (time, working hrs / remarks)
+  // HR sheet format (Excel): one row pair per staff member (punch in / punch out), a column pair per date (time, working hrs / remarks).
+  // The date's box (both columns, both rows) is red when: no entry, under 6 working hours, or no punch out on a past day.
   const csv = () => {
     const list2 = scoped, dates = [...new Set(list2.map((r) => r.day))].sort();
     const hm = (iso: string) => new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' });
@@ -94,10 +95,10 @@ export function FingerprintReport({ onBack }: { onBack: () => void }) {
     dates.forEach((d, i) => head.push(`${i === 0 ? 'Date ' : ''}(${dmy(d)})`, 'Working hrs / Remarks'));
     const people = [...new Map(list2.map((r) => [r.code, r])).values()]
       .sort((a, b) => (a.name ?? a.esslName ?? '').localeCompare(b.name ?? b.esslName ?? ''));
-    const out: (string | number)[][] = [];
+    const out: Cell[][] = [];
     people.forEach((p, n) => {
-      const l1: (string | number)[] = [n + 1, p.name ?? p.esslName ?? '', p.designation ?? '', p.staffCode ?? p.esslCode ?? p.code];
-      const l2: (string | number)[] = ['', '', '', ''];
+      const l1: Cell[] = [n + 1, p.name ?? p.esslName ?? '', p.designation ?? '', p.staffCode ?? p.esslCode ?? p.code];
+      const l2: Cell[] = ['', '', '', ''];
       for (const d of dates) {
         const r = list2.find((x) => x.code === p.code && x.day === d);
         if (!r) { l1.push('', ''); l2.push('', ''); continue; }
@@ -107,16 +108,20 @@ export function FingerprintReport({ onBack }: { onBack: () => void }) {
           const early = r.outAt && outChip(r.outAt) === 'c-bad' ? 'Early check out' : '';
           const noOut = !r.outAt ? (r.status === 'no_out' ? 'No punch out' : 'Still in') : '';
           const rem = [late, early, noOut].filter(Boolean).join(' / ');
-          l1.push(`${hm(r.inAt)} (punch in)`, r.outAt ? `${dur(mins(r.inAt, r.outAt)).replace(/h (\d+)m/, ':$1').replace(/^(\d+):/, '$1:')} Hrs` : '-');
-          l2.push(r.outAt ? `${hm(r.outAt)} (punch out)` : noOut.toLowerCase(), [rem, extra].filter(Boolean).join(' · ') || '-');
+          const red = r.outAt ? mins(r.inAt, r.outAt) < 360 : r.status === 'no_out';
+          const box = (v: string): Cell => (red ? { v: v || ' ', red: true } : v);
+          l1.push(box(`${hm(r.inAt)} (punch in)`), box(r.outAt ? `${dur(mins(r.inAt, r.outAt)).replace(/h (\d+)m/, ':$1')} Hrs` : '-'));
+          l2.push(box(r.outAt ? `${hm(r.outAt)} (punch out)` : noOut.toLowerCase()), box([rem, r.outAt && mins(r.inAt, r.outAt) < 360 ? 'Under 6 hrs' : '', extra].filter(Boolean).join(' / ') || '-'));
         } else {
           const word = r.status === 'absent' ? 'no entry' : r.status === 'week_off' ? 'week off' : r.status === 'holiday' ? 'holiday' : r.status === 'leave' ? 'leave' : 'OD';
-          l1.push(word, '-'); l2.push('', extra);
+          if (r.status === 'absent') { l1.push({ v: word, red: true }, { v: '-', red: true }); l2.push({ v: ' ', red: true }, { v: extra || ' ', red: true }); }
+          else { l1.push(word, '-'); l2.push('', extra); }
         }
       }
       out.push(l1, l2);
     });
-    download(`fingerprint-report-${from}-to-${to}.csv`, toCsv(head, out));
+    const blob = writeXlsx([{ name: 'Fingerprint report', rows: [head, ...out], widths: [6, 24, 18, 12, ...dates.flatMap(() => [18, 26])], freezeCols: 4, noFilter: true }]);
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `fingerprint-report-${from}-to-${to}.xlsx`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   };
 
   const who = (r: BioReportRow) => r.name ?? r.esslName ?? r.code;
@@ -150,7 +155,7 @@ export function FingerprintReport({ onBack }: { onBack: () => void }) {
   return (
     <div className="scr fade" style={{ paddingBottom: 40 }}>
       <div className="ttl"><button className="rbtn" onClick={onBack} aria-label="Back"><Icon n="chevL" /></button><div className="mid"><small>eSSL · Chennai</small><b>Fingerprint report</b></div>
-        <button className="rbtn" onClick={csv} aria-label="Download CSV" disabled={!rows?.length}><Icon n="down" /></button></div>
+        <button className="rbtn" onClick={csv} aria-label="Download Excel" disabled={!rows?.length}><Icon n="down" /></button></div>
 
       <div className="pillrow" role="group" aria-label="Range">
         {P.map((p) => <button key={p.k} className={`pill ${from === p.f && to === p.t ? 'on' : ''}`} style={{ whiteSpace: 'nowrap' }} onClick={() => { setFrom(p.f); setTo(p.t); }}>{p.l}</button>)}
